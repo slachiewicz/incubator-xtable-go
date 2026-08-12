@@ -23,3 +23,7 @@ go.work.sum
 # Claude Code personal settings
 CLAUDE.local.md
 .claude/settings.local.json
+
+# Demo generated data
+demo/sample_delta_table/
+

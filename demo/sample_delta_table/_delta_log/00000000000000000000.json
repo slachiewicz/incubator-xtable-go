@@ -1,5 +1,0 @@
-{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}
-{"metaData":{"id":"e3fec25c-7bd9-4d2c-9009-01aad988c29b","name":"customers","format":{"provider":"parquet"},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"customer_id\",\"type\":\"integer\",\"nullable\":false},{\"name\":\"customer_name\",\"type\":\"string\",\"nullable\":false},{\"name\":\"region\",\"type\":\"string\",\"nullable\":false},{\"name\":\"total_spend\",\"type\":\"decimal(10,2)\",\"nullable\":true}]}","partitionColumns":["region"],"configuration":{"xtable_last_instant_synced":"1786545667458","xtable_source_format":"DELTA"},"createdTime":1786545667458}}
-{"add":{"path":"region=us/part-00000.parquet","partitionValues":{"region":"us"},"size":1048576,"modificationTime":1786545667458,"dataChange":true,"stats":"{\"numRecords\":10000}"}}
-{"add":{"path":"region=apac/part-00001.parquet","partitionValues":{"region":"apac"},"size":2097152,"modificationTime":1786545667458,"dataChange":true,"stats":"{\"numRecords\":25000}"}}
-{"commitInfo":{"timestamp":1786545667458,"operation":"XTABLE_SYNC_SNAPSHOT","engineInfo":"xtable-go"}}
