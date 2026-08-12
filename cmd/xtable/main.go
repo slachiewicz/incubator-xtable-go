@@ -47,6 +47,9 @@ func main() {
 		Short: "Apache XTable (Go): Cross-table format converter for modern lakehouses",
 		Long: `Apache XTable (Go) provides omni-directional, zero-copy metadata translation
 across Apache Iceberg, Delta Lake, Apache Hudi, and other open lakehouse table formats.`,
+		// Wires up --version, which people reach for before discovering `xtable version`.
+		Version:      fmt.Sprintf("%s (commit: %s, date: %s)", version, commit, date),
+		SilenceUsage: true,
 	}
 
 	rootCmd.AddCommand(newSyncCmd())
@@ -62,8 +65,9 @@ func newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
-		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Printf("xtable-go version %s (commit: %s, date: %s)\n", version, commit, date)
+		Run: func(cmd *cobra.Command, _ []string) {
+			// Same string as --version, so the two never drift apart.
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "xtable version %s (commit: %s, date: %s)\n", version, commit, date)
 		},
 	}
 }

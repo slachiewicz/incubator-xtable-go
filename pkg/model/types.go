@@ -17,7 +17,10 @@
 
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Type represents the canonical data type in XTable's internal type system.
 type Type string
@@ -117,18 +120,20 @@ func SupportedTableFormats() []TableFormat {
 
 // ParseTableFormat converts a string to TableFormat.
 func ParseTableFormat(s string) (TableFormat, error) {
-	switch s {
-	case "HUDI", "hudi":
+	// Case-insensitive and whitespace-tolerant: "Delta" and " delta " are what people actually
+	// type on a command line, and rejecting them served no purpose.
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "HUDI":
 		return TableFormatHudi, nil
-	case "ICEBERG", "iceberg":
+	case "ICEBERG":
 		return TableFormatIceberg, nil
-	case "DELTA", "delta":
+	case "DELTA":
 		return TableFormatDelta, nil
-	case "PAIMON", "paimon":
+	case "PAIMON":
 		return TableFormatPaimon, nil
-	case "PARQUET", "parquet":
+	case "PARQUET":
 		return TableFormatParquet, nil
 	default:
-		return "", fmt.Errorf("unknown table format: %s", s)
+		return "", fmt.Errorf("unknown table format %q (expected one of: DELTA, ICEBERG, HUDI, PAIMON, PARQUET)", s)
 	}
 }

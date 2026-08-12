@@ -96,8 +96,8 @@ stdlib CVEs even when every dependency is clean — `1.25.5` was rejected for 13
 
 Do not treat these as intended behavior; fix them when touching the surrounding code.
 
-- `ParseTableFormat` (`pkg/model/types.go`) matches only all-upper or all-lower literals — `"Iceberg"`
-  returns an error while `"ICEBERG"` and `"iceberg"` work.
+- ~~`ParseTableFormat` case sensitivity~~ — **fixed**: it now upper-cases and trims, so `"Iceberg"`,
+  `" iceberg "` and `"ICEBERG"` all parse, and the error names the accepted values.
 - `DiffFiles` (`pkg/model/diff.go`) builds its result by ranging over maps, so `FilesAdded`/`FilesRemoved`
   ordering is nondeterministic. Tests must not assert slice order. It also keys purely on `PhysicalPath`,
   so a file whose size or record count changed is reported as unchanged.

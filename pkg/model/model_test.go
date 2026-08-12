@@ -167,3 +167,42 @@ func TestTable_GetDataPathAndPartitioning(t *testing.T) {
 	assert.Equal(t, "s3://bucket/partitioned/data", tablePartitioned.GetDataPath())
 	assert.True(t, tablePartitioned.IsPartitioned())
 }
+
+func TestParseTableFormatIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  model.TableFormat
+	}{
+		{name: "upper", input: "DELTA", want: model.TableFormatDelta},
+		{name: "lower", input: "delta", want: model.TableFormatDelta},
+		{name: "mixed", input: "Delta", want: model.TableFormatDelta},
+		{name: "mixed iceberg", input: "IceBerg", want: model.TableFormatIceberg},
+		{name: "surrounding whitespace", input: "  hudi  ", want: model.TableFormatHudi},
+		{name: "mixed paimon", input: "Paimon", want: model.TableFormatPaimon},
+		{name: "mixed parquet", input: "Parquet", want: model.TableFormatParquet},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := model.ParseTableFormat(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestParseTableFormatRejectsUnknownWithGuidance(t *testing.T) {
+	t.Parallel()
+
+	_, err := model.ParseTableFormat("orc")
+	require.Error(t, err)
+	// The message must name the accepted values; "unknown table format: orc" alone left the user
+	// guessing at the spelling.
+	assert.Contains(t, err.Error(), "DELTA")
+	assert.Contains(t, err.Error(), "PARQUET")
+}

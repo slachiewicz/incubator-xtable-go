@@ -22,7 +22,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -50,9 +52,13 @@ func main() {
 	)
 
 	rootCmd := &cobra.Command{
-		Use:   "xtable-service",
-		Short: "Apache XTable REST Service & Continuous Synchronization Daemon",
-		Long:  `Runs the Apache XTable REST API server and continuous background synchronization daemon.`,
+		Use:     "xtable-service",
+		Version: version,
+		Short:   "Apache XTable REST Service & Continuous Synchronization Daemon",
+		Long:    `Runs the Apache XTable REST API server and continuous background synchronization daemon.`,
+		// A failure to bind or read a config is not a usage error; printing the flag list on top of
+		// the real message only buries it.
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -68,11 +74,21 @@ func main() {
 				WriteTimeout: 60 * time.Second,
 			}
 
-			// 2. Start HTTP Server in background
+			// 2. Bind before announcing. Printing "Listening" and only then discovering the port is
+			// taken would advertise an address that never worked.
+			listener, err := net.Listen("tcp", httpServer.Addr)
+			if err != nil {
+				return fmt.Errorf("cannot listen on port %d: %w", port, err)
+			}
+
+			// The banner goes to stdout deliberately. slog writes to stderr, so a plain
+			// `xtable-service > log.txt` used to look like the process had produced nothing at all.
+			printStartupBanner(cmd.OutOrStdout(), port, configPath, enableDaemon, interval)
+
+			serverErr := make(chan error, 1)
 			go func() {
-				logger.Info(fmt.Sprintf("🚀 Starting XTable REST Service on port :%d", port))
-				if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					logger.Error("HTTP server error", "error", err)
+				if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+					serverErr <- err
 				}
 			}()
 
@@ -106,13 +122,23 @@ func main() {
 				}
 			}
 
-			// Wait for interrupt
-			<-ctx.Done()
-			logger.Info("Shutting down XTable service...")
+			// Wait for an interrupt, or for the listener to fail. Without the second case a port
+			// clash left the process alive and silent, looking healthy but serving nothing.
+			select {
+			case <-ctx.Done():
+			case err := <-serverErr:
+				return fmt.Errorf("HTTP server failed: %w", err)
+			}
+
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down XTable service...")
 
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			return httpServer.Shutdown(shutdownCtx)
+			if err := httpServer.Shutdown(shutdownCtx); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Stopped.")
+			return nil
 		},
 	}
 
@@ -124,4 +150,26 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// printStartupBanner tells the operator what is actually running: where to reach it, which endpoints
+// exist, whether background sync is on, and how to stop it.
+func printStartupBanner(w io.Writer, port int, configPath string, daemonEnabled bool, interval time.Duration) {
+	_, _ = fmt.Fprintf(w, "Apache XTable (Go) service %s\n", version)
+	_, _ = fmt.Fprintf(w, "  Listening      http://localhost:%d\n", port)
+	_, _ = fmt.Fprintf(w, "  Endpoints      GET  /v1/health\n")
+	_, _ = fmt.Fprintf(w, "                 POST /v1/conversion/table\n")
+	_, _ = fmt.Fprintf(w, "                 GET  /v1/conversion/table/{id}\n")
+	_, _ = fmt.Fprintf(w, "                 POST /v1/conversion/inspect\n")
+
+	switch {
+	case configPath == "" && daemonEnabled:
+		_, _ = fmt.Fprintf(w, "  Background     disabled - --daemon was given without --config, so there is nothing to sync\n")
+	case configPath == "":
+		_, _ = fmt.Fprintf(w, "  Background     disabled - REST API only (pass --config to enable continuous sync)\n")
+	default:
+		_, _ = fmt.Fprintf(w, "  Background     every %s from %s\n", interval, configPath)
+	}
+
+	_, _ = fmt.Fprintf(w, "  Stop           Ctrl+C\n\n")
 }
