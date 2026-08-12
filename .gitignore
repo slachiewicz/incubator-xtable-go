@@ -1,0 +1,25 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test and coverage output
+*.test
+*.out
+coverage.txt
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Claude Code personal settings
+CLAUDE.local.md
+.claude/settings.local.json
