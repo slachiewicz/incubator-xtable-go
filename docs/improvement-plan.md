@@ -559,7 +559,7 @@ From reviewing all 28 unpushed commits. **Do T16 and T17 before pushing further 
 Health at time of review: `make check` green, `go test -short -race ./pkg/...` clean across all 11
 packages, `pkg/formats` at 95.2% coverage. The problems below are design and status, not stability.
 
-## T16 — Rewrite catalog sync as per-target 🔴 CORRECTNESS
+## T16 — Rewrite catalog sync as per-target ✅ COMPLETED
 
 `Controller.syncToCatalogs` (`pkg/conversion/controller.go:102`) calls `source.GetCurrentSnapshot(ctx)`
 **once** and passes `snapshot.Table` to every catalog client. That is the **source** table. Converting
@@ -610,7 +610,25 @@ and probably right for now; just make the choice deliberately and write it down 
 
 **Commit:** `fix: register the target table in catalogs, not the source`
 
-## T17 — Finish the release workflow: the arm64 leg 🔴 BLOCKS TAGGING
+### Outcome (verified)
+
+Landed in `6f52b08`, corrected by `4fd7e19`. All three acceptance criteria pass:
+`TestController_CatalogSyncRegistersTargetTable` asserts the registered format is `ICEBERG` not
+`DELTA`; `...MultipleCatalogsPartialFailure` proves the second catalog is still attempted after the
+first fails; `...CatalogFailureDoesNotOverwriteSuccessStatus` proves `SyncStatusSuccess` survives a
+catalog error.
+
+**Design decision recorded:** the flat `DatasetConfig.Catalogs` list was kept rather than adopting
+Java's per-target catalog mapping. Every target is registered into every configured catalog. This
+avoids a config schema change and is sufficient while catalogs are homogeneous; revisit only if
+per-target routing is actually needed.
+
+`6f52b08` originally exposed the test seam as four exported setters plus two mutable package globals,
+putting a `GetFakeClient` accessor into the public API and blocking `t.Parallel()`. `4fd7e19` replaced
+it with `conversion.WithCatalogClientFactory`, a functional option matching the `optFns` pattern in
+`pkg/io`. Coverage moved `pkg/catalog` 25.9% -> **37.4%** and `pkg/conversion` 54.4% -> **71.0%**.
+
+## T17 — Finish the release workflow: the arm64 leg ⚠️ FIXED BUT UNPROVEN — needs a tag run
 
 T10 added the `matrix.os` guards, but the ubuntu leg still runs:
 
@@ -639,7 +657,26 @@ Pick one:
 
 **Commit:** `ci: build linux/arm64 on a native runner`
 
-## T18 — Finish T8: the two coverage targets that did not move ⚠️
+### Outcome (code fixed, NOT verified by a tag run)
+
+`076edd9` took option (a): `ubuntu-24.04-arm` joined the matrix, so linux/arm64 c-shared builds
+natively and no cgo cross-compilation remains. Checksums moved to the merge job, covering macOS too.
+
+`083da1b` fixed two further defects found while checking that work, both of which would have let the
+job go green while shipping the wrong thing:
+
+- `files: artifacts/*/*.*` requires a dot in the filename. The `.so`, `.dylib` and `.wasm` artifacts
+  matched, but the CLI binaries (`xtable-linux-amd64`, `xtable-service-darwin-arm64`, ...) have no
+  extension and were never attached - while `SHA256SUMS.txt` still listed them. The glob is now `*`.
+- The CLI build step had no `matrix.os` guard, so all three runners produced the same eight
+  cross-compiled binaries. They are pure Go (both build under `CGO_ENABLED=0`), so it now runs on
+  `ubuntu-latest` only.
+
+**Required before this can be marked complete:** push `v0.0.0-test` to a fork, confirm the release job
+is green end to end AND that the CLI binaries actually appear on the release, then delete the tag. No
+tag may be pushed to the real repository until then - Go module tags are immutable.
+
+## T18 — Finish T8: the two coverage targets that did not move ✅ COMPLETED
 
 T8 named three packages. Only one moved:
 
@@ -657,6 +694,15 @@ statements exist before investing. If there are none, say so here and close the 
 writing tests that assert nothing.
 
 **Commit:** `test: cover catalog sync client selection`
+
+### Outcome (verified)
+
+Measured after T16, as instructed. `pkg/catalog` reached **37.4%** from T16's tests alone, so no extra
+catalog tests were written - the number moved for the right reason rather than by chasing it.
+
+`pkg/spi` was **not** interface-only, contrary to T8's assumption: `NewSuccessSyncResult` and
+`NewErrorSyncResult` contain real statements, including the nil-error branch every controller failure
+path relies on. `a86e258` covers both; `pkg/spi` now reports **100.0% of statements**.
 
 ---
 
@@ -708,10 +754,10 @@ Iceberg/Delta targets, whose partition data lives in their own metadata rather t
 
 | | Tasks |
 |---|---|
-| 🔴 Do next | **T16** (catalog registers the wrong table — correctness), **T17** (arm64 leg blocks tagging) |
-| ⚠️ Then | **T18** (T8's two unmoved coverage targets) |
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12 |
-| ⚠️ Superseded | T2 → T16 · T7, T10 → T17 · T8 → T18 |
+| 🔴 Do next | **T17 verification only** — push `v0.0.0-test` to a fork and confirm the release job is green. Nothing may be tagged on the real repo until then. |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18 |
+| ⚠️ Superseded | T2 → T16 · T8 → T18 |
+| ⚠️ Unproven | T7, T10 → T17 (code fixed; no tag run has been executed) |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
 
 Gate at review time: `make check` green, `go test -short -race ./pkg/...` clean, 28 commits unpushed
