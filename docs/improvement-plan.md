@@ -121,7 +121,7 @@ Body should say the two entrypoints that were out of sync and that the registry 
 
 ---
 
-## T2 — Wire catalog sync into the conversion path ⏳ READY (T5 resolved)
+## T2 — Wire catalog sync into the conversion path ✅ COMPLETED
 
 **Current state:** `pkg/catalog` is dead code outside its own tests. `DatasetConfig`
 (`pkg/conversion/config.go`) has no catalog field and `Controller` never builds a `SyncClient`, so Glue
@@ -391,7 +391,7 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T8 — Targeted test coverage ⏳ BLOCKED (waiting for T2)
+## T8 — Targeted test coverage ⏳ READY (T2 completed)
 
 Measured (`go test -short -cover ./pkg/...`):
 
@@ -504,7 +504,7 @@ cost is zero today — but decide deliberately, because FFI consumers parse that
 
 **Commit:** `ci: test against current Go alongside the declared minimum`
 
-## T12 — Finish T3: REST storage options and the MinIO regression test ⚠️
+## T12 — Finish T3: REST storage options and the MinIO regression test ✅ COMPLETED
 
 Carries the two unmet acceptance criteria from T3 (see above).
 
