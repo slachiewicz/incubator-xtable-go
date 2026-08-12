@@ -125,6 +125,12 @@ func (c *Controller) syncTargetToCatalogs(ctx context.Context, cfg *DatasetConfi
 
 		if err := client.CreateOrUpdateTable(ctx, snapshot.Table, snapshot); err != nil {
 			catalogErrors = append(catalogErrors, fmt.Errorf("failed to sync to catalog %s: %w", cfg.Catalogs[i].Type, err))
+			_ = client.Close()
+			continue
+		}
+
+		if err := syncPartitions(ctx, client, &cfg.Catalogs[i], snapshot); err != nil {
+			catalogErrors = append(catalogErrors, fmt.Errorf("failed to sync partitions to catalog %s: %w", cfg.Catalogs[i].Type, err))
 		}
 		_ = client.Close()
 	}
@@ -133,6 +139,26 @@ func (c *Controller) syncTargetToCatalogs(ctx context.Context, cfg *DatasetConfi
 		return fmt.Errorf("catalog sync errors: %v", errors.Join(catalogErrors...))
 	}
 	return nil
+}
+
+// syncPartitions reconciles the table's partitions when the catalog tracks them separately. Iceberg
+// REST does not — partition data lives in the Iceberg metadata — so its client does not implement
+// PartitionSyncOperations and this is a no-op for it.
+func syncPartitions(ctx context.Context, client catalog.SyncClient, cfg *catalog.Config, snapshot *model.Snapshot) error {
+	ops, ok := client.(catalog.PartitionSyncOperations)
+	if !ok {
+		return nil
+	}
+
+	// Guard: an unpartitioned table yields no partitions, and reconciling that against a catalog
+	// would drop every partition it holds. Absence of partitioning fields means "not our business",
+	// not "delete everything".
+	if snapshot == nil || snapshot.Table == nil || len(snapshot.Table.PartitioningFields) == 0 {
+		return nil
+	}
+
+	id := catalog.TableIdentifier{Database: cfg.DatabaseName, Table: snapshot.Table.Name}
+	return catalog.SyncPartitions(ctx, ops, id, catalog.PartitionsFromSnapshot(snapshot), cfg.MaxPartitionsPerRequest)
 }
 
 func appendCatalogError(baseErr, catalogErr string) string {

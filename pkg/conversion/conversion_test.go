@@ -20,6 +20,8 @@ package conversion_test
 import (
 	"context"
 	"fmt"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -474,4 +476,173 @@ func (f *failingSyncClient) Close() error {
 
 func (f *failingSyncClient) CatalogType() catalog.CatalogType {
 	return catalog.CatalogTypeGlue
+}
+
+// partitionAwareSyncClient is a fake catalog client that also tracks partitions, standing in for a
+// Hive-style catalog such as Glue.
+type partitionAwareSyncClient struct {
+	mu         sync.Mutex
+	existing   []catalog.Partition
+	added      []catalog.Partition
+	dropped    []catalog.Partition
+	listCalled bool
+}
+
+func (p *partitionAwareSyncClient) CatalogType() catalog.CatalogType                { return catalog.CatalogTypeGlue }
+func (p *partitionAwareSyncClient) DropTable(context.Context, string, string) error { return nil }
+func (p *partitionAwareSyncClient) Close() error                                    { return nil }
+func (p *partitionAwareSyncClient) CreateOrUpdateTable(context.Context, *model.Table, *model.Snapshot) error {
+	return nil
+}
+
+func (p *partitionAwareSyncClient) GetAllPartitions(context.Context, catalog.TableIdentifier) ([]catalog.Partition, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.listCalled = true
+	return p.existing, nil
+}
+
+func (p *partitionAwareSyncClient) AddPartitions(_ context.Context, _ catalog.TableIdentifier, parts []catalog.Partition) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.added = append(p.added, parts...)
+	return nil
+}
+
+func (p *partitionAwareSyncClient) UpdatePartitions(context.Context, catalog.TableIdentifier, []catalog.Partition) error {
+	return nil
+}
+
+func (p *partitionAwareSyncClient) DropPartitions(_ context.Context, _ catalog.TableIdentifier, parts []catalog.Partition) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.dropped = append(p.dropped, parts...)
+	return nil
+}
+
+// buildPartitionedDeltaTable writes a Delta table partitioned by country with two partitions.
+func buildPartitionedDeltaTable(t *testing.T, ctx context.Context, storage io.Storage, basePath string) {
+	t.Helper()
+
+	countryField := &model.Field{Name: "country", Schema: model.NewPrimitiveSchema(model.TypeString, false)}
+	partField := &model.PartitionField{SourceField: countryField, TransformType: model.PartitionTransformValue}
+	schema := model.NewRecordSchema("sales", []*model.Field{countryField}, false)
+
+	table := &model.Table{
+		Name:               "sales",
+		TableFormat:        model.TableFormatDelta,
+		ReadSchema:         schema,
+		BasePath:           basePath,
+		PartitioningFields: []*model.PartitionField{partField},
+		LatestCommitTime:   time.Now().UnixMilli(),
+	}
+
+	file := func(country string) *model.DataFile {
+		return &model.DataFile{
+			PhysicalPath:    basePath + "/country=" + country + "/part-0.parquet",
+			FileFormat:      model.FileFormatParquet,
+			FileSizeBytes:   512,
+			RecordCount:     5,
+			PartitionValues: []*model.PartitionValue{{PartitionField: partField, Range: model.NewScalarRange(country)}},
+			LastModified:    time.Now().UnixMilli(),
+		}
+	}
+
+	target := delta.NewTarget(storage)
+	require.NoError(t, target.Init(ctx, table))
+	require.NoError(t, target.CommitSnapshot(ctx, &model.Snapshot{
+		Table:            table,
+		DataFiles:        []*model.DataFile{file("US"), file("DE")},
+		SourceIdentifier: "delta-v0",
+	}))
+}
+
+func TestController_SyncsPartitionsToPartitionAwareCatalog(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	storage := io.NewMemoryStorage()
+	basePath := "mem://lake/partition_sync_test"
+	buildPartitionedDeltaTable(t, ctx, storage, basePath)
+
+	fake := &partitionAwareSyncClient{
+		// The catalog already holds a partition the table no longer has.
+		existing: []catalog.Partition{{Values: []string{"FR"}, StorageLocation: basePath + "/country=FR"}},
+	}
+	controller := conversion.NewController(storage,
+		conversion.WithCatalogClientFactory(func(_ context.Context, _ *catalog.Config) (catalog.SyncClient, error) {
+			return fake, nil
+		}))
+
+	results, err := controller.Sync(ctx, &conversion.DatasetConfig{
+		SourceFormat:  model.TableFormatDelta,
+		TargetFormats: []model.TableFormat{model.TableFormatIceberg},
+		TableBasePath: basePath,
+		TableName:     "sales",
+		SyncMode:      spi.SyncModeFull,
+		Catalogs:      []catalog.Config{{Type: catalog.CatalogTypeGlue, DatabaseName: "analytics"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, spi.SyncStatusSuccess, results[model.TableFormatIceberg].StatusCode)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	assert.True(t, fake.listCalled, "partition sync must read the catalog's current partitions")
+
+	added := make([]string, 0, len(fake.added))
+	for _, p := range fake.added {
+		added = append(added, p.Values[0])
+	}
+	sort.Strings(added)
+	assert.Equal(t, []string{"DE", "US"}, added, "both table partitions must be registered")
+
+	require.Len(t, fake.dropped, 1)
+	assert.Equal(t, []string{"FR"}, fake.dropped[0].Values, "a partition no longer in the table must be dropped")
+}
+
+func TestController_UnpartitionedTableDoesNotTouchCatalogPartitions(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	storage := io.NewMemoryStorage()
+	basePath := "mem://lake/unpartitioned_sync_test"
+
+	idField := &model.Field{Name: "id", Schema: model.NewPrimitiveSchema(model.TypeInt, false)}
+	table := &model.Table{
+		Name:             "events",
+		TableFormat:      model.TableFormatDelta,
+		ReadSchema:       model.NewRecordSchema("events", []*model.Field{idField}, false),
+		BasePath:         basePath,
+		LatestCommitTime: time.Now().UnixMilli(),
+	}
+	target := delta.NewTarget(storage)
+	require.NoError(t, target.Init(ctx, table))
+	require.NoError(t, target.CommitSnapshot(ctx, &model.Snapshot{
+		Table:     table,
+		DataFiles: []*model.DataFile{{PhysicalPath: basePath + "/part-0.parquet", FileFormat: model.FileFormatParquet, RecordCount: 1}},
+	}))
+
+	// The catalog holds partitions; an unpartitioned table must not be read as "drop them all".
+	fake := &partitionAwareSyncClient{
+		existing: []catalog.Partition{{Values: []string{"US"}, StorageLocation: basePath + "/country=US"}},
+	}
+	controller := conversion.NewController(storage,
+		conversion.WithCatalogClientFactory(func(_ context.Context, _ *catalog.Config) (catalog.SyncClient, error) {
+			return fake, nil
+		}))
+
+	_, err := controller.Sync(ctx, &conversion.DatasetConfig{
+		SourceFormat:  model.TableFormatDelta,
+		TargetFormats: []model.TableFormat{model.TableFormatIceberg},
+		TableBasePath: basePath,
+		TableName:     "events",
+		SyncMode:      spi.SyncModeFull,
+		Catalogs:      []catalog.Config{{Type: catalog.CatalogTypeGlue, DatabaseName: "analytics"}},
+	})
+	require.NoError(t, err)
+
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	assert.False(t, fake.listCalled, "an unpartitioned table must not reconcile partitions at all")
+	assert.Empty(t, fake.dropped, "the catalog's existing partitions must survive")
 }

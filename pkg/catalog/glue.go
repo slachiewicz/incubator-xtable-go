@@ -36,9 +36,15 @@ type GlueCatalogSyncClient struct {
 	client       *glue.Client
 	databaseName string
 	catalogID    *string
+	// Embedded so the four PartitionSyncOperations methods promote onto this client: Glue is a
+	// Hive-style catalog that tracks partitions separately from the table definition.
+	*GluePartitionSyncOperations
 }
 
-var _ SyncClient = (*GlueCatalogSyncClient)(nil)
+var (
+	_ SyncClient              = (*GlueCatalogSyncClient)(nil)
+	_ PartitionSyncOperations = (*GlueCatalogSyncClient)(nil)
+)
 
 // NewGlueCatalogSyncClient creates a new AWS Glue Catalog sync client.
 func NewGlueCatalogSyncClient(ctx context.Context, cfg *Config) (*GlueCatalogSyncClient, error) {
@@ -58,18 +64,20 @@ func NewGlueCatalogSyncClient(ctx context.Context, cfg *Config) (*GlueCatalogSyn
 	}
 
 	return &GlueCatalogSyncClient{
-		client:       client,
-		databaseName: cfg.DatabaseName,
-		catalogID:    catID,
+		client:                      client,
+		databaseName:                cfg.DatabaseName,
+		catalogID:                   catID,
+		GluePartitionSyncOperations: NewGluePartitionSyncOperations(client, catID),
 	}, nil
 }
 
 // NewGlueCatalogSyncClientWithClient creates a client with an existing glue.Client.
 func NewGlueCatalogSyncClientWithClient(client *glue.Client, databaseName string, catalogID *string) *GlueCatalogSyncClient {
 	return &GlueCatalogSyncClient{
-		client:       client,
-		databaseName: databaseName,
-		catalogID:    catalogID,
+		client:                      client,
+		databaseName:                databaseName,
+		catalogID:                   catalogID,
+		GluePartitionSyncOperations: NewGluePartitionSyncOperations(client, catalogID),
 	}
 }
 

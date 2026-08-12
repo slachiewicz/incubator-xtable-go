@@ -55,6 +55,9 @@ type Config struct {
 	DatabaseName string            `json:"databaseName" yaml:"databaseName"`
 	URI          string            `json:"uri,omitempty" yaml:"uri,omitempty"`
 	Properties   map[string]string `json:"properties,omitempty" yaml:"properties,omitempty"`
+	// MaxPartitionsPerRequest caps how many partitions are sent per catalog call. Zero means
+	// DefaultMaxPartitionsPerRequest. Catalog service limits are enforced beneath this regardless.
+	MaxPartitionsPerRequest int `json:"maxPartitionsPerRequest,omitempty" yaml:"maxPartitionsPerRequest,omitempty"`
 }
 
 // Validate validates catalog configuration settings.
