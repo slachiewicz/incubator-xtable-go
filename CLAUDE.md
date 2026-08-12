@@ -77,10 +77,11 @@ not have, and `NOTICE` now disclaims affiliation while preserving the upstream a
 Apache-2.0 §4(d) requires for derived work. Do not reintroduce ASF branding: the project is
 `xtable-go`, not "Apache XTable (Go)".
 
-Every `.go` file still carries the 16-line ASF grant header, which is **inconsistent** with the above
-for files written here rather than ported — it states the copyright owner licensed the file *to the
-ASF*. Copy it verbatim from `pkg/model/` for now so the tree stays uniform, but this is an open
-question; see the note in `docs/improvement-plan.md`.
+Every `.go` file carries the identical 16-line ASF grant header, and **new files must too** — copy it
+verbatim from any existing file in `pkg/model/`. This is deliberate: donation to the ASF is planned,
+so the header is forward-looking rather than wrong. Do not replace it with plain Apache-2.0
+boilerplate. `docs/improvement-plan.md` T19 records the decision and the list of things that reverse
+at donation time.
 
 ## Go version
 

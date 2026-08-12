@@ -712,32 +712,33 @@ path relies on. `a86e258` covers both; `pkg/spi` now reports **100.0% of stateme
 
 ---
 
-## T19 — Decide what the per-file licence header should say ⏳ NEEDS A DECISION
+## T19 — Per-file licence header ✅ DECIDED: keep the ASF header
 
-All 80 `.go` files carry the ASF grant header: *"Licensed to the Apache Software Foundation (ASF)
-under one or more contributor license agreements ... The ASF licenses this file to you under the
-Apache License, Version 2.0."*
+All 80 `.go` files keep the ASF grant header. **Decided by the maintainer, who is an ASF member and
+intends to donate this code.** The header is forward-looking rather than inaccurate: at donation the
+software grant makes it true of the whole tree, and rewriting 80 files now only to rewrite them back
+would be churn.
 
-That sentence describes a grant **to the ASF**. It is accurate for code ported from Apache XTable and
-inaccurate for files written in this repository, which was never donated. `DISCLAIMER-WIP` is gone and
-`NOTICE` now disclaims affiliation, so the headers are the last place still implying ASF ownership.
+Do not "fix" these headers. New `.go` files take the same 16-line header, copied verbatim from
+`pkg/model/`.
 
-The licence itself is not in question — the code is Apache-2.0 either way, and `NOTICE` carries the
-upstream attribution Apache-2.0 §4(d) requires.
+### What reverses at donation time
 
-Options, for a maintainer rather than an agent to choose:
+The de-affiliation work in `ad19dee` is correct only while the code sits outside the ASF. Once the
+podling is accepted, reverse it:
 
-- **(a) Plain Apache-2.0 header everywhere.** Replace the grant wording with the standard
-  "Copyright 2026 the xtable-go authors / Licensed under the Apache License, Version 2.0" boilerplate.
-  Uniform and accurate; loses the visual link to upstream, which `NOTICE` already records.
-- **(b) Split by provenance.** Keep the ASF header on ported files, use the plain header on new ones.
-  Most accurate, but requires deciding file by file what counts as ported, and the tree stops being
-  uniform.
-- **(c) Leave as is.** Simplest, and arguably defensible while most of the tree derives from upstream,
-  but it keeps a statement that is untrue for new files.
+| Item | Now | At donation |
+|---|---|---|
+| `DISCLAIMER-WIP` | removed — the repo is not incubating | restore the standard incubator disclaimer |
+| `NOTICE` | names the xtable-go authors, disclaims affiliation, reproduces the upstream notice | revert to the ASF form: `Apache XTable (incubating)`, copyright The Apache Software Foundation |
+| README / SPEC / AGENTS banners | "Not an Apache Software Foundation project" | remove |
+| Project name | `xtable-go` | whatever the podling is named; ASF branding becomes correct |
+| Python package | author "the xtable-go authors", homepage the GitHub repo | ASF contact and homepage become correct again |
+| Module path | `github.com/slachiewicz/xtable-go` | the donated path — settle **before** the first tag, since Go module tags are immutable |
 
-Whichever is chosen, update the licensing section of `CLAUDE.md` in the same commit — it currently
-tells contributors to copy the ASF header verbatim.
+The last row is the one with a deadline attached: tagging under the personal path publishes an
+immutable version that consumers can pin, so either tag after the path is final or accept that early
+tags are throwaway.
 
 ---
 
