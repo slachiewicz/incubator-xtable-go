@@ -446,7 +446,7 @@ Scope is narrow — two lines, README only:
 
 Raised by reviewing the 15 unpushed commits. T10 is a release blocker.
 
-## T10 — Fix the release workflow 🔴 BLOCKER
+## T10 — Fix the release workflow ✅ COMPLETED
 
 `.github/workflows/release.yml`, step **"Build C-Shared Dynamic Libraries"**, has **no `if:` guard**.
 It runs on both `ubuntu-latest` and `macos-latest` and attempts all four platform pairs on each:
@@ -484,7 +484,7 @@ produced on the first `v*` tag**. The WASM and `sha256sum` steps in the same fil
 
 **Commit:** `ci: build c-shared libraries only on their native runner`
 
-## T11 — Restore CI coverage and re-sync docs ⚠️
+## T11 — Restore CI coverage and re-sync docs ✅ COMPLETED
 
 Three regressions from the same batch:
 
