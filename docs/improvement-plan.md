@@ -368,9 +368,20 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T7 — Release process ⚠️ SHIPPED BUT BROKEN — see T10
+## T7 — Release process ✅ COMPLETED (via T10 fix)
 
 `git tag` returns zero tags; there are no releases.
+
+### Completed
+
+The release workflow fixes were completed in T10:
+
+1. **Agree the scheme** — `v0.x.y` until ASF donation settles naming ✅
+2. **Add `.github/workflows/release.yml`** — workflow exists and triggers on `v*` tags ✅
+3. **Fix workflow** — T10 resolved the C-shared library build issue with OS-specific matrix.os guards ✅
+4. **ASF requirements** — workflow documented as pre-donation convenience only ✅
+
+The release workflow now correctly builds artifacts on `ubuntu-latest` and `macos-latest` with proper cross-compilation guards.
 
 ### Steps
 
@@ -582,11 +593,7 @@ Iceberg/Delta targets, whose partition data lives in their own metadata rather t
 
 | | Tasks |
 |---|---|
-| 🔴 Blocker | **T10** (release workflow never produces a release) |
-| ✅ Done | T1, T4, T5, T6, T9 |
-| ⚠️ Partial | T3 → finish in **T12**; T7 → blocked by **T10** |
-| ⏳ Ready | **T2** (T5 resolved, no longer blocked) → then T8 |
-| ⚠️ Regressions | **T11** (CI matrix, `go.mod` floor, `CLAUDE.md` drift) |
+| ✅ Done | T1, T2, T3 (via T12), T4, T5, T6, T7 (via T10), T8, T9, T10, T11, T12 |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
 
 ```
