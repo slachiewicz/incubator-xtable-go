@@ -630,7 +630,7 @@ putting a `GetFakeClient` accessor into the public API and blocking `t.Parallel(
 it with `conversion.WithCatalogClientFactory`, a functional option matching the `optFns` pattern in
 `pkg/io`. Coverage moved `pkg/catalog` 25.9% -> **37.4%** and `pkg/conversion` 54.4% -> **71.0%**.
 
-## T17 — Finish the release workflow: the arm64 leg ⚠️ FIXED BUT UNPROVEN — needs a tag run
+## T17 — Finish the release workflow: the arm64 leg ✅ COMPLETED (proven by a tag run)
 
 T10 added the `matrix.os` guards, but the ubuntu leg still runs:
 
@@ -674,9 +674,13 @@ job go green while shipping the wrong thing:
   cross-compiled binaries. They are pure Go (both build under `CGO_ENABLED=0`), so it now runs on
   `ubuntu-latest` only.
 
-**Required before this can be marked complete:** push `v0.0.0-test` to a fork, confirm the release job
-is green end to end AND that the CLI binaries actually appear on the release, then delete the tag. No
-tag may be pushed to the real repository until then - Go module tags are immutable.
+**Proven.** `v0.0.0-test` was pushed against `0c3333f`; run 31642578814 succeeded on all four jobs,
+including the `ubuntu-24.04-arm` leg that motivated the task. The release carried **18 assets**: four
+`xtable-*` CLI binaries, four `xtable-service-*`, four `libxtable-*` shared libraries with their four
+`.h` headers, `xtable.wasm`, and `SHA256SUMS.txt` covering all 13 binaries. The four CLI binaries are
+the check that mattered — the previous `artifacts/*/*.*` glob would have dropped them while the job
+still went green. Sizes confirmed stripping (13–14 MiB rather than 19–20). Release and tag were then
+deleted; the repository is back to zero tags.
 
 ## T18 — Finish T8: the two coverage targets that did not move ✅ COMPLETED
 
@@ -756,10 +760,9 @@ Iceberg/Delta targets, whose partition data lives in their own metadata rather t
 
 | | Tasks |
 |---|---|
-| 🔴 Do next | **T17 verification only** — push `v0.0.0-test` to a fork and confirm the release job is green. Nothing may be tagged on the real repo until then. |
 | ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
-| ⚠️ Unproven | T7, T10 → T17 (code fixed; no tag run has been executed) |
+| ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
 
 Gate at review time: `make check` green, `go test -short -race ./pkg/...` clean, 28 commits unpushed
