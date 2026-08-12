@@ -1,0 +1,120 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Artifacts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          check-latest: true
+          cache: true
+
+      - name: Build CLI binaries
+        run: |
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 go build -v -o dist/xtable-linux-amd64 ./cmd/xtable
+          GOOS=linux GOARCH=arm64 go build -v -o dist/xtable-linux-arm64 ./cmd/xtable
+          GOOS=darwin GOARCH=amd64 go build -v -o dist/xtable-darwin-amd64 ./cmd/xtable
+          GOOS=darwin GOARCH=arm64 go build -v -o dist/xtable-darwin-arm64 ./cmd/xtable
+          
+          GOOS=linux GOARCH=amd64 go build -v -o dist/xtable-service-linux-amd64 ./cmd/xtable-service
+          GOOS=linux GOARCH=arm64 go build -v -o dist/xtable-service-linux-arm64 ./cmd/xtable-service
+          GOOS=darwin GOARCH=amd64 go build -v -o dist/xtable-service-darwin-amd64 ./cmd/xtable-service
+          GOOS=darwin GOARCH=arm64 go build -v -o dist/xtable-service-darwin-arm64 ./cmd/xtable-service
+
+      - name: Build WebAssembly Engine
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          GOOS=js GOARCH=wasm go build -v -o dist/xtable.wasm ./cmd/xtable-wasm
+          ls -lh dist/xtable.wasm
+
+      - name: Build C-Shared Dynamic Libraries
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-linux-amd64.so ./bindings/c
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-linux-arm64.so ./bindings/c
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-darwin-amd64.dylib ./bindings/c
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-darwin-arm64.dylib ./bindings/c
+          ls -lh dist/libxtable-*
+
+      - name: Generate checksums
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.os }}
+          path: dist/*
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display artifact structure
+        run: |
+          ls -R artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/artifacts-ubuntu-latest/*.*
+            artifacts/artifacts-macos-latest/*.*
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Note: This workflow creates GitHub releases for convenience during pre-donation phase.
+      # Official ASF releases require additional artifacts (source tarball, signatures, DISCLAIMER-WIP)
+      # and must follow the Apache Release Policy. Once donated to the ASF, separate release
+      # management workflows will be required for official Apache releases.
