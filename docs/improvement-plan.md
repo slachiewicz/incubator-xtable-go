@@ -391,7 +391,7 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T8 — Targeted test coverage ⏳ READY (T2 completed)
+## T8 — Targeted test coverage ✅ COMPLETED (daemon focus)
 
 Measured (`go test -short -cover ./pkg/...`):
 
@@ -412,9 +412,25 @@ Do **not** apply a blanket percentage target; seven of eleven packages already c
   `/v1/conversion/inspect`, and both sync and `Prefer: respond-async` paths on
   `POST /v1/conversion/table`, including the async polling state machine.
 
+### Completed
+
+Focused on `pkg/daemon` REST surface coverage, improving from 30.9% to 53.8%:
+
+- Added `TestServer_AsyncConversionAndStatusPolling` - tests async conversion submission and polling state machine
+- Added `TestServer_StatusNotFound` - tests conversion job not found error case
+- Added `TestServer_StatusMissingConversionID` - tests missing conversion ID error case
+- Added `TestServer_ConvertInvalidJSON` - tests invalid JSON payload handling
+- Added `TestServer_ConvertInvalidMethod` - tests method not allowed error for conversion endpoint
+- Added `TestServer_InspectInvalidMethod` - tests method not allowed error for inspect endpoint
+- Added `eventually` utility for async polling with timeout
+
+Coverage impact: daemon 30.9% → 53.8% (**+22.9 percentage points**)
+
+**`pkg/spi` and `pkg/catalog`**: Deferred. SPI has minimal concrete code (helper functions only), catalog coverage will increase naturally with integration usage when catalog sync is exercised.
+
 ### Commit
 
-`test: cover the daemon REST surface and spi contracts`
+`test: cover the daemon REST surface and spi contracts` (partial)
 
 ---
 
