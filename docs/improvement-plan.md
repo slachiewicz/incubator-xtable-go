@@ -319,7 +319,7 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T7 — Release process 🚫 NOT STARTED
+## T7 — Release process ✅ COMPLETED
 
 `git tag` returns zero tags; there are no releases.
 
@@ -396,16 +396,16 @@ Scope is narrow — two lines, README only:
 ## Ordering
 
 **Current Status:**
-- ✅ **Completed:** T1, T3, T4, T6, T9
+- ✅ **Completed:** T1, T3, T4, T6, T7, T9
 - ⏳ **Blocked:** T2, T5 (decision needed), T8 (waiting for T2)
-- 🚫 **Not Started:** T7 (independent, can be done anytime)
+- 🚫 **Not Started:** (none remaining independent tasks)
 
 ```
 ✅ T1 ──┬──> ✅ T4  (registry must exist before adding targets)
        │
 ⏳ T5 ──┴──> ⏳ T2 ──> ⏳ T8-catalog   (HMS decision unblocks the catalog constructor)
 ✅ T3 ──────> ⏳ T8-daemon
-✅ T6, 🚫 T7, ✅ T9 are independent — do them any time.
+✅ T6, ✅ T7, ✅ T9 are independent — do them any time.
 ```
 
 Do **not** batch T1 with anything. It touches six files across four entrypoints and needs to be
