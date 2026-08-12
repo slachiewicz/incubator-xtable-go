@@ -19,7 +19,7 @@ classifiers = [
 
 [project.urls]
 "Homepage" = "https://xtable.apache.org"
-"Source" = "https://github.com/apache/incubator-xtable-go"
+"Source" = "https://github.com/slachiewicz/xtable-go"
 
 [tool.setuptools.package-data]
 "pyxtable" = ["libxtable.*"]

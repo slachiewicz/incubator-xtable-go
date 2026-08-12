@@ -1,4 +1,4 @@
-module github.com/apache/incubator-xtable-go
+module github.com/slachiewicz/xtable-go
 
 go 1.25.0
 

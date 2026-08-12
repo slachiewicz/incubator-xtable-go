@@ -27,8 +27,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/formats/iceberg"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // IcebergRESTCatalogClient synchronizes Iceberg table metadata with standard Iceberg REST Catalogs (Polaris, Unity, Tabular, Nessie).

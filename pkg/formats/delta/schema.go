@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // DeltaStructField matches a field in Delta schemaString JSON.

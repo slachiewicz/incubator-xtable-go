@@ -19,10 +19,10 @@
 
 # Apache XTable (Go)
 
-[![CI](https://github.com/slachiewicz/incubator-xtable-go/actions/workflows/ci.yml/badge.svg)](https://github.com/slachiewicz/incubator-xtable-go/actions/workflows/ci.yml)
-[![Integration Tests](https://github.com/slachiewicz/incubator-xtable-go/actions/workflows/integration.yml/badge.svg)](https://github.com/slachiewicz/incubator-xtable-go/actions/workflows/integration.yml)
-[![Security & SAST](https://github.com/slachiewicz/incubator-xtable-go/actions/workflows/security.yml/badge.svg)](https://github.com/slachiewicz/incubator-xtable-go/actions/workflows/security.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/apache/incubator-xtable-go)](https://goreportcard.com/report/github.com/apache/incubator-xtable-go)
+[![CI](https://github.com/slachiewicz/xtable-go/actions/workflows/ci.yml/badge.svg)](https://github.com/slachiewicz/xtable-go/actions/workflows/ci.yml)
+[![Integration Tests](https://github.com/slachiewicz/xtable-go/actions/workflows/integration.yml/badge.svg)](https://github.com/slachiewicz/xtable-go/actions/workflows/integration.yml)
+[![Security & SAST](https://github.com/slachiewicz/xtable-go/actions/workflows/security.yml/badge.svg)](https://github.com/slachiewicz/xtable-go/actions/workflows/security.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/slachiewicz/xtable-go)](https://goreportcard.com/report/github.com/slachiewicz/xtable-go)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 **Apache XTable (Go)** is a lightweight, ultra-high performance, **zero-JVM** lakehouse metadata translation engine written in pure Go. It facilitates **omni-directional, zero-copy interoperability** across open lakehouse table formats (**Delta Lake**, **Apache Iceberg**, **Apache Hudi**, **Apache Paimon**, and **Raw Parquet**) without rewriting underlying data files.
@@ -63,8 +63,8 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/slachiewicz/incubator-xtable-go.git
-cd incubator-xtable-go
+git clone https://github.com/slachiewicz/xtable-go.git
+cd xtable-go
 
 # Build all binaries
 make build
@@ -128,7 +128,7 @@ Run `xtable-service` as a standalone REST server or Kubernetes sidecar:
 - `POST /v1/conversion/inspect`: Inspect table metadata and schema over HTTP.
 - `GET /v1/health`: Liveness probe (`{"status":"UP","version":"0.1.0-SNAPSHOT"}`).
 
-See full specification in [`spec/rest-service-open-api.yaml`](file:///Users/slachiewicz/oss/incubator-xtable-go/spec/rest-service-open-api.yaml).
+See full specification in [`spec/rest-service-open-api.yaml`](./spec/rest-service-open-api.yaml).
 
 ---
 
@@ -175,9 +175,9 @@ make lint
 ## 🏛️ Architecture & Specifications
 
 For detailed architectural diagrams, domain models, and conversion invariants, refer to:
-- 📖 [**Technical Specification (`SPEC.md`)**](file:///Users/slachiewicz/oss/incubator-xtable-go/SPEC.md)
-- 🤖 [**Agent & Contributor Guide (`AGENTS.md`)**](file:///Users/slachiewicz/oss/incubator-xtable-go/AGENTS.md)
-- 📋 [**REST Service OpenAPI Contract (`spec/rest-service-open-api.yaml`)**](file:///Users/slachiewicz/oss/incubator-xtable-go/spec/rest-service-open-api.yaml)
+- 📖 [**Technical Specification (`SPEC.md`)**](./SPEC.md)
+- 🤖 [**Agent & Contributor Guide (`AGENTS.md`)**](./AGENTS.md)
+- 📋 [**REST Service OpenAPI Contract (`spec/rest-service-open-api.yaml`)**](./spec/rest-service-open-api.yaml)
 
 ---
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Go-native port of [Apache XTable (incubating)](https://github.com/apache/incubator-xtable) — omni-directional
 metadata translation between Delta Lake, Iceberg, Hudi, Paimon and raw Parquet. Module path is
-`github.com/apache/incubator-xtable-go`.
+`github.com/slachiewicz/xtable-go`.
 
 Layout: `pkg/model` (canonical pivot types), `pkg/spi` (source/target/sync interfaces), `pkg/io` (storage
 abstraction), `pkg/formats/<format>` (per-format readers and writers), `pkg/conversion` (the controller),

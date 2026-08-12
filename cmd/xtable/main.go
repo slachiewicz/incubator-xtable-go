@@ -28,11 +28,11 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/formats"
-	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
-	"github.com/apache/incubator-xtable-go/pkg/spi"
+	"github.com/slachiewicz/xtable-go/pkg/conversion"
+	"github.com/slachiewicz/xtable-go/pkg/formats"
+	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/spi"
 )
 
 var (

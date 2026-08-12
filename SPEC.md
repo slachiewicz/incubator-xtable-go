@@ -21,7 +21,7 @@
 
 **Version:** 0.1.0-SNAPSHOT  
 **Status:** Active Draft / Implementation  
-**Module:** `github.com/apache/incubator-xtable-go`
+**Module:** `github.com/slachiewicz/xtable-go`
 
 ---
 

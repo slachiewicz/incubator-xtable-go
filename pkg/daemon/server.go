@@ -28,9 +28,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/formats"
-	"github.com/apache/incubator-xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/conversion"
+	"github.com/slachiewicz/xtable-go/pkg/formats"
+	"github.com/slachiewicz/xtable-go/pkg/io"
 )
 
 // Server implements the HTTP REST server for Apache XTable matching the OpenAPI spec.

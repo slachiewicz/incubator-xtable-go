@@ -23,16 +23,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apache/incubator-xtable-go/pkg/catalog"
+	"github.com/slachiewicz/xtable-go/pkg/catalog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
-	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
-	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
-	"github.com/apache/incubator-xtable-go/pkg/spi"
+	"github.com/slachiewicz/xtable-go/pkg/conversion"
+	"github.com/slachiewicz/xtable-go/pkg/formats/delta"
+	"github.com/slachiewicz/xtable-go/pkg/formats/iceberg"
+	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/spi"
 )
 
 func TestController_DeltaToIcebergE2E(t *testing.T) {

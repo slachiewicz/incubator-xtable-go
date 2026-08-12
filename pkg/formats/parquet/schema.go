@@ -20,7 +20,7 @@ package parquet
 import (
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // ParquetSchemaToModel converts a parquet-go Schema into XTable's canonical model.Schema.

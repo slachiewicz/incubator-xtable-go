@@ -32,10 +32,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/incubator-xtable-go/pkg/daemon"
-	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
-	localio "github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/daemon"
+	"github.com/slachiewicz/xtable-go/pkg/formats/delta"
+	localio "github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 func TestE2E_DaemonRESTService(t *testing.T) {

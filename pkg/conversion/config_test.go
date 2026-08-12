@@ -23,8 +23,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/conversion"
+	"github.com/slachiewicz/xtable-go/pkg/io"
 )
 
 func TestStorageConfig_ToS3OptionFuncs_NilConfig(t *testing.T) {

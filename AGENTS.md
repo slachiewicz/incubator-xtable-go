@@ -19,7 +19,7 @@
 
 # Apache XTable (Go) Agent Guide
 
-This document defines repository-specific instructions, architecture rules, and validation workflows for AI coding agents working on **Apache XTable in Go ([`incubator-xtable-go`](file:///Users/slachiewicz/oss/incubator-xtable-go))**.
+This document defines repository-specific instructions, architecture rules, and validation workflows for AI coding agents working on **Apache XTable in Go (`xtable-go`)**.
 
 ---
 

@@ -19,7 +19,7 @@
 
 # Apache XTable (Go) Service OpenAPI Specification
 
-The [`rest-service-open-api.yaml`](file:///Users/slachiewicz/oss/incubator-xtable-go/spec/rest-service-open-api.yaml) defines the API contract for running table format conversions, polling conversion jobs, and inspecting lakehouse table metadata over HTTP/REST.
+The [`rest-service-open-api.yaml`](./spec/rest-service-open-api.yaml) defines the API contract for running table format conversions, polling conversion jobs, and inspecting lakehouse table metadata over HTTP/REST.
 
 ---
 

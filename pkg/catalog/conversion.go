@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // Table property keys used to describe a table registered in an external catalog. These mirror the

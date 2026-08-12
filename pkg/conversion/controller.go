@@ -23,11 +23,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/apache/incubator-xtable-go/pkg/catalog"
-	"github.com/apache/incubator-xtable-go/pkg/formats"
-	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
-	"github.com/apache/incubator-xtable-go/pkg/spi"
+	"github.com/slachiewicz/xtable-go/pkg/catalog"
+	"github.com/slachiewicz/xtable-go/pkg/formats"
+	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/spi"
 )
 
 // CatalogClientFactory constructs a catalog sync client from its configuration.

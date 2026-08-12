@@ -28,7 +28,7 @@ import (
 	gluetypes "github.com/aws/aws-sdk-go-v2/service/glue/types"
 	"github.com/aws/smithy-go"
 
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // GlueCatalogSyncClient manages table and partition metadata synchronization to AWS Glue Data Catalog.

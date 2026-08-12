@@ -24,7 +24,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // DefaultMaxPartitionsPerRequest bounds how many partitions are sent per catalog call. It mirrors

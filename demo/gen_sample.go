@@ -24,9 +24,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
-	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/formats/delta"
+	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 func main() {

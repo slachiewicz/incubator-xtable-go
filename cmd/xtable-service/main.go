@@ -33,8 +33,8 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/daemon"
+	"github.com/slachiewicz/xtable-go/pkg/conversion"
+	"github.com/slachiewicz/xtable-go/pkg/daemon"
 )
 
 var (

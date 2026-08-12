@@ -26,11 +26,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	pqformat "github.com/apache/incubator-xtable-go/pkg/formats/parquet"
-	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
-	"github.com/apache/incubator-xtable-go/pkg/spi"
+	"github.com/slachiewicz/xtable-go/pkg/conversion"
+	pqformat "github.com/slachiewicz/xtable-go/pkg/formats/parquet"
+	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/spi"
 )
 
 type TestRecord struct {

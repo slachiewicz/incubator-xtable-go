@@ -23,9 +23,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/spi"
+	"github.com/slachiewicz/xtable-go/pkg/conversion"
+	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/spi"
 )
 
 // Daemon coordinates continuous, scheduled synchronization across configured lakehouse datasets.

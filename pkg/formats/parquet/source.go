@@ -27,9 +27,9 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
-	"github.com/apache/incubator-xtable-go/pkg/spi"
+	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/spi"
 )
 
 // Source implements spi.ConversionSource for crawling unmanaged Parquet directory datasets.

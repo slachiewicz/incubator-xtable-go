@@ -20,14 +20,14 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
-	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
-	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
-	"github.com/apache/incubator-xtable-go/pkg/formats/paimon"
-	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
-	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
-	"github.com/apache/incubator-xtable-go/pkg/spi"
+	"github.com/slachiewicz/xtable-go/pkg/formats/delta"
+	"github.com/slachiewicz/xtable-go/pkg/formats/hudi"
+	"github.com/slachiewicz/xtable-go/pkg/formats/iceberg"
+	"github.com/slachiewicz/xtable-go/pkg/formats/paimon"
+	"github.com/slachiewicz/xtable-go/pkg/formats/parquet"
+	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/spi"
 )
 
 // NewSource creates a ConversionSource for the given format.

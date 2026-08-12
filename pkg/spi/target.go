@@ -20,7 +20,7 @@ package spi
 import (
 	"context"
 
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // ConversionTarget defines the interface for writing translated table metadata to a target table format.

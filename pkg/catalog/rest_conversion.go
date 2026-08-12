@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // IcebergRESTConversionSource resolves tables registered in an Iceberg REST Catalog

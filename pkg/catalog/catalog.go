@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/apache/incubator-xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 // CatalogType represents supported external metastores / data catalogs.

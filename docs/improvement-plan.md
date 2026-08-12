@@ -394,7 +394,7 @@ The release workflow now correctly builds artifacts on `ubuntu-latest` and `maco
 ### Steps
 
 1. Agree the scheme. The module is pre-1.0 and headed for ASF donation — `v0.x.y` until the donation
-   settles the naming. Note the module path is already `github.com/apache/incubator-xtable-go` while the
+   settles the naming. Note the module path is already `github.com/slachiewicz/xtable-go` while the
    remote is a personal fork; **resolve that before tagging**, since a Go module tag is immutable and
    the path is baked into consumers.
 2. Add `.github/workflows/release.yml` triggered on `v*` tags, building the matrix already proven in
