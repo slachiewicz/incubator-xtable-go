@@ -19,6 +19,7 @@ package conversion
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -70,19 +71,10 @@ func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig) (map[model.Ta
 		syncResult := c.syncToTarget(ctx, cfg, source, target, targetFormat, startTime)
 		_ = target.Close()
 		results[targetFormat] = syncResult
-	}
 
-	if c.hasSuccessfulSyncs(results) && len(cfg.Catalogs) > 0 {
-		catalogErr := c.syncToCatalogs(ctx, cfg, source)
-		for format, result := range results {
-			if result.StatusCode == spi.SyncStatusSuccess && catalogErr != nil {
-				results[format] = &spi.SyncResult{
-					TableFormat:       format,
-					StatusCode:        spi.SyncStatusError,
-					Error:             fmt.Sprintf("conversion succeeded but catalog sync failed: %v", catalogErr),
-					LastInstantSynced: result.LastInstantSynced,
-					Duration:          result.Duration,
-				}
+		if syncResult.StatusCode == spi.SyncStatusSuccess && len(cfg.Catalogs) > 0 {
+			if catalogErr := c.syncTargetToCatalogs(ctx, cfg, targetFormat); catalogErr != nil {
+				results[targetFormat].Error = appendCatalogError(results[targetFormat].Error, catalogErr.Error())
 			}
 		}
 	}
@@ -90,35 +82,74 @@ func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig) (map[model.Ta
 	return results, nil
 }
 
-func (c *Controller) hasSuccessfulSyncs(results map[model.TableFormat]*spi.SyncResult) bool {
-	for _, result := range results {
-		if result.StatusCode == spi.SyncStatusSuccess {
-			return true
-		}
-	}
-	return false
-}
-
-func (c *Controller) syncToCatalogs(ctx context.Context, cfg *DatasetConfig, source spi.ConversionSource) error {
-	snapshot, err := source.GetCurrentSnapshot(ctx)
+func (c *Controller) syncTargetToCatalogs(ctx context.Context, cfg *DatasetConfig, targetFormat model.TableFormat) error {
+	targetSource, err := c.createSource(targetFormat, cfg.TableBasePath)
 	if err != nil {
-		return fmt.Errorf("failed to get snapshot for catalog sync: %w", err)
+		return fmt.Errorf("failed to create target source for catalog sync: %w", err)
+	}
+	defer func() { _ = targetSource.Close() }()
+
+	snapshot, err := targetSource.GetCurrentSnapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get target snapshot for catalog sync: %w", err)
 	}
 
+	var catalogErrors []error
 	for i := range cfg.Catalogs {
-		client, err := catalog.NewSyncClient(ctx, &cfg.Catalogs[i])
+		var client catalog.SyncClient
+		var err error
+		if catalogFactoryFunc != nil {
+			client, err = catalogFactoryFunc(ctx, &cfg.Catalogs[i])
+		} else {
+			client, err = catalog.NewSyncClient(ctx, &cfg.Catalogs[i])
+		}
+
 		if err != nil {
-			return fmt.Errorf("failed to create catalog sync client for %s: %w", cfg.Catalogs[i].Type, err)
+			catalogErrors = append(catalogErrors, fmt.Errorf("failed to create catalog sync client for %s: %w", cfg.Catalogs[i].Type, err))
+			continue
 		}
 
 		if err := client.CreateOrUpdateTable(ctx, snapshot.Table, snapshot); err != nil {
-			_ = client.Close()
-			return fmt.Errorf("failed to sync to catalog %s: %w", cfg.Catalogs[i].Type, err)
+			catalogErrors = append(catalogErrors, fmt.Errorf("failed to sync to catalog %s: %w", cfg.Catalogs[i].Type, err))
 		}
 		_ = client.Close()
 	}
 
+	if len(catalogErrors) > 0 {
+		return fmt.Errorf("catalog sync errors: %v", errors.Join(catalogErrors...))
+	}
 	return nil
+}
+
+func appendCatalogError(baseErr, catalogErr string) string {
+	if baseErr == "" {
+		return fmt.Sprintf("catalog sync error: %s", catalogErr)
+	}
+	return fmt.Sprintf("%s; catalog sync error: %s", baseErr, catalogErr)
+}
+
+var catalogFactoryFunc func(ctx context.Context, cfg *catalog.Config) (catalog.SyncClient, error)
+var registeredFakeClient catalog.SyncClient
+
+// SetCatalogFactory sets a custom catalog factory for testing purposes.
+func SetCatalogFactory(fn func(ctx context.Context, cfg *catalog.Config) (catalog.SyncClient, error)) {
+	catalogFactoryFunc = fn
+}
+
+// ResetCatalogFactory resets the catalog factory to the default implementation.
+func ResetCatalogFactory() {
+	catalogFactoryFunc = nil
+	registeredFakeClient = nil
+}
+
+// SetRegisteredFakeClient sets the registered fake client for testing purposes.
+func SetRegisteredFakeClient(client catalog.SyncClient) {
+	registeredFakeClient = client
+}
+
+// GetFakeClient returns the registered fake client for testing purposes.
+func GetFakeClient() catalog.SyncClient {
+	return registeredFakeClient
 }
 
 func (c *Controller) syncToTarget(
