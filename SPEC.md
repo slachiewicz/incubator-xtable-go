@@ -234,8 +234,7 @@ unmeasured numbers as fact — notably a 4.8 MB binary, which is off by roughly 
 | :--- | :--- | :--- |
 | Binary size, `cmd/xtable`, `-ldflags="-s -w"` | **13.5 MiB** | `go build` on darwin/arm64, 2026-08-12 |
 | Binary size, `cmd/xtable`, default flags | **19.5 MiB** | same |
-| Binary size, `cmd/xtable-wasm`, default flags | **26.3 MiB** | `GOOS=js GOARCH=wasm go build`, same date |
-| Binary size, `cmd/xtable-wasm`, `-ldflags="-s -w"` | **25.6 MiB** | stripping barely helps a wasm target |
+| Binary size, `cmd/xtable-wasm`, `-ldflags="-s -w"` | **17.6 MiB** | after excluding the AWS SDK from `js` builds; was 25.6 MiB with it linked |
 | Process start to exit, `xtable version` | **median 7.0 ms** (min 6.5, max 7.7, n=30) | wall clock around `fork`/`exec`; an upper bound, since it includes the harness |
 
 Outstanding targets, unmeasured:
@@ -251,11 +250,12 @@ implementations exercised on identical tables and hardware.
 
 ### 9.1 Known size problems
 
-- **The WebAssembly target links the entire AWS SDK.** `GOOS=js GOARCH=wasm go list -deps
-  ./cmd/xtable-wasm` reports 71 `aws-sdk-go-v2` packages, including `service/glue`. A browser build
-  cannot use S3 or Glue — there are no credentials, and only local and in-memory paths resolve — so
-  this is dead weight, and it dominates the 26 MiB artifact. Stripping does not help; excluding the S3
-  and Glue backends from `js/wasm` with build tags is the fix.
+- ~~The WebAssembly target links the entire AWS SDK~~ — **fixed.** `pkg/io/s3.go` and the Glue
+  implementations in `pkg/catalog` now carry `//go:build !js`, with `js` counterparts returning
+  `ErrS3Unsupported` and `ErrGlueUnsupported`. `GOOS=js GOARCH=wasm go list -deps ./cmd/xtable-wasm`
+  now reports **zero** `aws-sdk-go-v2` and `smithy` packages, down from 103, and the artifact fell
+  from 25.6 MiB to **17.6 MiB**. An `s3://` path in a browser now fails with a stated reason rather
+  than dragging in an SDK that could never have worked there.
 - **Release artifacts are unstripped.** Symbol tables and DWARF add roughly 6 MiB per binary.
 
 ---
