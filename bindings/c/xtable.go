@@ -31,11 +31,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
-	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
-	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
-	"github.com/apache/incubator-xtable-go/pkg/formats/paimon"
-	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
+	"github.com/apache/incubator-xtable-go/pkg/formats"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
 	"github.com/apache/incubator-xtable-go/pkg/spi"
@@ -121,20 +117,9 @@ func xtable_inspect_json(formatCStr *C.char, basePathCStr *C.char) *C.char {
 		return errorJSON(fmt.Sprintf("storage error: %v", err))
 	}
 
-	var source spi.ConversionSource
-	switch format {
-	case model.TableFormatDelta:
-		source = delta.NewSource(storage, basePath)
-	case model.TableFormatIceberg:
-		source = iceberg.NewSource(storage, basePath)
-	case model.TableFormatHudi:
-		source = hudi.NewSource(storage, basePath)
-	case model.TableFormatParquet:
-		source = parquet.NewSource(storage, basePath)
-	case model.TableFormatPaimon:
-		source = paimon.NewSource(storage, basePath)
-	default:
-		return errorJSON(fmt.Sprintf("unsupported format: %s", format))
+	source, err := formats.NewSource(format, storage, basePath)
+	if err != nil {
+		return errorJSON(fmt.Sprintf("failed to create format source: %v", err))
 	}
 
 	table, err := source.GetCurrentTable(ctx)

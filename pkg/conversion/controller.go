@@ -22,11 +22,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
-	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
-	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
-	"github.com/apache/incubator-xtable-go/pkg/formats/paimon"
-	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
+	"github.com/apache/incubator-xtable-go/pkg/formats"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
 	"github.com/apache/incubator-xtable-go/pkg/spi"
@@ -64,7 +60,7 @@ func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig) (map[model.Ta
 		}
 
 		startTime := time.Now()
-		target, err := c.createTarget(targetFormat, cfg.TableBasePath, cfg.TableName)
+		target, err := c.createTarget(ctx, targetFormat, cfg.TableBasePath, cfg.TableName)
 		if err != nil {
 			results[targetFormat] = spi.NewErrorSyncResult(targetFormat, err, time.Since(startTime))
 			continue
@@ -129,49 +125,9 @@ func (c *Controller) syncToTarget(
 }
 
 func (c *Controller) createSource(format model.TableFormat, basePath string) (spi.ConversionSource, error) {
-	switch format {
-	case model.TableFormatDelta:
-		return delta.NewSource(c.storage, basePath), nil
-	case model.TableFormatIceberg:
-		return iceberg.NewSource(c.storage, basePath), nil
-	case model.TableFormatHudi:
-		return hudi.NewSource(c.storage, basePath), nil
-	case model.TableFormatParquet:
-		return parquet.NewSource(c.storage, basePath), nil
-	case model.TableFormatPaimon:
-		return paimon.NewSource(c.storage, basePath), nil
-	default:
-		return nil, fmt.Errorf("unsupported source table format: %s", format)
-	}
+	return formats.NewSource(format, c.storage, basePath)
 }
 
-func (c *Controller) createTarget(format model.TableFormat, basePath, tableName string) (spi.ConversionTarget, error) {
-	targetTable := &model.Table{
-		Name:        tableName,
-		TableFormat: format,
-		BasePath:    basePath,
-	}
-
-	switch format {
-	case model.TableFormatDelta:
-		target := delta.NewTarget(c.storage)
-		if err := target.Init(context.Background(), targetTable); err != nil {
-			return nil, err
-		}
-		return target, nil
-	case model.TableFormatIceberg:
-		target := iceberg.NewTarget(c.storage)
-		if err := target.Init(context.Background(), targetTable); err != nil {
-			return nil, err
-		}
-		return target, nil
-	case model.TableFormatHudi:
-		target := hudi.NewTarget(c.storage)
-		if err := target.Init(context.Background(), targetTable); err != nil {
-			return nil, err
-		}
-		return target, nil
-	default:
-		return nil, fmt.Errorf("unsupported target table format: %s", format)
-	}
+func (c *Controller) createTarget(ctx context.Context, format model.TableFormat, basePath, tableName string) (spi.ConversionTarget, error) {
+	return formats.NewTarget(ctx, format, c.storage, basePath, tableName)
 }

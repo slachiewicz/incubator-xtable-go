@@ -29,11 +29,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
-	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
-	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
-	"github.com/apache/incubator-xtable-go/pkg/formats/paimon"
-	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
+	"github.com/apache/incubator-xtable-go/pkg/formats"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
 	"github.com/apache/incubator-xtable-go/pkg/spi"
@@ -189,20 +185,9 @@ func newInspectCmd() *cobra.Command {
 				return fmt.Errorf("failed to initialize storage for %s: %w", basePath, err)
 			}
 
-			var source spi.ConversionSource
-			switch format {
-			case model.TableFormatDelta:
-				source = delta.NewSource(storage, basePath)
-			case model.TableFormatIceberg:
-				source = iceberg.NewSource(storage, basePath)
-			case model.TableFormatHudi:
-				source = hudi.NewSource(storage, basePath)
-			case model.TableFormatParquet:
-				source = parquet.NewSource(storage, basePath)
-			case model.TableFormatPaimon:
-				source = paimon.NewSource(storage, basePath)
-			default:
-				return fmt.Errorf("unsupported inspect format: %s", format)
+			source, err := formats.NewSource(format, storage, basePath)
+			if err != nil {
+				return fmt.Errorf("failed to create format source: %w", err)
 			}
 
 			table, err := source.GetCurrentTable(ctx)

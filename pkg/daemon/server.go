@@ -29,14 +29,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/incubator-xtable-go/pkg/conversion"
-	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
-	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
-	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
-	"github.com/apache/incubator-xtable-go/pkg/formats/paimon"
-	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
+	"github.com/apache/incubator-xtable-go/pkg/formats"
 	"github.com/apache/incubator-xtable-go/pkg/io"
-	"github.com/apache/incubator-xtable-go/pkg/model"
-	"github.com/apache/incubator-xtable-go/pkg/spi"
 )
 
 // Server implements the HTTP REST server for Apache XTable matching the OpenAPI spec.
@@ -242,20 +236,9 @@ func (s *Server) handleInspectTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var source spi.ConversionSource
-	switch req.Format {
-	case model.TableFormatDelta:
-		source = delta.NewSource(storage, req.TableBasePath)
-	case model.TableFormatIceberg:
-		source = iceberg.NewSource(storage, req.TableBasePath)
-	case model.TableFormatHudi:
-		source = hudi.NewSource(storage, req.TableBasePath)
-	case model.TableFormatParquet:
-		source = parquet.NewSource(storage, req.TableBasePath)
-	case model.TableFormatPaimon:
-		source = paimon.NewSource(storage, req.TableBasePath)
-	default:
-		http.Error(w, fmt.Sprintf("unsupported format: %s", req.Format), http.StatusBadRequest)
+	source, err := formats.NewSource(req.Format, storage, req.TableBasePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create format source: %v", err), http.StatusBadRequest)
 		return
 	}
 
