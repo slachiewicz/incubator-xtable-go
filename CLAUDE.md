@@ -98,12 +98,12 @@ Do not treat these as intended behavior; fix them when touching the surrounding 
 
 - ~~`ParseTableFormat` case sensitivity~~ — **fixed**: it now upper-cases and trims, so `"Iceberg"`,
   `" iceberg "` and `"ICEBERG"` all parse, and the error names the accepted values.
-- `DiffFiles` (`pkg/model/diff.go`) builds its result by ranging over maps, so `FilesAdded`/`FilesRemoved`
-  ordering is nondeterministic. Tests must not assert slice order. It also keys purely on `PhysicalPath`,
-  so a file whose size or record count changed is reported as unchanged.
-- `Schema.FieldByPath` (`pkg/model/schema.go:143`) uses `strings.EqualFold` and so is always
-  case-**insensitive**; the doc comment was reworded to the vague "(case-sensitive or insensitive)"
-  rather than the behavior being fixed.
+- ~~`DiffFiles` ordering and path-only keying~~ — **fixed**: results are sorted by `PhysicalPath`, so
+  tests may assert order, and a file whose size or record count changed at the same path is now
+  reported as a rewrite (present in both `FilesRemoved` and `FilesAdded`) instead of unchanged.
+- ~~`Schema.FieldByPath` case handling~~ — **fixed**: an exact match now wins at each level, with the
+  case-insensitive fallback kept only for when no exact match exists (format metadata does not always
+  agree with the schema on case). A schema holding both `Name` and `name` now resolves predictably.
 
 ## Testing
 

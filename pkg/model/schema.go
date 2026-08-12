@@ -141,7 +141,13 @@ func (s *Schema) AllFields() []*Field {
 	return output
 }
 
-// FieldByPath searches for a field matching the dot-delimited path (case-sensitive or insensitive).
+// FieldByPath searches for a field matching the dot-delimited path.
+//
+// Matching prefers an exact, case-sensitive match at each level and falls back to a
+// case-insensitive one only when no exact match exists. The fallback is deliberate: format adapters
+// pass partition column names taken from format metadata, which does not always agree with the
+// schema on case. Preferring the exact match first means a schema holding both "Name" and "name"
+// resolves predictably rather than returning whichever field happened to come first.
 func (s *Schema) FieldByPath(path string) *Field {
 	if s == nil {
 		return nil
@@ -150,12 +156,18 @@ func (s *Schema) FieldByPath(path string) *Field {
 	current := s
 
 	for i, part := range parts {
-		var matched *Field
+		var matched, foldMatched *Field
 		for _, f := range current.Fields {
-			if strings.EqualFold(f.Name, part) {
+			if f.Name == part {
 				matched = f
 				break
 			}
+			if foldMatched == nil && strings.EqualFold(f.Name, part) {
+				foldMatched = f
+			}
+		}
+		if matched == nil {
+			matched = foldMatched
 		}
 		if matched == nil {
 			return nil

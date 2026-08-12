@@ -206,3 +206,109 @@ func TestParseTableFormatRejectsUnknownWithGuidance(t *testing.T) {
 	assert.Contains(t, err.Error(), "DELTA")
 	assert.Contains(t, err.Error(), "PARQUET")
 }
+
+func TestDiffFilesDetectsRewrittenFiles(t *testing.T) {
+	t.Parallel()
+
+	file := func(path string, size, records int64) *model.DataFile {
+		return &model.DataFile{PhysicalPath: path, FileSizeBytes: size, RecordCount: records}
+	}
+
+	tests := []struct {
+		name        string
+		oldFiles    []*model.DataFile
+		newFiles    []*model.DataFile
+		wantAdded   []string
+		wantRemoved []string
+	}{
+		{
+			name:      "identical file is unchanged",
+			oldFiles:  []*model.DataFile{file("a.parquet", 100, 10)},
+			newFiles:  []*model.DataFile{file("a.parquet", 100, 10)},
+			wantAdded: nil, wantRemoved: nil,
+		},
+		{
+			// Previously reported as unchanged: the diff keyed on path alone.
+			name:        "same path with a different size is a rewrite",
+			oldFiles:    []*model.DataFile{file("a.parquet", 100, 10)},
+			newFiles:    []*model.DataFile{file("a.parquet", 250, 10)},
+			wantAdded:   []string{"a.parquet"},
+			wantRemoved: []string{"a.parquet"},
+		},
+		{
+			name:        "same path with a different record count is a rewrite",
+			oldFiles:    []*model.DataFile{file("a.parquet", 100, 10)},
+			newFiles:    []*model.DataFile{file("a.parquet", 100, 99)},
+			wantAdded:   []string{"a.parquet"},
+			wantRemoved: []string{"a.parquet"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			diff := model.DiffFiles(tt.oldFiles, tt.newFiles)
+
+			added := make([]string, 0, len(diff.FilesAdded))
+			for _, f := range diff.FilesAdded {
+				added = append(added, f.PhysicalPath)
+			}
+			removed := make([]string, 0, len(diff.FilesRemoved))
+			for _, f := range diff.FilesRemoved {
+				removed = append(removed, f.PhysicalPath)
+			}
+
+			assert.Equal(t, tt.wantAdded, nilIfEmpty(added))
+			assert.Equal(t, tt.wantRemoved, nilIfEmpty(removed))
+		})
+	}
+}
+
+func nilIfEmpty(s []string) []string {
+	if len(s) == 0 {
+		return nil
+	}
+	return s
+}
+
+func TestDiffFilesIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	mk := func(paths ...string) []*model.DataFile {
+		out := make([]*model.DataFile, 0, len(paths))
+		for _, p := range paths {
+			out = append(out, &model.DataFile{PhysicalPath: p, FileSizeBytes: 1, RecordCount: 1})
+		}
+		return out
+	}
+	oldFiles := mk("c.parquet", "a.parquet", "b.parquet")
+	newFiles := mk("e.parquet", "d.parquet", "a.parquet")
+
+	first := model.DiffFiles(oldFiles, newFiles)
+	for range 20 {
+		got := model.DiffFiles(oldFiles, newFiles)
+		assert.Equal(t, first.FilesAdded, got.FilesAdded, "FilesAdded ordering must not depend on map iteration")
+		assert.Equal(t, first.FilesRemoved, got.FilesRemoved, "FilesRemoved ordering must not depend on map iteration")
+	}
+	// Sorted, so callers can assert on it.
+	assert.Equal(t, "d.parquet", first.FilesAdded[0].PhysicalPath)
+	assert.Equal(t, "b.parquet", first.FilesRemoved[0].PhysicalPath)
+}
+
+func TestFieldByPathPrefersExactCase(t *testing.T) {
+	t.Parallel()
+
+	lower := &model.Field{Name: "name", Schema: model.NewPrimitiveSchema(model.TypeString, false)}
+	upper := &model.Field{Name: "Name", Schema: model.NewPrimitiveSchema(model.TypeInt, false)}
+	// "Name" is declared second on purpose: a fold-only match would return "name" for both lookups.
+	schema := model.NewRecordSchema("rec", []*model.Field{lower, upper}, false)
+
+	assert.Same(t, lower, schema.FieldByPath("name"), "exact match must win")
+	assert.Same(t, upper, schema.FieldByPath("Name"), "exact match must win regardless of declaration order")
+
+	// The case-insensitive fallback survives, since format metadata does not always agree on case.
+	only := model.NewRecordSchema("rec", []*model.Field{lower}, false)
+	assert.Same(t, lower, only.FieldByPath("NAME"), "fallback must still resolve when no exact match exists")
+	assert.Nil(t, only.FieldByPath("missing"))
+}
