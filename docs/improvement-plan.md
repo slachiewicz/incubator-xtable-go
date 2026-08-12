@@ -40,8 +40,9 @@ stated in the task rather than the status.
 4. **Tests** go in the external `<pkg>_test` package, are table-driven, and call `t.Parallel()` in both
    parent and subtests. `testify` (`require`/`assert`) only. Do not add `t.Parallel()` to anything in
    `test/dockertest_*`.
-5. **Do not edit `go.mod`'s `go` directive** (currently `go 1.25` — a deliberate minor-level floor; do
-   not reintroduce a patch pin). If a task genuinely requires it, update the `ci.yml` matrix in the
+5. **Do not edit `go.mod`'s `go` directive** (currently `go 1.25.0` — the 1.25 minor floor, forced to
+   that exact spelling by `golang.org/x/sys`; do not let it drift to a later patch such as `1.25.5`).
+   Note `go get -u ./...` rewrites this directive, so re-check it after any dependency sweep. If a task genuinely requires it, update the `ci.yml` matrix in the
    same commit.
 6. **Never assert on `model.DiffFiles` slice ordering** — it ranges over maps and is nondeterministic.
 7. After editing `.golangci.yml`, run `golangci-lint config verify`. `golangci-lint run` silently
