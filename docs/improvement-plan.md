@@ -42,7 +42,7 @@ Every file path, line number and signature below was read out of the tree at com
 
 ---
 
-## T1 — Extract a format registry
+## T1 — Extract a format registry ✅ COMPLETED
 
 **Why first.** Format construction is duplicated across **six** switch statements. Two of them
 (`bindings/c`, `cmd/xtable-wasm`) were already found out of sync — they returned
@@ -115,7 +115,7 @@ Body should say the two entrypoints that were out of sync and that the registry 
 
 ---
 
-## T2 — Wire catalog sync into the conversion path
+## T2 — Wire catalog sync into the conversion path ⏳ BLOCKED (waiting for T5)
 
 **Current state:** `pkg/catalog` is dead code outside its own tests. `DatasetConfig`
 (`pkg/conversion/config.go`) has no catalog field and `Controller` never builds a `SyncClient`, so Glue
@@ -176,7 +176,7 @@ and Iceberg REST are unreachable from the CLI, the config file, and the REST ser
 
 ---
 
-## T3 — Make storage options reachable from configuration
+## T3 — Make storage options reachable from configuration ✅ COMPLETED
 
 **Current state:** `pkg/io/storage.go:85` — `NewStorageForPath` calls `NewS3Storage(ctx)` with no
 options. `NewS3Storage` accepts `optFns ...func(*S3Options)` and `S3Options` carries
@@ -222,7 +222,7 @@ constructs storage directly, which is why this gap never surfaced in tests.
 
 ---
 
-## T4 — Parquet and Paimon targets
+## T4 — Parquet and Paimon targets ✅ COMPLETED
 
 **Depends on T1.** With the registry in place, each new target is registered once.
 
@@ -266,7 +266,7 @@ extension path first.
 
 ---
 
-## T5 — Resolve Hive Metastore: implement or withdraw
+## T5 — Resolve Hive Metastore: implement or withdraw ⏳ BLOCKED (DECISION NEEDED)
 
 `CatalogTypeHMS` is declared at `pkg/catalog/catalog.go:32` with **no implementation**, while
 `AGENTS.md:28`, `SPEC.md:30` and `SPEC.md:239` all advertise Hive Metastore support. The README does
@@ -289,7 +289,7 @@ This is a judgment call, not a mechanical fix. **Ask the maintainer before execu
 
 ---
 
-## T6 — Python packaging
+## T6 — Python packaging ✅ COMPLETED
 
 `bindings/python/pyproject.toml` is bare setuptools with no build hook, so nothing compiles or vendors
 `libxtable` into a wheel. `pyxtable/__init__.py:_find_library()` searches the package dir, then
@@ -319,7 +319,7 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T7 — Release process
+## T7 — Release process 🚫 NOT STARTED
 
 `git tag` returns zero tags; there are no releases.
 
@@ -342,7 +342,7 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T8 — Targeted test coverage
+## T8 — Targeted test coverage ⏳ BLOCKED (waiting for T2)
 
 Measured (`go test -short -cover ./pkg/...`):
 
@@ -369,7 +369,7 @@ Do **not** apply a blanket percentage target; seven of eleven packages already c
 
 ---
 
-## T9 — Correct the Roaring Bitmap claim in the README
+## T9 — Correct the Roaring Bitmap claim in the README ✅ COMPLETED
 
 `model.DeletionVector` (`pkg/model/datafile.go:21`) is a **descriptor**: `StoragePath`, `Offset`,
 `SizeInBytes`, `Cardinality`, `InlineBytes`. No roaring bitmap is decoded or encoded anywhere —
@@ -395,12 +395,17 @@ Scope is narrow — two lines, README only:
 
 ## Ordering
 
+**Current Status:**
+- ✅ **Completed:** T1, T3, T4, T6, T9
+- ⏳ **Blocked:** T2, T5 (decision needed), T8 (waiting for T2)
+- 🚫 **Not Started:** T7 (independent, can be done anytime)
+
 ```
-T1 ──┬──> T4  (registry must exist before adding targets)
-     │
-T5 ──┴──> T2 ──> T8-catalog   (HMS decision unblocks the catalog constructor)
-T3 ──────> T8-daemon
-T6, T7, T9 are independent — do them any time.
+✅ T1 ──┬──> ✅ T4  (registry must exist before adding targets)
+       │
+⏳ T5 ──┴──> ⏳ T2 ──> ⏳ T8-catalog   (HMS decision unblocks the catalog constructor)
+✅ T3 ──────> ⏳ T8-daemon
+✅ T6, 🚫 T7, ✅ T9 are independent — do them any time.
 ```
 
 Do **not** batch T1 with anything. It touches six files across four entrypoints and needs to be
