@@ -274,7 +274,7 @@ Phases 4 and 5 have shipped. This section previously listed them as future work.
 | Continuous daemon and REST service | `pkg/daemon`, `cmd/xtable-service`, contract in `spec/rest-service-open-api.yaml` |
 | C-shared libraries for Python, Rust, DuckDB, C++ | `bindings/c`, built with `make bindings-c` |
 | Python SDK | `bindings/python` (`pyxtable`) |
-| WebAssembly | `cmd/xtable-wasm`, `GOOS=js GOARCH=wasm` |
+| WebAssembly — ⚠️ **experimental, untested** | `cmd/xtable-wasm`, `GOOS=js GOARCH=wasm`. Compile-checked only; never executed in a browser or under Node.js, and no test covers it. Only local and in-memory paths can work — S3, Glue and Iceberg REST are unreachable from a browser sandbox. |
 | Paimon adapter | `pkg/formats/paimon` — source and target |
 | Parquet target | `pkg/formats/parquet/target.go` |
 

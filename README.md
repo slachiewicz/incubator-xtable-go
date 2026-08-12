@@ -40,7 +40,7 @@
   - **Continuous REST Daemon & Sidecar** (`xtable-service` with OpenAPI 3.0.3)
   - **Python SDK** (`pyxtable` via ctypes C ABI)
   - **C-Shared Dynamic Library** (`libxtable.so` / `libxtable.dylib`)
-  - **WebAssembly Engine** (`xtable.wasm` running in modern web browsers and Node.js)
+  - **WebAssembly Engine** (`xtable.wasm`) — ⚠️ **experimental**, see [WebAssembly status](#webassembly-status)
 - ☁️ **Cloud Native Storage & Catalogs**: Native AWS S3 (`aws-sdk-go-v2`), AWS Glue Data Catalog, and Iceberg REST Catalog (Polaris, Unity, Nessie, Tabular).
 
 ---
@@ -186,3 +186,21 @@ For detailed architectural diagrams, domain models, and conversion invariants, r
 Apache XTable is an effort undergoing incubation at The Apache Software Foundation (ASF).
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
+
+## WebAssembly status
+
+**The WebAssembly target is experimental. It has never been executed in a browser or under Node.js,
+and it is not covered by any test.** The build is compile-checked only: `make check` runs
+`GOOS=js GOARCH=wasm go vet ./cmd/xtable-wasm`, which type-checks the package but never runs it.
+
+Two known limitations, both consequences of how the target is currently built:
+
+- **Only local and in-memory paths can work.** `NewStorageForPath` selects the S3 backend for
+  `s3://` and `s3a://` URIs, which needs AWS credentials and network access that a browser sandbox
+  does not provide. Catalog synchronization (AWS Glue, Iceberg REST) is likewise unreachable.
+- **The artifact is large — 25.6 MiB.** The build links 71 `aws-sdk-go-v2` packages, including
+  `service/glue`, none of which can be used from a browser. Excluding them behind `js/wasm` build
+  tags would shrink it substantially; until that happens the size makes serving it impractical.
+
+Treat `xtableInspect` and `xtableSync` as unvalidated. Report anything that works as much as
+anything that does not.

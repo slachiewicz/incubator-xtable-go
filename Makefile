@@ -25,8 +25,8 @@ all: build test
 
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -v -o $(BIN_DIR)/xtable ./cmd/xtable
-	go build -v -o $(BIN_DIR)/xtable-service ./cmd/xtable-service
+	go build -v -ldflags="-s -w" -o $(BIN_DIR)/xtable ./cmd/xtable
+	go build -v -ldflags="-s -w" -o $(BIN_DIR)/xtable-service ./cmd/xtable-service
 	@echo "✓ Binaries built in $(BIN_DIR)/"
 
 fmt:
@@ -65,8 +65,9 @@ tidy:
 
 wasm:
 	@mkdir -p $(BIN_DIR)
-	GOOS=js GOARCH=wasm go build -v -o $(BIN_DIR)/xtable.wasm ./cmd/xtable-wasm
+	GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o $(BIN_DIR)/xtable.wasm ./cmd/xtable-wasm
 	@echo "✓ WebAssembly built: $(BIN_DIR)/xtable.wasm"
+	@echo "  ⚠ experimental: never executed in a browser, no test coverage, S3/Glue/Iceberg-REST unreachable"
 
 bindings-c:
 	@mkdir -p $(LIB_DIR)

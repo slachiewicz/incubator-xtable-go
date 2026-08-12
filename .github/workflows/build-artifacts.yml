@@ -49,15 +49,15 @@ jobs:
       - name: Build CLI binaries
         run: |
           mkdir -p bin
-          go build -v -o bin/xtable ./cmd/xtable
-          go build -v -o bin/xtable-service ./cmd/xtable-service
+          go build -v -ldflags="-s -w" -o bin/xtable ./cmd/xtable
+          go build -v -ldflags="-s -w" -o bin/xtable-service ./cmd/xtable-service
           ./bin/xtable --help
           ./bin/xtable-service --help
 
       - name: Build WebAssembly Engine
         if: matrix.os == 'ubuntu-latest'
         run: |
-          GOOS=js GOARCH=wasm go build -v -o bin/xtable.wasm ./cmd/xtable-wasm
+          GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o bin/xtable.wasm ./cmd/xtable-wasm
           ls -lh bin/xtable.wasm
 
       - name: Build C-Shared Dynamic Library

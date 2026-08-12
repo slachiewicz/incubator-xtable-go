@@ -51,20 +51,20 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -v -o dist/xtable-linux-amd64 ./cmd/xtable
-          GOOS=linux GOARCH=arm64 go build -v -o dist/xtable-linux-arm64 ./cmd/xtable
-          GOOS=darwin GOARCH=amd64 go build -v -o dist/xtable-darwin-amd64 ./cmd/xtable
-          GOOS=darwin GOARCH=arm64 go build -v -o dist/xtable-darwin-arm64 ./cmd/xtable
+          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/xtable-linux-amd64 ./cmd/xtable
+          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/xtable-linux-arm64 ./cmd/xtable
+          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/xtable-darwin-amd64 ./cmd/xtable
+          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/xtable-darwin-arm64 ./cmd/xtable
           
-          GOOS=linux GOARCH=amd64 go build -v -o dist/xtable-service-linux-amd64 ./cmd/xtable-service
-          GOOS=linux GOARCH=arm64 go build -v -o dist/xtable-service-linux-arm64 ./cmd/xtable-service
-          GOOS=darwin GOARCH=amd64 go build -v -o dist/xtable-service-darwin-amd64 ./cmd/xtable-service
-          GOOS=darwin GOARCH=arm64 go build -v -o dist/xtable-service-darwin-arm64 ./cmd/xtable-service
+          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/xtable-service-linux-amd64 ./cmd/xtable-service
+          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/xtable-service-linux-arm64 ./cmd/xtable-service
+          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/xtable-service-darwin-amd64 ./cmd/xtable-service
+          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/xtable-service-darwin-arm64 ./cmd/xtable-service
 
       - name: Build WebAssembly Engine
         if: matrix.os == 'ubuntu-latest'
         run: |
-          GOOS=js GOARCH=wasm go build -v -o dist/xtable.wasm ./cmd/xtable-wasm
+          GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o dist/xtable.wasm ./cmd/xtable-wasm
           ls -lh dist/xtable.wasm
 
       - name: Build C-Shared Dynamic Libraries (Linux AMD64)
