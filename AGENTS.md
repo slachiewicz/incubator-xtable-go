@@ -119,6 +119,10 @@ go test -v ./pkg/io
 go test -v ./pkg/conversion
 go test -v ./pkg/catalog
 go test -v ./pkg/daemon
+go test -v ./pkg/formats/paimon
+
+# Run end-to-end integration test suite
+go test -v ./test/...
 ```
 
 ---
