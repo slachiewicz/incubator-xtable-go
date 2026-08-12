@@ -62,9 +62,22 @@ func NewServerWithStorage(version string, storage io.Storage) *Server {
 	return s
 }
 
-func (s *Server) getStorage(ctx context.Context, path string) (io.Storage, error) {
+func (s *Server) getStorage(ctx context.Context, path string, storageConfig *conversion.StorageConfig) (io.Storage, error) {
 	if s.storage != nil {
 		return s.storage, nil
+	}
+	if storageConfig != nil {
+		var optFns []func(*io.S3Options)
+		if storageConfig.Region != "" {
+			optFns = append(optFns, func(opts *io.S3Options) { opts.Region = storageConfig.Region })
+		}
+		if storageConfig.Endpoint != "" {
+			optFns = append(optFns, func(opts *io.S3Options) { opts.Endpoint = storageConfig.Endpoint })
+		}
+		if storageConfig.UsePathStyle {
+			optFns = append(optFns, func(opts *io.S3Options) { opts.UsePathStyle = true })
+		}
+		return io.NewStorageForPathWithOptions(ctx, path, optFns...)
 	}
 	return io.NewStorageForPath(ctx, path)
 }
@@ -112,6 +125,7 @@ func (s *Server) handleConvertTable(w http.ResponseWriter, r *http.Request) {
 		TableDataPath: req.TableDataPath,
 		Namespace:     req.Namespace,
 		SyncMode:      req.SyncMode,
+		Storage:       req.Storage,
 	}
 
 	conversionID := uuid.New().String()
@@ -133,7 +147,7 @@ func (s *Server) handleConvertTable(w http.ResponseWriter, r *http.Request) {
 		bgCtx := context.WithoutCancel(r.Context())
 
 		go func() {
-			storage, err := s.getStorage(bgCtx, datasetConfig.TableBasePath)
+			storage, err := s.getStorage(bgCtx, datasetConfig.TableBasePath, datasetConfig.Storage)
 			if err != nil {
 				s.recordFailure(conversionID, err)
 				return
@@ -161,7 +175,7 @@ func (s *Server) handleConvertTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Synchronous processing
-	storage, err := s.getStorage(r.Context(), datasetConfig.TableBasePath)
+	storage, err := s.getStorage(r.Context(), datasetConfig.TableBasePath, datasetConfig.Storage)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to init storage: %v", err), http.StatusInternalServerError)
 		return
@@ -230,7 +244,7 @@ func (s *Server) handleInspectTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	storage, err := s.getStorage(r.Context(), req.TableBasePath)
+	storage, err := s.getStorage(r.Context(), req.TableBasePath, req.Storage)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("storage error: %v", err), http.StatusInternalServerError)
 		return

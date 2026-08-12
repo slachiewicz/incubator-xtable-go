@@ -20,20 +20,22 @@ package daemon
 import (
 	"time"
 
+	"github.com/apache/incubator-xtable-go/pkg/conversion"
 	"github.com/apache/incubator-xtable-go/pkg/model"
 	"github.com/apache/incubator-xtable-go/pkg/spi"
 )
 
 // ConvertTableRequest represents the JSON request payload for POST /v1/conversion/table.
 type ConvertTableRequest struct {
-	SourceFormat   model.TableFormat   `json:"sourceFormat"`
-	TargetFormats  []model.TableFormat `json:"targetFormats"`
-	TableName      string              `json:"tableName,omitempty"`
-	TableBasePath  string              `json:"tableBasePath"`
-	TableDataPath  string              `json:"tableDataPath,omitempty"`
-	Namespace      string              `json:"namespace,omitempty"`
-	SyncMode       spi.SyncMode        `json:"syncMode,omitempty"`
-	Configurations map[string]string   `json:"configurations,omitempty"`
+	SourceFormat   model.TableFormat         `json:"sourceFormat"`
+	TargetFormats  []model.TableFormat       `json:"targetFormats"`
+	TableName      string                    `json:"tableName,omitempty"`
+	TableBasePath  string                    `json:"tableBasePath"`
+	TableDataPath  string                    `json:"tableDataPath,omitempty"`
+	Namespace      string                    `json:"namespace,omitempty"`
+	SyncMode       spi.SyncMode              `json:"syncMode,omitempty"`
+	Configurations map[string]string         `json:"configurations,omitempty"`
+	Storage        *conversion.StorageConfig `json:"storage,omitempty"`
 }
 
 // ConvertTableResponse represents the JSON response for conversion operations.
@@ -48,8 +50,9 @@ type ConvertTableResponse struct {
 
 // InspectTableRequest represents POST /v1/conversion/inspect.
 type InspectTableRequest struct {
-	Format        model.TableFormat `json:"format"`
-	TableBasePath string            `json:"tableBasePath"`
+	Format        model.TableFormat         `json:"format"`
+	TableBasePath string                    `json:"tableBasePath"`
+	Storage       *conversion.StorageConfig `json:"storage,omitempty"`
 }
 
 // InspectTableResponse represents the response containing table metadata.

@@ -21,11 +21,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/ory/dockertest/v3"
@@ -97,32 +98,55 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 3. Initialize AWS S3 Client targeting MinIO
-	cfg, err := awsconfig.LoadDefaultConfig(ctx,
-		awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(minioUser, minioPassword, "")),
+	// 3. Set AWS credentials for MinIO via environment variables for config path testing
+	_ = os.Setenv("AWS_ACCESS_KEY_ID", minioUser)
+	_ = os.Setenv("AWS_SECRET_ACCESS_KEY", minioPassword)
+	_ = os.Setenv("AWS_REGION", "us-east-1")
+	defer func() { _ = os.Unsetenv("AWS_ACCESS_KEY_ID") }()
+	defer func() { _ = os.Unsetenv("AWS_SECRET_ACCESS_KEY") }()
+	defer func() { _ = os.Unsetenv("AWS_REGION") }()
+
+	// 4. Create S3 Test Bucket using config path
+	storageConfig := conversion.StorageConfig{
+		Region:       "us-east-1",
+		Endpoint:     minioEndpoint,
+		UsePathStyle: true,
+	}
+
+	var optFns []func(*io.S3Options)
+	if storageConfig.Region != "" {
+		optFns = append(optFns, func(opts *io.S3Options) { opts.Region = storageConfig.Region })
+	}
+	if storageConfig.Endpoint != "" {
+		optFns = append(optFns, func(opts *io.S3Options) { opts.Endpoint = storageConfig.Endpoint })
+	}
+	if storageConfig.UsePathStyle {
+		optFns = append(optFns, func(opts *io.S3Options) { opts.UsePathStyle = true })
+	}
+
+	testStorage, err := io.NewStorageForPathWithOptions(ctx, fmt.Sprintf("s3://%s", testBucket), optFns...)
+	require.NoError(t, err)
+
+	s3Client, err := config.LoadDefaultConfig(ctx,
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(minioUser, minioPassword, "")),
 	)
 	require.NoError(t, err)
 
-	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	s3svc := s3.NewFromConfig(s3Client, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(minioEndpoint)
 		o.UsePathStyle = true
 	})
 
-	// 4. Create S3 Test Bucket
-	_, err = s3Client.CreateBucket(ctx, &s3.CreateBucketInput{
+	_, err = s3svc.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: aws.String(testBucket),
 	})
 	require.NoError(t, err, "failed to create test bucket in MinIO")
-
-	// 5. Initialize Native S3Storage driver for XTable
-	s3Storage := io.NewS3StorageWithClient(s3Client)
 	tableBasePath := fmt.Sprintf("s3://%s/tables/financial_events", testBucket)
 
 	// Write mock physical Parquet data file into MinIO
 	mockParquetBytes := []byte("PAR1-MOCK-PARQUET-BINARY-PAYLOAD-FOR-TEST-ROW-COUNT-500")
 	parquetFilePath := fmt.Sprintf("%s/region=EU/data-001.parquet", tableBasePath)
-	err = s3Storage.Write(ctx, parquetFilePath, mockParquetBytes)
+	err = testStorage.Write(ctx, parquetFilePath, mockParquetBytes)
 	require.NoError(t, err)
 
 	// 6. Build initial Delta Table Seed on MinIO
@@ -164,14 +188,14 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 	}
 
 	// Commit initial Delta snapshot on MinIO
-	deltaTarget := delta.NewTarget(s3Storage)
+	deltaTarget := delta.NewTarget(testStorage)
 	err = deltaTarget.Init(ctx, table)
 	require.NoError(t, err)
 	err = deltaTarget.CommitSnapshot(ctx, snapshot)
 	require.NoError(t, err)
 
 	// 7. RUN FULL MATRIX CONVERSIONS ON MINIO
-	controller := conversion.NewController(s3Storage)
+	controller := conversion.NewController(testStorage)
 
 	t.Run("DeltaToIcebergAndHudi_OnMinIO", func(t *testing.T) {
 		datasetConfig := &conversion.DatasetConfig{
@@ -180,6 +204,7 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 			TableName:     "financial_events",
 			TableBasePath: tableBasePath,
 			SyncMode:      spi.SyncModeFull,
+			Storage:       &storageConfig,
 		}
 
 		results, syncErr := controller.Sync(ctx, datasetConfig)
@@ -190,7 +215,7 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 		assert.Equal(t, spi.SyncStatusSuccess, results[model.TableFormatHudi].StatusCode)
 
 		// 8. Verify Iceberg Metadata on MinIO
-		icebergSource := iceberg.NewSource(s3Storage, tableBasePath)
+		icebergSource := iceberg.NewSource(testStorage, tableBasePath)
 		icebergTable, err := icebergSource.GetCurrentTable(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, model.TableFormatIceberg, icebergTable.TableFormat)
@@ -202,7 +227,7 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 		assert.Equal(t, int64(500), icebergSnap.DataFiles[0].RecordCount)
 
 		// 9. Verify Hudi Metadata on MinIO
-		hudiSource := hudi.NewSource(s3Storage, tableBasePath)
+		hudiSource := hudi.NewSource(testStorage, tableBasePath)
 		hudiTable, err := hudiSource.GetCurrentTable(ctx)
 		require.NoError(t, err)
 		assert.Equal(t, model.TableFormatHudi, hudiTable.TableFormat)
