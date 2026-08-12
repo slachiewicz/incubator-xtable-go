@@ -44,6 +44,27 @@ test-containers:
 lint:
 	golangci-lint run ./...
 
+# Benchmarks are excluded from `check` on purpose: they are slow and their timings are noisy on a
+# loaded machine, which would make the gate flaky. Run them deliberately.
+#   make bench                     one run, human readable
+#   make bench COUNT=10 > new.txt  then: benchstat old.txt new.txt
+COUNT ?= 1
+BENCH ?= .
+bench:
+	go test -run '^$$' -bench '$(BENCH)' -benchmem -count=$(COUNT) ./...
+
+# Report the process-level figures a Go benchmark cannot: binary size and idle RSS.
+bench-footprint: build
+	@echo "== binary size =="
+	@ls -l $(BIN_DIR)/xtable $(BIN_DIR)/xtable-service | awk '{printf "%-28s %6.1f MiB\n", $$NF, $$5/1048576}'
+	@echo "== idle RSS of xtable-service =="
+	@$(BIN_DIR)/xtable-service --port 18199 >/dev/null 2>&1 & \
+	 SVC=$$!; \
+	 until curl -sf http://127.0.0.1:18199/v1/health >/dev/null 2>&1; do sleep 0.2; done; \
+	 sleep 1; \
+	 ps -o rss= -p $$SVC | awk '{printf "idle RSS %.1f MiB\n", $$1/1024}'; \
+	 kill $$SVC 2>/dev/null
+
 # Deliberately does NOT depend on `fmt`: reformatting first would make the
 # gofmt stage unable to ever fail.
 check:

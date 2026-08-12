@@ -229,29 +229,48 @@ type Storage interface {
 
 ## 9. Performance Benchmarks & Targets
 
-Only two figures below have been measured. The rest are **targets**, not results, and must not be
-quoted as benchmarks until a repeatable harness exists. Earlier revisions of this document presented
-unmeasured numbers as fact — notably a 4.8 MB binary, which is off by roughly 3x.
+All figures below were measured; none is a projection. Reproduce with `make bench` and
+`make bench-footprint`. Absolute timings are hardware-specific — these come from an Apple M1
+(darwin/arm64, Go 1.26.5) — so treat the **shape** of the curve as the durable result and re-measure
+before quoting a number anywhere it matters.
+
+### 9.1 Snapshot sync
+
+`BenchmarkSnapshotSync`, full Delta → Iceberg snapshot sync against in-memory storage, so the figure
+isolates translation cost from object-store latency. A network backend adds its own round trips.
+
+| Data files | Time per sync | Allocated | Allocations |
+| ---: | ---: | ---: | ---: |
+| 10 | 0.20 ms | 68 KiB | 892 |
+| 100 | 0.99 ms | 456 KiB | 6,279 |
+| 1,000 | 5.96 ms | 4.6 MiB | 60,332 |
+| 10,000 | 58.0 ms | 50.2 MiB | 600,422 |
+
+Cost is linear in file count: each 10x more files costs roughly 10x the time and memory. **The
+"< 50 ms" target in earlier revisions holds up to a few thousand files and is exceeded at 10,000
+(58 ms).** State the file count alongside any latency claim; a bare "2.5 ms sync" is meaningless.
+
+`BenchmarkSnapshotRead` isolates the read half — 48.0 ms of the 58.0 ms at 10,000 files, so roughly
+83% of a full sync is spent parsing the source table's log, not writing the target's metadata. That
+is where optimisation effort belongs.
+
+### 9.2 Footprint
 
 | Property | Measured | Method |
 | :--- | :--- | :--- |
-| Binary size, `cmd/xtable`, `-ldflags="-s -w"` | **13.5 MiB** | `go build` on darwin/arm64, 2026-08-12 |
-| Binary size, `cmd/xtable`, default flags | **19.5 MiB** | same |
-| Binary size, `cmd/xtable-wasm`, `-ldflags="-s -w"` | **17.6 MiB** | after excluding the AWS SDK from `js` builds; was 25.6 MiB with it linked |
-| Process start to exit, `xtable version` | **median 7.0 ms** (min 6.5, max 7.7, n=30) | wall clock around `fork`/`exec`; an upper bound, since it includes the harness |
+| `cmd/xtable`, `-ldflags="-s -w"` | 13.5 MiB | `go build`, darwin/arm64 |
+| `cmd/xtable-service`, same flags | 14.0 MiB | same |
+| `cmd/xtable-wasm`, same flags | 17.6 MiB | after excluding the AWS SDK from `js` builds; was 25.6 MiB |
+| `xtable version`, process start to exit | median 7.0 ms (min 6.5, max 7.7, n=30) | wall clock around `fork`/`exec`; an upper bound, it includes the harness |
+| `xtable-service` idle RSS | 16.4 MiB, unchanged after serving requests | `ps -o rss=` two seconds after the health endpoint answered |
 
-Outstanding targets, unmeasured:
+### 9.3 Comparison with Java Apache XTable
 
-| Operation | Target | Status |
-| :--- | :--- | :--- |
-| Cold start / initialization | < 10 ms | consistent with the 7.0 ms figure above, but that measurement includes process spawn and is not an isolated init benchmark |
-| Memory footprint (idle) | < 30 MB | not measured |
-| Single-table snapshot sync | < 50 ms | not measured; the unit suites complete in seconds but do no I/O against real object storage |
+None has been run. A meaningful comparison needs both implementations exercised on identical tables
+and hardware; until someone does that, this specification makes no cross-implementation claim.
+Earlier revisions published such a column, and its figures were not measured.
 
-No comparison against Java Apache XTable has been run. Any such column would need both
-implementations exercised on identical tables and hardware.
-
-### 9.1 Known size problems
+### 9.4 Size problems, resolved
 
 - ~~The WebAssembly target links the entire AWS SDK~~ — **fixed.** `pkg/io/s3.go` and the Glue
   implementations in `pkg/catalog` now carry `//go:build !js`, with `js` counterparts returning
@@ -259,7 +278,10 @@ implementations exercised on identical tables and hardware.
   now reports **zero** `aws-sdk-go-v2` and `smithy` packages, down from 103, and the artifact fell
   from 25.6 MiB to **17.6 MiB**. An `s3://` path in a browser now fails with a stated reason rather
   than dragging in an SDK that could never have worked there.
-- **Release artifacts are unstripped.** Symbol tables and DWARF add roughly 6 MiB per binary.
+- ~~Release artifacts are unstripped~~ — **fixed.** The release workflow, `build-artifacts.yml` and
+  the `Makefile` all build with `-ldflags="-s -w"`, cutting roughly 6 MiB from each of the eight
+  published binaries. The `c-shared` build is deliberately left unstripped: its dynamic symbol table
+  is the interface.
 
 ---
 
@@ -287,7 +309,7 @@ Phases 4 and 5 have shipped. This section previously listed them as future work.
 | :--- | :--- |
 | **Hive Metastore** | `CatalogTypeHMS` is a declared constant that returns `ErrCatalogNotImplemented`. Java's `xtable-hive-metastore` carries a sync client, schema extractor, partition sync operations and three per-format table builders; a create-tables-only port would misrepresent itself as supported. Requires a Thrift dependency and an HMS container for integration testing. |
 | **Catalog partition sync for HMS** | Follows HMS itself. The Glue implementation is in place and the `PartitionSyncOperations` contract is catalog-agnostic. |
-| **Performance harness** | See §9. Most published targets are unmeasured. |
+| ~~Performance harness~~ | **Done.** `make bench` plus `make bench-footprint`; §9 carries measured figures only, and `.github/workflows/bench.yml` compares each pull request against its merge base with `benchstat`. |
 | **Released versions** | No tags exist. The module path and repository name were settled only recently, and Go module tags are immutable, so tagging is deliberately deferred. |
 
 ### 10.3 Deliberately not planned
