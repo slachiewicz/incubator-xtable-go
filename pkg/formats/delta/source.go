@@ -63,7 +63,7 @@ type DeltaCommit struct {
 
 // listCommitFiles lists and sorts all commit .json files in _delta_log.
 func (s *Source) listCommitFiles(ctx context.Context) ([]int64, error) {
-	logPath := filepath.Join(s.basePath, "_delta_log")
+	logPath := io.JoinPath(s.basePath, "_delta_log")
 	files, err := s.storage.List(ctx, logPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list delta log directory %s: %w", logPath, err)
@@ -88,7 +88,7 @@ func (s *Source) listCommitFiles(ctx context.Context) ([]int64, error) {
 // readCommit reads and parses actions from a specific commit version file.
 func (s *Source) readCommit(ctx context.Context, version int64) (*DeltaCommit, error) {
 	fileName := fmt.Sprintf("%020d.json", version)
-	filePath := filepath.Join(s.basePath, "_delta_log", fileName)
+	filePath := io.JoinPath(s.basePath, "_delta_log", fileName)
 
 	data, err := s.storage.Read(ctx, filePath)
 	if err != nil {
@@ -341,10 +341,10 @@ func (s *Source) Close() error {
 
 func (s *Source) convertAddAction(add *AddAction, table *model.Table) *model.DataFile {
 	dataFile := &model.DataFile{
-		PhysicalPath: s.resolveDataPath(add.Path),
-		FileFormat:   model.FileFormatParquet,
+		PhysicalPath:  s.resolveDataPath(add.Path),
+		FileFormat:    model.FileFormatParquet,
 		FileSizeBytes: add.Size,
-		LastModified: add.ModificationTime,
+		LastModified:  add.ModificationTime,
 	}
 
 	// Parse Partition Values
@@ -396,8 +396,8 @@ func (s *Source) convertAddAction(add *AddAction, table *model.Table) *model.Dat
 }
 
 func (s *Source) resolveDataPath(relPath string) string {
-	if strings.HasPrefix(relPath, "s3://") || strings.HasPrefix(relPath, "gs://") || strings.HasPrefix(relPath, "file://") || strings.HasPrefix(relPath, "/") {
+	if strings.HasPrefix(relPath, "s3://") || strings.HasPrefix(relPath, "gs://") || strings.HasPrefix(relPath, "mem://") || strings.HasPrefix(relPath, "file://") || strings.HasPrefix(relPath, "/") {
 		return relPath
 	}
-	return filepath.Join(s.basePath, relPath)
+	return io.JoinPath(s.basePath, relPath)
 }

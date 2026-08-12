@@ -20,6 +20,8 @@ package io
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -58,4 +60,34 @@ type Storage interface {
 
 	// Close releases any open network connections or resources.
 	Close() error
+}
+
+// JoinPath safely joins path elements while preserving URI schemes (e.g. s3://, mem://, file://).
+func JoinPath(base string, elem ...string) string {
+	schemes := []string{"s3://", "s3a://", "gs://", "mem://", "file://"}
+	for _, scheme := range schemes {
+		if strings.HasPrefix(base, scheme) {
+			trimmed := strings.TrimPrefix(base, scheme)
+			parts := append([]string{trimmed}, elem...)
+			joined := strings.Join(parts, "/")
+			// Clean duplicate slashes but keep URI intact
+			for strings.Contains(joined, "//") {
+				joined = strings.ReplaceAll(joined, "//", "/")
+			}
+			return scheme + strings.TrimPrefix(joined, "/")
+		}
+	}
+	parts := append([]string{base}, elem...)
+	return filepath.Join(parts...)
+}
+
+// NewStorageForPath automatically resolves and instantiates the appropriate Storage implementation for a path URI.
+func NewStorageForPath(ctx context.Context, path string) (Storage, error) {
+	if strings.HasPrefix(path, "s3://") || strings.HasPrefix(path, "s3a://") {
+		return NewS3Storage(ctx)
+	}
+	if strings.HasPrefix(path, "mem://") {
+		return NewMemoryStorage(), nil
+	}
+	return NewLocalStorage(), nil
 }

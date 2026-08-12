@@ -1,0 +1,358 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+openapi: 3.0.3
+info:
+  title: Apache XTable (Go) REST Service API
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+  version: 0.1.0
+  description: |
+    A native REST API for initiating zero-copy lakehouse metadata conversion, monitoring
+    sync jobs, and managing catalog synchronization using Apache XTable (Go).
+
+servers:
+  - url: "{scheme}://{host}:{port}/{prefix}"
+    description: Configurable base server URL
+    variables:
+      scheme:
+        description: The URI scheme (http or https)
+        default: http
+        enum:
+          - http
+          - https
+      host:
+        description: The host address
+        default: localhost
+      port:
+        description: Port for the REST service
+        default: "8080"
+      prefix:
+        description: Optional route prefix
+        default: "api"
+
+paths:
+  /v1/health:
+    get:
+      tags:
+        - System
+      summary: Health check endpoint
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /v1/conversion/table:
+    post:
+      tags:
+        - Table Conversion
+      summary: Initiate synchronization from a source table format to target formats.
+      description: |
+        Extracts source table metadata (Delta, Iceberg, Hudi, Parquet) and translates
+        metadata into target table formats without copying or rewriting data files.
+      operationId: convertTable
+      parameters:
+        - in: header
+          name: Prefer
+          description: Request asynchronous execution (respond-async)
+          required: false
+          schema:
+            type: string
+            enum:
+              - respond-async
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConvertTableRequest'
+      responses:
+        '200':
+          description: Synchronous conversion succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConvertTableResponse'
+        '202':
+          description: Asynchronous conversion task accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmittedConversionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestResponse'
+        '500':
+          $ref: '#/components/responses/InternalErrorResponse'
+
+  /v1/conversion/table/{conversionId}:
+    get:
+      tags:
+        - Table Conversion
+      summary: Poll status of an asynchronous conversion job
+      operationId: getConversionStatus
+      parameters:
+        - in: path
+          name: conversionId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Conversion completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConvertTableResponse'
+        '202':
+          description: Conversion is still processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmittedConversionResponse'
+        '404':
+          $ref: '#/components/responses/NotFoundResponse'
+        '500':
+          $ref: '#/components/responses/InternalErrorResponse'
+
+  /v1/conversion/inspect:
+    post:
+      tags:
+        - Table Inspection
+      summary: Inspect lakehouse table metadata, schema, and active files
+      operationId: inspectTable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InspectTableRequest'
+      responses:
+        '200':
+          description: Table inspection results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InspectTableResponse'
+        '400':
+          $ref: '#/components/responses/BadRequestResponse'
+        '500':
+          $ref: '#/components/responses/InternalErrorResponse'
+
+components:
+  schemas:
+    TableFormat:
+      type: string
+      enum:
+        - DELTA
+        - ICEBERG
+        - HUDI
+        - PAIMON
+        - PARQUET
+      description: Supported lakehouse table formats
+
+    SyncMode:
+      type: string
+      enum:
+        - FULL
+        - INCREMENTAL
+      default: INCREMENTAL
+      description: Synchronization execution mode
+
+    ConvertTableRequest:
+      type: object
+      required:
+        - sourceFormat
+        - targetFormats
+        - tableBasePath
+      properties:
+        sourceFormat:
+          $ref: '#/components/schemas/TableFormat'
+        targetFormats:
+          type: array
+          items:
+            $ref: '#/components/schemas/TableFormat'
+        tableName:
+          type: string
+          example: customers_table
+        tableBasePath:
+          type: string
+          example: s3://my-lakehouse/data/customers
+        tableDataPath:
+          type: string
+        namespace:
+          type: string
+          example: default
+        syncMode:
+          $ref: '#/components/schemas/SyncMode'
+        configurations:
+          type: object
+          additionalProperties:
+            type: string
+
+    TargetSyncResult:
+      type: object
+      required:
+        - targetFormat
+        - statusCode
+        - durationMs
+      properties:
+        targetFormat:
+          $ref: '#/components/schemas/TableFormat'
+        statusCode:
+          type: string
+          enum:
+            - SUCCESS
+            - ERROR
+            - SKIPPED
+        lastInstantSynced:
+          type: integer
+          format: int64
+        durationMs:
+          type: integer
+          format: int64
+        error:
+          type: string
+
+    ConvertTableResponse:
+      type: object
+      required:
+        - conversionId
+        - status
+        - results
+      properties:
+        conversionId:
+          type: string
+          example: c81a6f8b-2098-4c28-912f-92791ef60d5b
+        status:
+          type: string
+          enum:
+            - COMPLETED
+            - FAILED
+        results:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TargetSyncResult'
+
+    SubmittedConversionResponse:
+      type: object
+      required:
+        - conversionId
+        - status
+      properties:
+        conversionId:
+          type: string
+        status:
+          type: string
+          enum:
+            - SUBMITTED
+            - RUNNING
+        submittedAt:
+          type: string
+          format: date-time
+
+    InspectTableRequest:
+      type: object
+      required:
+        - format
+        - tableBasePath
+      properties:
+        format:
+          $ref: '#/components/schemas/TableFormat'
+        tableBasePath:
+          type: string
+          example: s3://my-lakehouse/data/orders
+
+    InspectTableResponse:
+      type: object
+      required:
+        - tableName
+        - format
+        - tableBasePath
+        - activeDataFilesCount
+        - schema
+      properties:
+        tableName:
+          type: string
+        format:
+          $ref: '#/components/schemas/TableFormat'
+        tableBasePath:
+          type: string
+        latestCommitTime:
+          type: string
+          format: date-time
+        activeDataFilesCount:
+          type: integer
+        partitionFields:
+          type: array
+          items:
+            type: string
+        schema:
+          type: object
+
+    HealthStatus:
+      type: object
+      required:
+        - status
+        - version
+      properties:
+        status:
+          type: string
+          example: UP
+        version:
+          type: string
+          example: 0.1.0-SNAPSHOT
+
+    ErrorPayload:
+      type: object
+      required:
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+  responses:
+    BadRequestResponse:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'
+
+    NotFoundResponse:
+      description: Resource or conversion job not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'
+
+    InternalErrorResponse:
+      description: Internal conversion or server failure
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorPayload'

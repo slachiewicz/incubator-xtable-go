@@ -30,10 +30,10 @@ type NestedField struct {
 
 // TableSchema represents an Iceberg schema definition.
 type TableSchema struct {
-	Type                 string         `json:"type"`
-	SchemaID             int            `json:"schema-id"`
-	IdentifierFieldIDs   []int          `json:"identifier-field-ids,omitempty"`
-	Fields               []*NestedField `json:"fields"`
+	Type               string         `json:"type"`
+	SchemaID           int            `json:"schema-id"`
+	IdentifierFieldIDs []int          `json:"identifier-field-ids,omitempty"`
+	Fields             []*NestedField `json:"fields"`
 }
 
 // PartitionFieldDef represents a partition field in an Iceberg partition specification.
@@ -52,12 +52,12 @@ type PartitionSpec struct {
 
 // SnapshotSummary holds metadata describing the commit operation and row counts.
 type SnapshotSummary struct {
-	Operation                string            `json:"operation"` // append, replace, overwrite, delete
-	AddedDataFiles           string            `json:"added-data-files,omitempty"`
-	AddedRecords             string            `json:"added-records,omitempty"`
-	TotalDataFiles           string            `json:"total-data-files,omitempty"`
-	TotalRecords             string            `json:"total-records,omitempty"`
-	ExtraProperties          map[string]string `json:"extra-properties,omitempty"`
+	Operation       string            `json:"operation"` // append, replace, overwrite, delete
+	AddedDataFiles  string            `json:"added-data-files,omitempty"`
+	AddedRecords    string            `json:"added-records,omitempty"`
+	TotalDataFiles  string            `json:"total-data-files,omitempty"`
+	TotalRecords    string            `json:"total-records,omitempty"`
+	ExtraProperties map[string]string `json:"extra-properties,omitempty"`
 }
 
 // TableSnapshot represents a snapshot entry in Iceberg table metadata.
@@ -92,33 +92,33 @@ type TableMetadata struct {
 
 // ManifestEntry represents a data file entry inside an Iceberg manifest.
 type ManifestEntry struct {
-	Status        int            `json:"status"` // 0: EXISTING, 1: ADDED, 2: DELETED
-	SnapshotID    int64          `json:"snapshot_id"`
-	DataFile      *ManifestDataFile `json:"data_file"`
+	Status     int               `json:"status"` // 0: EXISTING, 1: ADDED, 2: DELETED
+	SnapshotID int64             `json:"snapshot_id"`
+	DataFile   *ManifestDataFile `json:"data_file"`
 }
 
 // ManifestDataFile represents the metadata of a data file inside a manifest.
 type ManifestDataFile struct {
-	FilePath        string            `json:"file_path"`
-	FileFormat      string            `json:"file_format"`
-	Partition       map[string]any    `json:"partition"`
-	RecordCount     int64             `json:"record_count"`
-	FileSizeInBytes int64             `json:"file_size_in_bytes"`
-	ColumnSizes     map[int]int64     `json:"column_sizes,omitempty"`
-	ValueCounts     map[int]int64     `json:"value_counts,omitempty"`
-	NullValueCounts map[int]int64     `json:"null_value_counts,omitempty"`
-	NanValueCounts  map[int]int64     `json:"nan_value_counts,omitempty"`
-	LowerBounds     map[int]string    `json:"lower_bounds,omitempty"`
-	UpperBounds     map[int]string    `json:"upper_bounds,omitempty"`
+	FilePath        string         `json:"file_path"`
+	FileFormat      string         `json:"file_format"`
+	Partition       map[string]any `json:"partition"`
+	RecordCount     int64          `json:"record_count"`
+	FileSizeInBytes int64          `json:"file_size_in_bytes"`
+	ColumnSizes     map[int]int64  `json:"column_sizes,omitempty"`
+	ValueCounts     map[int]int64  `json:"value_counts,omitempty"`
+	NullValueCounts map[int]int64  `json:"null_value_counts,omitempty"`
+	NanValueCounts  map[int]int64  `json:"nan_value_counts,omitempty"`
+	LowerBounds     map[int]string `json:"lower_bounds,omitempty"`
+	UpperBounds     map[int]string `json:"upper_bounds,omitempty"`
 }
 
 // ManifestListEntry represents an entry inside a manifest list file.
 type ManifestListEntry struct {
-	ManifestPath        string `json:"manifest_path"`
-	ManifestLength      int64  `json:"manifest_length"`
-	PartitionSpecID     int    `json:"partition_spec_id"`
-	AddedSnapshotID     int64  `json:"added_snapshot_id"`
-	AddedFilesCount     int    `json:"added_data_files_count"`
-	ExistingFilesCount  int    `json:"existing_data_files_count"`
-	DeletedFilesCount   int    `json:"deleted_data_files_count"`
+	ManifestPath       string `json:"manifest_path"`
+	ManifestLength     int64  `json:"manifest_length"`
+	PartitionSpecID    int    `json:"partition_spec_id"`
+	AddedSnapshotID    int64  `json:"added_snapshot_id"`
+	AddedFilesCount    int    `json:"added_data_files_count"`
+	ExistingFilesCount int    `json:"existing_data_files_count"`
+	DeletedFilesCount  int    `json:"deleted_data_files_count"`
 }

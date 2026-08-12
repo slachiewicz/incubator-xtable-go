@@ -23,7 +23,9 @@ import (
 	"time"
 
 	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
+	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
 	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
+	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
 	"github.com/apache/incubator-xtable-go/pkg/spi"
@@ -131,6 +133,10 @@ func (c *Controller) createSource(format model.TableFormat, basePath string) (sp
 		return delta.NewSource(c.storage, basePath), nil
 	case model.TableFormatIceberg:
 		return iceberg.NewSource(c.storage, basePath), nil
+	case model.TableFormatHudi:
+		return hudi.NewSource(c.storage, basePath), nil
+	case model.TableFormatParquet:
+		return parquet.NewSource(c.storage, basePath), nil
 	default:
 		return nil, fmt.Errorf("unsupported source table format: %s", format)
 	}
@@ -152,6 +158,12 @@ func (c *Controller) createTarget(format model.TableFormat, basePath, tableName 
 		return target, nil
 	case model.TableFormatIceberg:
 		target := iceberg.NewTarget(c.storage)
+		if err := target.Init(context.Background(), targetTable); err != nil {
+			return nil, err
+		}
+		return target, nil
+	case model.TableFormatHudi:
+		target := hudi.NewTarget(c.storage)
 		if err := target.Init(context.Background(), targetTable); err != nil {
 			return nil, err
 		}

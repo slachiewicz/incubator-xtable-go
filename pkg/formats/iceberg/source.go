@@ -54,7 +54,7 @@ func (s *Source) Format() model.TableFormat {
 
 // listMetadataFiles finds all metadata.json files and extracts their version numbers.
 func (s *Source) listMetadataFiles(ctx context.Context) ([]int, error) {
-	metaDir := filepath.Join(s.basePath, "metadata")
+	metaDir := io.JoinPath(s.basePath, "metadata")
 	files, err := s.storage.List(ctx, metaDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list iceberg metadata directory %s: %w", metaDir, err)
@@ -78,7 +78,7 @@ func (s *Source) listMetadataFiles(ctx context.Context) ([]int, error) {
 // readMetadata reads and parses a specific version of Iceberg TableMetadata.
 func (s *Source) readMetadata(ctx context.Context, version int) (*TableMetadata, error) {
 	fileName := fmt.Sprintf("v%d.metadata.json", version)
-	filePath := filepath.Join(s.basePath, "metadata", fileName)
+	filePath := io.JoinPath(s.basePath, "metadata", fileName)
 
 	data, err := s.storage.Read(ctx, filePath)
 	if err != nil {

@@ -135,3 +135,63 @@ func TestDelta_SnapshotCommitAndRead(t *testing.T) {
 	require.NotNil(t, meta)
 	assert.Equal(t, table.LatestCommitTime, meta.LastInstantSynced)
 }
+
+func TestDelta_DeletionVectors(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	memStorage := io.NewMemoryStorage()
+	basePath := "mem://lake/delta_dv_table"
+
+	idField := &model.Field{Name: "id", Schema: model.NewPrimitiveSchema(model.TypeInt, false)}
+	schema := model.NewRecordSchema("dv_test", []*model.Field{idField}, false)
+
+	table := &model.Table{
+		Name:             "dv_test",
+		TableFormat:      model.TableFormatDelta,
+		ReadSchema:       schema,
+		BasePath:         basePath,
+		LatestCommitTime: time.Now().UnixMilli(),
+	}
+
+	dv := &model.DeletionVector{
+		StoragePath: "ab89-deletion-vector.bin",
+		Offset:      4,
+		SizeInBytes: 32,
+		Cardinality: 5,
+	}
+
+	dataFile := &model.DataFile{
+		PhysicalPath:   "mem://lake/delta_dv_table/data.parquet",
+		FileFormat:     model.FileFormatParquet,
+		FileSizeBytes:  2048,
+		RecordCount:    100,
+		LastModified:   time.Now().UnixMilli(),
+		DeletionVector: dv,
+	}
+
+	snapshot := &model.Snapshot{
+		Table:            table,
+		DataFiles:        []*model.DataFile{dataFile},
+		SourceIdentifier: "0",
+	}
+
+	target := delta.NewTarget(memStorage)
+	err := target.Init(ctx, table)
+	require.NoError(t, err)
+
+	err = target.CommitSnapshot(ctx, snapshot)
+	require.NoError(t, err)
+
+	source := delta.NewSource(memStorage, basePath)
+	readSnap, err := source.GetCurrentSnapshot(ctx)
+	require.NoError(t, err)
+	require.Len(t, readSnap.DataFiles, 1)
+
+	readDF := readSnap.DataFiles[0]
+	require.NotNil(t, readDF.DeletionVector)
+	assert.Equal(t, "ab89-deletion-vector.bin", readDF.DeletionVector.StoragePath)
+	assert.Equal(t, int64(4), readDF.DeletionVector.Offset)
+	assert.Equal(t, int64(32), readDF.DeletionVector.SizeInBytes)
+	assert.Equal(t, int64(5), readDF.DeletionVector.Cardinality)
+}

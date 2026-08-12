@@ -22,7 +22,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -255,7 +254,7 @@ func (t *Target) writeCommitFile(ctx context.Context, version int64, actions []S
 	}
 
 	commitFileName := fmt.Sprintf("%020d.json", version)
-	commitFilePath := filepath.Join(t.targetTable.BasePath, "_delta_log", commitFileName)
+	commitFilePath := io.JoinPath(t.targetTable.BasePath, "_delta_log", commitFileName)
 	return t.storage.Write(ctx, commitFilePath, buf.Bytes())
 }
 
@@ -286,6 +285,18 @@ func (t *Target) convertDataFileToAddAction(df *model.DataFile, table *model.Tab
 
 	statsBytes, _ := json.Marshal(stats)
 
+	var dvAction *DeletionVectorInfo
+	if df.DeletionVector != nil {
+		offset := df.DeletionVector.Offset
+		dvAction = &DeletionVectorInfo{
+			StorageType:    "u",
+			PathOrInlineDv: df.DeletionVector.StoragePath,
+			Offset:         &offset,
+			SizeInBytes:    df.DeletionVector.SizeInBytes,
+			Cardinality:    df.DeletionVector.Cardinality,
+		}
+	}
+
 	return &AddAction{
 		Path:             t.makeRelativePath(df.PhysicalPath),
 		PartitionValues:  partitionValues,
@@ -293,6 +304,7 @@ func (t *Target) convertDataFileToAddAction(df *model.DataFile, table *model.Tab
 		ModificationTime: df.LastModified,
 		DataChange:       true,
 		Stats:            string(statsBytes),
+		DeletionVector:   dvAction,
 	}
 }
 

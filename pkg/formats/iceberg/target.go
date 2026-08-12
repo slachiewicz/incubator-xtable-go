@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -166,7 +165,7 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 
 	manifestUUID := uuid.New().String()
 	manifestFileName := fmt.Sprintf("%s-m0.json", manifestUUID)
-	manifestPath := filepath.Join(t.targetTable.BasePath, "metadata", manifestFileName)
+	manifestPath := io.JoinPath(t.targetTable.BasePath, "metadata", manifestFileName)
 	manifestBytes, err := json.Marshal(manifestEntries)
 	if err != nil {
 		return fmt.Errorf("failed to marshal manifest entries: %w", err)
@@ -187,7 +186,7 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 	}
 	manifestList := []ManifestListEntry{manifestListEntry}
 	manifestListFileName := fmt.Sprintf("snap-%d-%s.json", snapshotID, uuid.New().String())
-	manifestListPath := filepath.Join(t.targetTable.BasePath, "metadata", manifestListFileName)
+	manifestListPath := io.JoinPath(t.targetTable.BasePath, "metadata", manifestListFileName)
 	manifestListBytes, err := json.Marshal(manifestList)
 	if err != nil {
 		return fmt.Errorf("failed to marshal manifest list: %w", err)
@@ -260,7 +259,7 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 
 	// 7. Write v{N}.metadata.json
 	metaFileName := fmt.Sprintf("v%d.metadata.json", nextVersion)
-	metaFilePath := filepath.Join(t.targetTable.BasePath, "metadata", metaFileName)
+	metaFilePath := io.JoinPath(t.targetTable.BasePath, "metadata", metaFileName)
 	metaBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata JSON: %w", err)
@@ -270,7 +269,7 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 	}
 
 	// 8. Update version-hint.text
-	hintPath := filepath.Join(t.targetTable.BasePath, "metadata", "version-hint.text")
+	hintPath := io.JoinPath(t.targetTable.BasePath, "metadata", "version-hint.text")
 	return t.storage.Write(ctx, hintPath, []byte(strconv.Itoa(nextVersion)))
 }
 

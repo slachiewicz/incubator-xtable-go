@@ -43,23 +43,23 @@ type MetadataAction struct {
 
 // AddAction records the addition of a new data file.
 type AddAction struct {
-	Path             string            `json:"path"`
-	PartitionValues  map[string]string `json:"partitionValues"`
-	Size             int64             `json:"size"`
-	ModificationTime int64             `json:"modificationTime"`
-	DataChange       bool              `json:"dataChange"`
-	Stats            string            `json:"stats,omitempty"`
-	Tags             map[string]string `json:"tags,omitempty"`
+	Path             string              `json:"path"`
+	PartitionValues  map[string]string   `json:"partitionValues"`
+	Size             int64               `json:"size"`
+	ModificationTime int64               `json:"modificationTime"`
+	DataChange       bool                `json:"dataChange"`
+	Stats            string              `json:"stats,omitempty"`
+	Tags             map[string]string   `json:"tags,omitempty"`
 	DeletionVector   *DeletionVectorInfo `json:"deletionVector,omitempty"`
 }
 
 // DeletionVectorInfo describes a deletion vector associated with an AddAction.
 type DeletionVectorInfo struct {
-	StorageType       string `json:"storageType"`
-	PathOrInlineDv    string `json:"pathOrInlineDv"`
-	Offset            *int64 `json:"offset,omitempty"`
-	SizeInBytes       int64  `json:"sizeInBytes"`
-	Cardinality       int64  `json:"cardinality"`
+	StorageType    string `json:"storageType"`
+	PathOrInlineDv string `json:"pathOrInlineDv"`
+	Offset         *int64 `json:"offset,omitempty"`
+	SizeInBytes    int64  `json:"sizeInBytes"`
+	Cardinality    int64  `json:"cardinality"`
 }
 
 // RemoveAction records the removal/compaction of a data file.
@@ -74,11 +74,11 @@ type RemoveAction struct {
 
 // CommitInfoAction stores metadata describing the commit operation.
 type CommitInfoAction struct {
-	Timestamp          int64             `json:"timestamp"`
-	Operation          string            `json:"operation"`
+	Timestamp           int64             `json:"timestamp"`
+	Operation           string            `json:"operation"`
 	OperationParameters map[string]string `json:"operationParameters,omitempty"`
-	EngineInfo         string            `json:"engineInfo,omitempty"`
-	AppID              string            `json:"appId,omitempty"`
+	EngineInfo          string            `json:"engineInfo,omitempty"`
+	AppID               string            `json:"appId,omitempty"`
 }
 
 // SingleAction wraps any Delta log action line.
@@ -92,8 +92,8 @@ type SingleAction struct {
 
 // StatsJSON represents the JSON structure of Delta AddAction.Stats.
 type StatsJSON struct {
-	NumRecords int64          `json:"numRecords"`
-	MinValues  map[string]any `json:"minValues,omitempty"`
-	MaxValues  map[string]any `json:"maxValues,omitempty"`
+	NumRecords int64            `json:"numRecords"`
+	MinValues  map[string]any   `json:"minValues,omitempty"`
+	MaxValues  map[string]any   `json:"maxValues,omitempty"`
 	NullCount  map[string]int64 `json:"nullCount,omitempty"`
 }

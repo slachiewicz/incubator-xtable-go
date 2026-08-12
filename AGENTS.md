@@ -19,7 +19,7 @@
 
 # Apache XTable (Go) Agent Guide
 
-This document defines repository-specific instructions, architecture rules, and validation workflows for AI coding agents working on **Apache XTable in Go (`incubator-xtable-go`)**.
+This document defines repository-specific instructions, architecture rules, and validation workflows for AI coding agents working on **Apache XTable in Go ([`incubator-xtable-go`](file:///Users/slachiewicz/oss/incubator-xtable-go))**.
 
 ---
 
@@ -35,7 +35,7 @@ Apache XTable (Go) provides **omni-directional, zero-copy metadata translation**
 
 ---
 
-## 2. Repository Layout
+## 2. Repository Layout & Architecture
 
 ```
 .
@@ -58,10 +58,10 @@ Apache XTable (Go) provides **omni-directional, zero-copy metadata translation**
 │   │   ├── target.go         # ConversionTarget interface
 │   │   └── sync.go           # SyncMode, SyncStatusCode, SyncResult
 │   ├── io/                   # Unified storage abstraction
-│   │   ├── storage.go        # Storage interface & sentinel errors
+│   │   ├── storage.go        # Storage interface, NewStorageForPath, JoinPath
 │   │   ├── local.go          # Local filesystem implementation
 │   │   ├── memory.go         # Thread-safe in-memory virtual storage
-│   │   └── s3.go             # AWS S3 cloud storage
+│   │   └── s3.go             # Native AWS S3 cloud storage (aws-sdk-go-v2)
 │   ├── formats/              # Table format adapters
 │   │   ├── delta/            # Delta Lake (JSON actions, schema mapping, source/target)
 │   │   ├── iceberg/          # Apache Iceberg (metadata v2/v3, manifest/schema mapping)
@@ -110,10 +110,15 @@ go mod tidy
 # Test specific format adapter
 go test -v ./pkg/formats/delta
 go test -v ./pkg/formats/iceberg
+go test -v ./pkg/formats/hudi
+go test -v ./pkg/formats/parquet
 
-# Test core model or conversion controller
+# Test core model, storage, or conversion controller
 go test -v ./pkg/model
+go test -v ./pkg/io
 go test -v ./pkg/conversion
+go test -v ./pkg/catalog
+go test -v ./pkg/daemon
 ```
 
 ---

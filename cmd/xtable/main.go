@@ -30,7 +30,9 @@ import (
 
 	"github.com/apache/incubator-xtable-go/pkg/conversion"
 	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
+	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
 	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
+	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
 	"github.com/apache/incubator-xtable-go/pkg/spi"
@@ -108,8 +110,6 @@ func newSyncCmd() *cobra.Command {
 				}
 			}
 
-			storage := io.NewLocalStorage()
-			controller := conversion.NewController(storage)
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
@@ -123,6 +123,14 @@ func newSyncCmd() *cobra.Command {
 				fmt.Printf("\n[%d/%d] Syncing Table '%s' (%s -> %v)...\n",
 					i+1, len(cfg.Datasets), ds.TableName, ds.SourceFormat, ds.TargetFormats)
 
+				storage, err := io.NewStorageForPath(ctx, ds.TableBasePath)
+				if err != nil {
+					fmt.Printf("  ❌ Failed to initialize storage for %s: %v\n", ds.TableBasePath, err)
+					hasErrors = true
+					continue
+				}
+
+				controller := conversion.NewController(storage)
 				results, err := controller.Sync(ctx, ds)
 				if err != nil {
 					fmt.Printf("  ❌ Failed: %v\n", err)
@@ -162,7 +170,8 @@ func newInspectCmd() *cobra.Command {
 		Use:   "inspect",
 		Short: "Inspect table schema and metadata",
 		Example: `  xtable inspect --basePath ./my_table --format DELTA
-  xtable inspect --basePath ./my_table --format ICEBERG`,
+  xtable inspect --basePath ./my_table --format ICEBERG
+  xtable inspect --basePath ./my_parquet_data --format PARQUET`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if basePath == "" {
 				return fmt.Errorf("--basePath flag is required")
@@ -172,8 +181,11 @@ func newInspectCmd() *cobra.Command {
 				return err
 			}
 
-			storage := io.NewLocalStorage()
 			ctx := context.Background()
+			storage, err := io.NewStorageForPath(ctx, basePath)
+			if err != nil {
+				return fmt.Errorf("failed to initialize storage for %s: %w", basePath, err)
+			}
 
 			var source spi.ConversionSource
 			switch format {
@@ -181,6 +193,10 @@ func newInspectCmd() *cobra.Command {
 				source = delta.NewSource(storage, basePath)
 			case model.TableFormatIceberg:
 				source = iceberg.NewSource(storage, basePath)
+			case model.TableFormatHudi:
+				source = hudi.NewSource(storage, basePath)
+			case model.TableFormatParquet:
+				source = parquet.NewSource(storage, basePath)
 			default:
 				return fmt.Errorf("unsupported inspect format: %s", format)
 			}

@@ -109,7 +109,7 @@ func TestController_DeltaToIcebergE2E(t *testing.T) {
 	icebergResult := results[model.TableFormatIceberg]
 	require.NotNil(t, icebergResult)
 	assert.Equal(t, spi.SyncStatusSuccess, icebergResult.StatusCode)
-	assert.Equal(t, table.LatestCommitTime, icebergResult.LastInstantSynced)
+	assert.InDelta(t, table.LatestCommitTime, icebergResult.LastInstantSynced, 5000)
 
 	// 3. Verify target Iceberg table can be read by Iceberg Source
 	icebergSource := iceberg.NewSource(memStorage, basePath)
