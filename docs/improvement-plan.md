@@ -121,7 +121,7 @@ Body should say the two entrypoints that were out of sync and that the registry 
 
 ---
 
-## T2 — Wire catalog sync into the conversion path ⏳ BLOCKED (waiting for T5)
+## T2 — Wire catalog sync into the conversion path ⏳ READY (T5 resolved)
 
 **Current state:** `pkg/catalog` is dead code outside its own tests. `DatasetConfig`
 (`pkg/conversion/config.go`) has no catalog field and `Controller` never builds a `SyncClient`, so Glue
@@ -284,7 +284,16 @@ extension path first.
 
 ---
 
-## T5 — Resolve Hive Metastore: implement or withdraw ⏳ DECIDED (B) — NOT YET EXECUTED
+## T5 — Resolve Hive Metastore: implement or withdraw ✅ COMPLETED (option B)
+
+**Executed.** Capability claims withdrawn from `SPEC.md:30`, `SPEC.md:239`, `AGENTS.md:28`,
+`AGENTS.md:71` and `CLAUDE.md:13`. `CLAUDE.md:32` deliberately keeps HMS — it is the forward-looking
+"Parity order" list, not a statement of current capability.
+
+In code, `pkg/catalog/catalog.go` gained `ErrCatalogNotImplemented` and
+`CatalogType.Implemented()`, covered by `TestCatalogTypeImplemented`. T2 must route
+`CatalogTypeHMS` to that error rather than skipping it silently. Full scope for a real
+implementation is now T13.
 
 `CatalogTypeHMS` is declared at `pkg/catalog/catalog.go:32` with **no implementation**, while
 `AGENTS.md:28`, `SPEC.md:30` and `SPEC.md:239` all advertise Hive Metastore support. The README does
@@ -558,16 +567,16 @@ Iceberg/Delta targets, whose partition data lives in their own metadata rather t
 | | Tasks |
 |---|---|
 | 🔴 Blocker | **T10** (release workflow never produces a release) |
-| ✅ Done | T1, T4, T6, T9 |
+| ✅ Done | T1, T4, T5, T6, T9 |
 | ⚠️ Partial | T3 → finish in **T12**; T7 → blocked by **T10** |
-| ⏳ Ready | **T5** (decided, not executed) → then T2 → then T8 |
+| ⏳ Ready | **T2** (T5 resolved, no longer blocked) → then T8 |
 | ⚠️ Regressions | **T11** (CI matrix, `go.mod` floor, `CLAUDE.md` drift) |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
 
 ```
 T10 ─────> unblocks T7 (nothing ships until the release job runs)
 T11 ─────> independent, do it early — it is small and restores CI signal
-T5  ─────> T2 ──> T8-catalog ──> T14   (catalog read side shares T2's config surface)
+T2  ─────> T8-catalog ──> T14   (catalog read side shares T2's config surface)
 T12 ─────> completes T3 and gives the storage-config path its only test
 T13, T15 ─ unscheduled parity gaps
 ```

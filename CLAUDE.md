@@ -10,7 +10,7 @@ metadata translation between Delta Lake, Iceberg, Hudi, Paimon and raw Parquet. 
 
 Layout: `pkg/model` (canonical pivot types), `pkg/spi` (source/target/sync interfaces), `pkg/io` (storage
 abstraction), `pkg/formats/<format>` (per-format readers and writers), `pkg/conversion` (the controller),
-`pkg/catalog` (Glue/HMS/Iceberg REST), `pkg/daemon`, `cmd/xtable` (CLI), `cmd/xtable-service` (REST
+`pkg/catalog` (Glue, Iceberg REST), `pkg/daemon`, `cmd/xtable` (CLI), `cmd/xtable-service` (REST
 daemon), `cmd/xtable-wasm`, `bindings/{c,python}`, `test/` (e2e), `spec/` (OpenAPI).
 
 The Java original is checked out at `../incubator-xtable`. `pkg/model` mirrors `xtable-api`'s `Internal*`

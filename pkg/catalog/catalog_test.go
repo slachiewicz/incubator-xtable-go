@@ -131,3 +131,25 @@ func TestIcebergRESTCatalogClient_CreateOrUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/v1/namespaces/analytics_db/tables", receivedPath)
 }
+
+func TestCatalogTypeImplemented(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		catalogType catalog.CatalogType
+		want        bool
+	}{
+		{name: "glue is implemented", catalogType: catalog.CatalogTypeGlue, want: true},
+		{name: "iceberg rest is implemented", catalogType: catalog.CatalogTypeIcebergREST, want: true},
+		{name: "hms is declared but not implemented", catalogType: catalog.CatalogTypeHMS, want: false},
+		{name: "unknown type is not implemented", catalogType: catalog.CatalogType("NOPE"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.catalogType.Implemented())
+		})
+	}
+}

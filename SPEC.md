@@ -27,7 +27,8 @@
 
 ## 1. Executive Summary & Mission
 
-**Apache XTable (Go)** is a pure Go, omni-directional, zero-copy metadata translation engine and synchronization daemon for open lakehouse table formats. It enables seamless interoperability across **Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and unmanaged **Parquet** datasets, as well as catalog synchronization (**AWS Glue**, **Hive Metastore**, **Iceberg REST**).
+**Apache XTable (Go)** is a pure Go, omni-directional, zero-copy metadata translation engine and synchronization daemon for open lakehouse table formats. It enables seamless interoperability across **Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and unmanaged **Parquet** datasets, as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is a declared
+parity target but is **not implemented**; `CatalogTypeHMS` exists as a constant only.
 
 ### Primary Motivations for the Go-Native Implementation:
 1. **Zero JVM / Hadoop Dependency**: Operates as a single, self-contained static binary (~5MB) with no Java, Scala, Spark, or Hadoop XML configuration requirements.
@@ -236,7 +237,7 @@ type Storage interface {
 
 ## 10. Roadmap & Future Extensions
 
-1. **Phase 4**: Catalog Synchronization Clients (**AWS Glue**, **Hive Metastore**, **Iceberg REST**) & Continuous Daemon (`cmd/xtable-service`).
+1. **Phase 4**: Catalog Synchronization Clients (**AWS Glue**, **Iceberg REST**) & Continuous Daemon (`cmd/xtable-service`). Hive Metastore remains outstanding.
 2. **Phase 5 (Post-Parity Superpowers)**:
    - C-Shared Dynamic Libraries (`libxtable.so` / `libxtable.dylib`) for Python, Rust, DuckDB, and C++.
    - WebAssembly (`GOOS=js GOARCH=wasm` / WASI) for browser-based lakehouse inspection.

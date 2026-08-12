@@ -19,6 +19,7 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/apache/incubator-xtable-go/pkg/model"
@@ -27,13 +28,25 @@ import (
 // CatalogType represents supported external metastores / data catalogs.
 type CatalogType string
 
-// Supported catalog types. Note that CatalogTypeHMS is declared for parity with
-// Java XTable but has no client implementation in this repository yet.
+// Catalog type identifiers. Only CatalogTypeGlue and CatalogTypeIcebergREST have
+// client implementations; CatalogTypeHMS is retained for parity with Java XTable's
+// identifier set so configuration written against it round-trips, and any attempt to
+// use it must fail with ErrCatalogNotImplemented rather than be silently ignored.
 const (
 	CatalogTypeGlue        CatalogType = "AWS_GLUE"
 	CatalogTypeHMS         CatalogType = "HIVE_METASTORE"
 	CatalogTypeIcebergREST CatalogType = "ICEBERG_REST"
 )
+
+// ErrCatalogNotImplemented is returned for a catalog type that is recognised but has
+// no client in this repository. Hive Metastore is the only such type today; see
+// docs/improvement-plan.md T13 for the scope a real implementation would need.
+var ErrCatalogNotImplemented = errors.New("catalog type recognised but not implemented")
+
+// Implemented reports whether this catalog type has a client implementation.
+func (c CatalogType) Implemented() bool {
+	return c == CatalogTypeGlue || c == CatalogTypeIcebergREST
+}
 
 // Config holds configuration parameters for connecting to an external catalog.
 type Config struct {
