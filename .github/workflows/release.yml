@@ -45,7 +45,10 @@ jobs:
           check-latest: true
           cache: true
 
+      # Pure Go, no cgo, so one runner cross-builds every platform. Running this on all
+      # three runners would triplicate identical binaries across the merged artifacts.
       - name: Build CLI binaries
+        if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir -p dist
           GOOS=linux GOARCH=amd64 go build -v -o dist/xtable-linux-amd64 ./cmd/xtable
@@ -119,9 +122,9 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/artifacts-ubuntu-latest/*.*
-            artifacts/artifacts-macos-latest/*.*
-            artifacts/artifacts-ubuntu-24.04-arm/*.*
+            artifacts/artifacts-ubuntu-latest/*
+            artifacts/artifacts-macos-latest/*
+            artifacts/artifacts-ubuntu-24.04-arm/*
             SHA256SUMS.txt
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
