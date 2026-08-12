@@ -376,7 +376,7 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T7 — Release process ⚠️ STILL BLOCKED — see T17
+## T7 — Release process ✅ COMPLETED (proven via T17)
 
 `git tag` returns zero tags; there are no releases.
 
@@ -481,7 +481,7 @@ Scope is narrow — two lines, README only:
 
 Raised by reviewing the 15 unpushed commits. T10 is a release blocker.
 
-## T10 — Fix the release workflow ⚠️ PARTIAL (arm64 leg still fails) — see T17
+## T10 — Fix the release workflow ✅ COMPLETED (finished and proven in T17)
 
 `.github/workflows/release.yml`, step **"Build C-Shared Dynamic Libraries"**, has **no `if:` guard**.
 It runs on both `ubuntu-latest` and `macos-latest` and attempts all four platform pairs on each:
