@@ -30,16 +30,37 @@ import (
 	"github.com/apache/incubator-xtable-go/pkg/spi"
 )
 
+// CatalogClientFactory constructs a catalog sync client from its configuration.
+type CatalogClientFactory func(ctx context.Context, cfg *catalog.Config) (catalog.SyncClient, error)
+
 // Controller orchestrates the end-to-end table format metadata synchronization process.
 type Controller struct {
 	storage io.Storage
+	// newCatalogClient is injected so tests can substitute a fake without global state.
+	newCatalogClient CatalogClientFactory
+}
+
+// Option customizes a Controller at construction time.
+type Option func(*Controller)
+
+// WithCatalogClientFactory overrides how catalog sync clients are constructed. Intended for tests;
+// production callers should rely on the default, which is catalog.NewSyncClient.
+func WithCatalogClientFactory(factory CatalogClientFactory) Option {
+	return func(c *Controller) {
+		c.newCatalogClient = factory
+	}
 }
 
 // NewController creates a new ConversionController instance.
-func NewController(storage io.Storage) *Controller {
-	return &Controller{
-		storage: storage,
+func NewController(storage io.Storage, opts ...Option) *Controller {
+	c := &Controller{
+		storage:          storage,
+		newCatalogClient: catalog.NewSyncClient,
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // Sync synchronizes a source table to all configured target formats.
@@ -96,14 +117,7 @@ func (c *Controller) syncTargetToCatalogs(ctx context.Context, cfg *DatasetConfi
 
 	var catalogErrors []error
 	for i := range cfg.Catalogs {
-		var client catalog.SyncClient
-		var err error
-		if catalogFactoryFunc != nil {
-			client, err = catalogFactoryFunc(ctx, &cfg.Catalogs[i])
-		} else {
-			client, err = catalog.NewSyncClient(ctx, &cfg.Catalogs[i])
-		}
-
+		client, err := c.newCatalogClient(ctx, &cfg.Catalogs[i])
 		if err != nil {
 			catalogErrors = append(catalogErrors, fmt.Errorf("failed to create catalog sync client for %s: %w", cfg.Catalogs[i].Type, err))
 			continue
@@ -126,30 +140,6 @@ func appendCatalogError(baseErr, catalogErr string) string {
 		return fmt.Sprintf("catalog sync error: %s", catalogErr)
 	}
 	return fmt.Sprintf("%s; catalog sync error: %s", baseErr, catalogErr)
-}
-
-var catalogFactoryFunc func(ctx context.Context, cfg *catalog.Config) (catalog.SyncClient, error)
-var registeredFakeClient catalog.SyncClient
-
-// SetCatalogFactory sets a custom catalog factory for testing purposes.
-func SetCatalogFactory(fn func(ctx context.Context, cfg *catalog.Config) (catalog.SyncClient, error)) {
-	catalogFactoryFunc = fn
-}
-
-// ResetCatalogFactory resets the catalog factory to the default implementation.
-func ResetCatalogFactory() {
-	catalogFactoryFunc = nil
-	registeredFakeClient = nil
-}
-
-// SetRegisteredFakeClient sets the registered fake client for testing purposes.
-func SetRegisteredFakeClient(client catalog.SyncClient) {
-	registeredFakeClient = client
-}
-
-// GetFakeClient returns the registered fake client for testing purposes.
-func GetFakeClient() catalog.SyncClient {
-	return registeredFakeClient
 }
 
 func (c *Controller) syncToTarget(

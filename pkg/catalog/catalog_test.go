@@ -19,6 +19,7 @@ package catalog_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -150,6 +151,157 @@ func TestCatalogTypeImplemented(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tt.want, tt.catalogType.Implemented())
+		})
+	}
+}
+
+func TestConfig_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     *catalog.Config
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid Glue config",
+			cfg: &catalog.Config{
+				Type:         catalog.CatalogTypeGlue,
+				DatabaseName: "my_database",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid Iceberg REST config with URI",
+			cfg: &catalog.Config{
+				Type:         catalog.CatalogTypeIcebergREST,
+				DatabaseName: "my_database",
+				URI:          "http://localhost:8080",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing type",
+			cfg: &catalog.Config{
+				Type:         "",
+				DatabaseName: "my_database",
+			},
+			wantErr: true,
+			errMsg:  "catalog type is required",
+		},
+		{
+			name: "missing database name",
+			cfg: &catalog.Config{
+				Type:         catalog.CatalogTypeGlue,
+				DatabaseName: "",
+			},
+			wantErr: true,
+			errMsg:  "databaseName is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.cfg.Validate()
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNewSyncClient(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status": "OK"}`))
+	}))
+	defer server.Close()
+
+	tests := []struct {
+		name        string
+		cfg         *catalog.Config
+		wantErr     bool
+		errCheck    func(error) bool
+		catalogType catalog.CatalogType
+	}{
+		{
+			name: "creates Glue client successfully",
+			cfg: &catalog.Config{
+				Type:         catalog.CatalogTypeGlue,
+				DatabaseName: "my_database",
+			},
+			wantErr:     false,
+			catalogType: catalog.CatalogTypeGlue,
+		},
+		{
+			name: "creates Iceberg REST client successfully",
+			cfg: &catalog.Config{
+				Type:         catalog.CatalogTypeIcebergREST,
+				DatabaseName: "my_database",
+				URI:          server.URL,
+			},
+			wantErr:     false,
+			catalogType: catalog.CatalogTypeIcebergREST,
+		},
+		{
+			name: "fails for invalid config - missing database",
+			cfg: &catalog.Config{
+				Type:         catalog.CatalogTypeGlue,
+				DatabaseName: "",
+			},
+			wantErr: true,
+			errCheck: func(err error) bool {
+				return err != nil && err.Error() == "databaseName is required"
+			},
+		},
+		{
+			name: "fails for HMS - not implemented",
+			cfg: &catalog.Config{
+				Type:         catalog.CatalogTypeHMS,
+				DatabaseName: "my_database",
+			},
+			wantErr: true,
+			errCheck: func(err error) bool {
+				return err != nil && errors.Is(err, catalog.ErrCatalogNotImplemented)
+			},
+		},
+		{
+			name: "fails for unsupported catalog type",
+			cfg: &catalog.Config{
+				Type:         catalog.CatalogType("UNKNOWN_TYPE"),
+				DatabaseName: "my_database",
+			},
+			wantErr: true,
+			errCheck: func(err error) bool {
+				return err != nil && err.Error() == "unsupported catalog type: UNKNOWN_TYPE"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			client, err := catalog.NewSyncClient(ctx, tt.cfg)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Nil(t, client)
+				require.NotNil(t, tt.errCheck, "errCheck must be provided for error cases")
+				assert.True(t, tt.errCheck(err), "Error check failed")
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, client)
+				assert.Equal(t, tt.catalogType, client.CatalogType())
+				_ = client.Close()
+			}
 		})
 	}
 }

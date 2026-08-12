@@ -208,6 +208,8 @@ func TestController_IcebergToDeltaE2E(t *testing.T) {
 }
 
 func TestController_CatalogSyncRegistersTargetTable(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	memStorage := io.NewMemoryStorage()
@@ -244,13 +246,10 @@ func TestController_CatalogSyncRegistersTargetTable(t *testing.T) {
 	require.NoError(t, err)
 
 	fakeClient := &fakeSyncClient{registeredTables: make(chan *model.Table, 10)}
-	conversion.SetCatalogFactory(func(ctx context.Context, cfg *catalog.Config) (catalog.SyncClient, error) {
-		conversion.SetRegisteredFakeClient(fakeClient)
-		return fakeClient, nil
-	})
-	defer conversion.SetCatalogFactory(nil)
-
-	controller := conversion.NewController(memStorage)
+	controller := conversion.NewController(memStorage,
+		conversion.WithCatalogClientFactory(func(_ context.Context, _ *catalog.Config) (catalog.SyncClient, error) {
+			return fakeClient, nil
+		}))
 
 	fakeCatalogCfg := catalog.Config{
 		Type:         catalog.CatalogTypeGlue,
@@ -286,6 +285,8 @@ func TestController_CatalogSyncRegistersTargetTable(t *testing.T) {
 }
 
 func TestController_CatalogSyncMultipleCatalogsPartialFailure(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	memStorage := io.NewMemoryStorage()
@@ -321,10 +322,8 @@ func TestController_CatalogSyncMultipleCatalogsPartialFailure(t *testing.T) {
 	err = deltaTarget.CommitSnapshot(ctx, snapshot)
 	require.NoError(t, err)
 
-	controller := conversion.NewController(memStorage)
-
 	catalogCallCount := 0
-	setFakeCatalogFunc := func(ctx context.Context, cfg *catalog.Config) (catalog.SyncClient, error) {
+	setFakeCatalogFunc := func(_ context.Context, cfg *catalog.Config) (catalog.SyncClient, error) {
 		catalogCallCount++
 		if cfg.CatalogID == "failing-catalog" {
 			return &failingSyncClient{}, nil
@@ -332,8 +331,7 @@ func TestController_CatalogSyncMultipleCatalogsPartialFailure(t *testing.T) {
 		return &fakeSyncClient{registeredTables: make(chan *model.Table, 10)}, nil
 	}
 
-	conversion.SetCatalogFactory(setFakeCatalogFunc)
-	defer conversion.ResetCatalogFactory()
+	controller := conversion.NewController(memStorage, conversion.WithCatalogClientFactory(setFakeCatalogFunc))
 
 	catalogs := []catalog.Config{
 		{
@@ -368,6 +366,8 @@ func TestController_CatalogSyncMultipleCatalogsPartialFailure(t *testing.T) {
 }
 
 func TestController_CatalogFailureDoesNotOverwriteSuccessStatus(t *testing.T) {
+	t.Parallel()
+
 	ctx := context.Background()
 
 	memStorage := io.NewMemoryStorage()
@@ -403,12 +403,10 @@ func TestController_CatalogFailureDoesNotOverwriteSuccessStatus(t *testing.T) {
 	err = deltaTarget.CommitSnapshot(ctx, snapshot)
 	require.NoError(t, err)
 
-	controller := conversion.NewController(memStorage)
-
-	conversion.SetCatalogFactory(func(ctx context.Context, cfg *catalog.Config) (catalog.SyncClient, error) {
-		return &failingSyncClient{}, nil
-	})
-	defer conversion.ResetCatalogFactory()
+	controller := conversion.NewController(memStorage,
+		conversion.WithCatalogClientFactory(func(_ context.Context, _ *catalog.Config) (catalog.SyncClient, error) {
+			return &failingSyncClient{}, nil
+		}))
 
 	catalogs := []catalog.Config{
 		{
