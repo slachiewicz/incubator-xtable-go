@@ -216,20 +216,24 @@ func (s *Server) handleGetConversionStatus(w http.ResponseWriter, r *http.Reques
 
 	s.mu.RLock()
 	resp, ok := s.conversions[conversionID]
-	s.mu.RUnlock()
-
 	if !ok {
+		s.mu.RUnlock()
 		http.Error(w, "conversion job not found", http.StatusNotFound)
 		return
 	}
 
+	// Snapshot under the lock so the background goroutine cannot mutate
+	// fields (Status, Results, FinishedAt) while we JSON-encode them.
+	snapshot := *resp
+	s.mu.RUnlock()
+
 	w.Header().Set("Content-Type", "application/json")
-	if resp.Status == "RUNNING" {
+	if snapshot.Status == "RUNNING" {
 		w.WriteHeader(http.StatusAccepted)
 	} else {
 		w.WriteHeader(http.StatusOK)
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(&snapshot)
 }
 
 func (s *Server) handleInspectTable(w http.ResponseWriter, r *http.Request) {
