@@ -77,11 +77,20 @@ from any existing file in `pkg/model/`. This repo is headed for ASF donation; `L
 
 ## Go version
 
-`go.mod` declares `go 1.25.0` — the 1.25 minor floor, not a patch pin. `golang.org/x/sys` declares
-`go 1.25.0` itself, so the toolchain will not accept a bare `go 1.25` here; `1.25.0` is the first 1.25
-release, so this excludes no 1.25 user. Do not let it drift to a later patch such as `1.25.5`. With `GOTOOLCHAIN=auto`, editing that
-line silently downloads a different toolchain. Leave it alone unless the version bump is the point of the
-change — and if you do change it, update the `ci.yml` matrix in the same commit.
+Two different versions, for two different jobs — do not conflate them.
+
+**`go.mod`'s `go` directive is the language floor**: `go 1.25.0`, the 1.25 minor floor rather than a
+patch pin. `golang.org/x/sys` declares `go 1.25.0` itself, so the toolchain rejects a bare `go 1.25`
+here; `1.25.0` is the first 1.25 release, so this excludes no 1.25 user. Do **not** let it drift to a
+later patch such as `1.25.5` — that would force every consumer onto that patch for no benefit. With
+`GOTOOLCHAIN=auto`, editing the line silently downloads a different toolchain. Note `go get -u ./...`
+rewrites this directive on its own, so re-check it after any dependency sweep.
+
+**The workflow `go-version:` pins are the build toolchain**: `1.25.12`, and these *should* track the
+newest 1.25 patch. CI's `govulncheck` job scans the standard library, so a stale pin fails the build on
+stdlib CVEs even when every dependency is clean — `1.25.5` was rejected for 13 `crypto/tls` findings.
+`security.yml` carries two pins, `go-version` and the action's own `go-version-input`; bump both.
+`ci.yml`'s matrix uses `"1.25"`, which resolves to the newest 1.25 patch automatically.
 
 ## Known defects in the current model
 
