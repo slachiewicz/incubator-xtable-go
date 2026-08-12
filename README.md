@@ -34,7 +34,7 @@
 - ⚡ **Instant Execution**: Native static binary (~15MB) with **zero JVM boot latency** (<2ms execution).
 - 🛡️ **Pure Go & Zero-JVM**: No Spark, Hadoop XML, Java, or Scala runtime dependencies required.
 - 🔄 **Omni-Directional Sync**: Any format $\longleftrightarrow$ Any format (e.g., Delta $\to$ Iceberg & Hudi; Parquet $\to$ Delta $\to$ Iceberg; Hudi $\to$ Delta).
-- 📦 **Roaring Bitmap Deletion Vectors**: Full translation of row-level deletion vectors across modern lakehouse formats.
+- 📦 **Deletion Vectors**: Full translation of deletion vector descriptors across modern lakehouse formats, preserving roaring bitmap payloads untouched.
 - 🌐 **Ubiquitous Embeddability**:
   - **CLI Tool** (`xtable`)
   - **Continuous REST Daemon & Sidecar** (`xtable-service` with OpenAPI 3.0.3)
@@ -49,7 +49,7 @@
 
 | Format | Source (Reader) | Target (Writer) | Schema Evolution | Partitioning | Deletion Vectors |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Delta Lake** | ✅ | ✅ | ✅ (Field IDs) | ✅ | ✅ (Roaring Bitmap) |
+| **Delta Lake** | ✅ | ✅ | ✅ (Field IDs) | ✅ | ✅ (Roaring Bitmap Descriptor) |
 | **Apache Iceberg** (v2/v3) | ✅ | ✅ | ✅ (Field IDs) | ✅ (Transforms) | ✅ (Equality/Positional) |
 | **Apache Hudi** | ✅ | ✅ | ✅ (Avro Schema) | ✅ | ✅ |
 | **Raw Parquet** | ✅ | — | ✅ (Schema Crawler) | ✅ (Hive Style) | — |
