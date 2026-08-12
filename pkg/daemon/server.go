@@ -32,6 +32,7 @@ import (
 	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
 	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
 	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
+	"github.com/apache/incubator-xtable-go/pkg/formats/paimon"
 	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
@@ -247,6 +248,8 @@ func (s *Server) handleInspectTable(w http.ResponseWriter, r *http.Request) {
 		source = hudi.NewSource(storage, req.TableBasePath)
 	case model.TableFormatParquet:
 		source = parquet.NewSource(storage, req.TableBasePath)
+	case model.TableFormatPaimon:
+		source = paimon.NewSource(storage, req.TableBasePath)
 	default:
 		http.Error(w, fmt.Sprintf("unsupported format: %s", req.Format), http.StatusBadRequest)
 		return

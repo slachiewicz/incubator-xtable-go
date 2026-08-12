@@ -3,8 +3,10 @@
 *.dll
 *.so
 *.dylib
+*.wasm
 /bin/
 /dist/
+/lib/
 
 # Test and coverage output
 *.test

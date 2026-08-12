@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyxtable"
+version = "0.1.0"
+authors = [
+  { name="Apache XTable Authors", email="dev@xtable.apache.org" },
+]
+description = "Native Python bindings for Apache XTable in Go (zero-JVM lakehouse metadata translation)"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://xtable.apache.org"
+"Source" = "https://github.com/apache/incubator-xtable-go"

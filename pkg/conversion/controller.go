@@ -25,6 +25,7 @@ import (
 	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
 	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
 	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
+	"github.com/apache/incubator-xtable-go/pkg/formats/paimon"
 	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
@@ -137,6 +138,8 @@ func (c *Controller) createSource(format model.TableFormat, basePath string) (sp
 		return hudi.NewSource(c.storage, basePath), nil
 	case model.TableFormatParquet:
 		return parquet.NewSource(c.storage, basePath), nil
+	case model.TableFormatPaimon:
+		return paimon.NewSource(c.storage, basePath), nil
 	default:
 		return nil, fmt.Errorf("unsupported source table format: %s", format)
 	}
