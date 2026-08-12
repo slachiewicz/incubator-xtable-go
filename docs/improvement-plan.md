@@ -19,8 +19,14 @@
 
 # Improvement plan
 
-Nine tasks, ordered. T1–T3 are structural and unblock the rest; do not start T4 before T1 lands.
-Every file path, line number and signature below was read out of the tree at commit `ec2fd7e`.
+Fifteen tasks. **T1–T9** were the original structural plan, written against commit `ec2fd7e`.
+**T10–T12** were added from the review of commits `d34ed36..ddd157a` — T10 is a release blocker.
+**T13–T15** are parity gaps against Java XTable: unscheduled, and each needs a maintainer decision
+before it becomes work.
+
+Every file path, line number, signature and command output below was read out of the tree or run
+against it, not recalled. Where a task is marked ✅ but its acceptance criteria were not met, that is
+stated in the task rather than the status.
 
 ## Ground rules for every task
 
@@ -34,8 +40,8 @@ Every file path, line number and signature below was read out of the tree at com
 4. **Tests** go in the external `<pkg>_test` package, are table-driven, and call `t.Parallel()` in both
    parent and subtests. `testify` (`require`/`assert`) only. Do not add `t.Parallel()` to anything in
    `test/dockertest_*`.
-5. **Do not edit `go.mod`'s `go` directive** (currently `go 1.25.0`). If a task genuinely requires it,
-   update the `ci.yml` matrix in the same commit.
+5. **Do not edit `go.mod`'s `go` directive** (currently `go 1.25.5`; see T11 — the patch-level floor is
+   itself under review). If a task genuinely requires it, update the `ci.yml` matrix in the same commit.
 6. **Never assert on `model.DiffFiles` slice ordering** — it ranges over maps and is nondeterministic.
 7. After editing `.golangci.yml`, run `golangci-lint config verify`. `golangci-lint run` silently
    ignores misplaced keys; `config verify` is the only command that rejects them.
@@ -176,7 +182,19 @@ and Iceberg REST are unreachable from the CLI, the config file, and the REST ser
 
 ---
 
-## T3 — Make storage options reachable from configuration ✅ COMPLETED
+## T3 — Make storage options reachable from configuration ⚠️ PARTIAL — see T12
+
+Landed for the CLI (`cmd/xtable/main.go:123`) and the daemon config path
+(`pkg/daemon/daemon.go:90`), via `StorageConfig` + `ToS3OptionFuncs()` and the new
+`io.NewStorageForPathWithOptions`. Credentials correctly stayed out of the struct.
+
+**Two acceptance criteria were not met** — tracked as T12:
+1. The REST API still cannot set storage options. `Server.getStorage` calls `io.NewStorageForPath`
+   with no options and `ConvertTableRequest` has no storage field.
+2. `test/dockertest_minio_matrix_test.go:119` still builds storage with
+   `io.NewS3StorageWithClient(s3Client)` directly. The plan named reworking this as the acceptance
+   test precisely because bypassing config in the test is how the original gap survived. The new
+   config path currently has **zero** integration coverage.
 
 **Current state:** `pkg/io/storage.go:85` — `NewStorageForPath` calls `NewS3Storage(ctx)` with no
 options. `NewS3Storage` accepts `optFns ...func(*S3Options)` and `S3Options` carries
@@ -266,7 +284,7 @@ extension path first.
 
 ---
 
-## T5 — Resolve Hive Metastore: implement or withdraw ⏳ BLOCKED (DECISION NEEDED)
+## T5 — Resolve Hive Metastore: implement or withdraw ⏳ DECIDED (B) — NOT YET EXECUTED
 
 `CatalogTypeHMS` is declared at `pkg/catalog/catalog.go:32` with **no implementation**, while
 `AGENTS.md:28`, `SPEC.md:30` and `SPEC.md:239` all advertise Hive Metastore support. The README does
@@ -281,11 +299,33 @@ This is a judgment call, not a mechanical fix. **Ask the maintainer before execu
   `NewSyncClient` return a clear "not implemented" error, and correct `AGENTS.md:28`, `SPEC.md:30`
   and `SPEC.md:239` to list only Glue and Iceberg REST as implemented.
 
-(B) is the smaller, honest change and unblocks T2 immediately. Default to it unless told otherwise.
+### Library evaluation (verified 2026-08-12) — take (B)
+
+A proposal to implement via `github.com/akolb1/gometastore/hmsclient` was checked against primary
+sources. Three of its load-bearing claims do not hold:
+
+| Claim | Verified |
+|---|---|
+| gometastore is "production-ready, mature" | GitHub API `pushed_at` = **2022-12-18**. Zero commits in 3y8m, 14 stars. pkg.go.dev flags the latest pseudo-version "not in the latest version of its module". |
+| gohive's MIT license "needs ASF legal review" | **False.** MIT/X11 is [Category A](https://www.apache.org/legal/resolved.html), same tier as Apache-2.0. No review needed. |
+| Effort "~1–2 days" | Java's `xtable-hive-metastore` has `HMSCatalogSyncClient`, `HMSCatalogConversionSource`, `HMSSchemaExtractor`, `HMSCatalogPartitionSyncOperations` **and three per-format table builders** (Delta/Hudi/Iceberg), plus `HMSCatalogConfig` (`maxPartitionsPerRequest=1000`, `schemaLengthThreshold=4000`, partition-extractor class). |
+
+Two further constraints nobody raised: `hmsclient` returns Thrift-generated `*hive_metastore.Table`,
+so Apache Thrift's Go runtime enters `go.mod` (currently 12 direct deps, no Thrift); and Java sets
+table ownership via Hadoop `UserGroupInformation` (`HMSCatalogTableBuilderFactory.java:67`), which Go
+cannot replicate — ownership semantics would silently diverge.
+
+**Decision: (B).** Withdrawing takes about an hour and unblocks T2 now. Since the licensing argument
+that favoured `gometastore` is void and that library is abandoned, any future implementation should
+start from `beltran/gohive` (MIT/Category A, pushed 2026-05-30, 258 stars) — not gometastore.
+
+Do **not** ship a partial HMS that only creates tables. It would read as supported while missing
+partition sync and the per-format builders, which is worse than the current honest gap. Track the full
+scope as its own issue (see T13).
 
 ### Commit
 
-`docs: scope catalog support to Glue and Iceberg REST` (option B).
+`docs: scope catalog support to Glue and Iceberg REST`
 
 ---
 
@@ -319,7 +359,7 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T7 — Release process ✅ COMPLETED
+## T7 — Release process ⚠️ SHIPPED BUT BROKEN — see T10
 
 `git tag` returns zero tags; there are no releases.
 
@@ -393,20 +433,146 @@ Scope is narrow — two lines, README only:
 
 ---
 
+# Review findings (2026-08-12, commits `d34ed36..ddd157a`)
+
+Raised by reviewing the 15 unpushed commits. T10 is a release blocker.
+
+## T10 — Fix the release workflow 🔴 BLOCKER
+
+`.github/workflows/release.yml`, step **"Build C-Shared Dynamic Libraries"**, has **no `if:` guard**.
+It runs on both `ubuntu-latest` and `macos-latest` and attempts all four platform pairs on each:
+
+```sh
+GOOS=linux  GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared ...
+GOOS=linux  GOARCH=arm64 ...
+GOOS=darwin GOARCH=amd64 ...
+GOOS=darwin GOARCH=arm64 ...
+```
+
+Cross-compiling cgo needs a matching `CC` cross-toolchain, which GitHub runners do not provide.
+Verified locally on darwin:
+
+```
+$ GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared ./bindings/c
+exit 1
+# runtime/cgo
+gcc_amd64.S:27:8: error: unknown token in expression
+```
+
+It is one `run:` block with no `|| true`, so the step fails, the job fails, and **no release is ever
+produced on the first `v*` tag**. The WASM and `sha256sum` steps in the same file *are* guarded with
+`if: matrix.os == 'ubuntu-latest'` — only this step was missed.
+
+### Steps
+
+1. Split the step in two, each guarded by `matrix.os`, building only the runner's native `GOOS`
+   (ubuntu → the two `.so`; macos → the two `.dylib`). Note `GOARCH` cross-compilation *within* one
+   OS also needs a cross-linker — if the arm64 leg fails on an amd64 runner, either add
+   `macos-14`/`ubuntu-24.04-arm` runners or drop the non-native arch.
+2. `SHA256SUMS.txt` is generated only on ubuntu, so macOS artifacts currently ship unchecksummed.
+   Either checksum per-runner or generate it after artifacts are merged in the release job.
+3. Prove it before tagging: push a throwaway `v0.0.0-test` tag to a fork, confirm green, delete it.
+
+**Commit:** `ci: build c-shared libraries only on their native runner`
+
+## T11 — Restore CI coverage and re-sync docs ⚠️
+
+Three regressions from the same batch:
+
+1. **The Go matrix lost `stable`.** `ci.yml` went `["1.22","1.23","stable"]` → `["1.25.5"]`. Removing
+   the 1.22/1.23 legs was right (dead against the `go.mod` floor), but nothing now tests against
+   current Go, so a Go 1.26 incompatibility ships silently. Restore `["1.25", "stable"]`.
+2. **`go.mod` moved to a patch-level directive** (`go 1.25.5`). This is the pattern `CLAUDE.md` warns
+   about — it was deliberately lowered from `1.26.5` to `1.25.0` for exactly this reason. A patch
+   floor forces every downstream consumer onto ≥1.25.5 for no stated benefit; `go 1.25` is the
+   conventional library floor. Reverting is preferred but is a maintainer call.
+3. **`CLAUDE.md:80` is stale again** — still says `go 1.25.0`. Re-sync whichever value wins.
+
+Also minor: the registry returns `unsupported source table format: %s`, so the C and WASM APIs now
+emit `failed to create format source: unsupported source table format: PAIMON` where they previously
+emitted `unsupported format: PAIMON`. T1 asked for string compatibility. Nothing is released, so the
+cost is zero today — but decide deliberately, because FFI consumers parse that text.
+
+**Commit:** `ci: test against current Go alongside the declared minimum`
+
+## T12 — Finish T3: REST storage options and the MinIO regression test ⚠️
+
+Carries the two unmet acceptance criteria from T3 (see above).
+
+1. Add a storage block to `ConvertTableRequest`/`InspectTableRequest` (`pkg/daemon/types.go`) and
+   thread it through `Server.getStorage`, mirroring `ToS3OptionFuncs()`. Keep credentials out.
+2. Rework `test/dockertest_minio_matrix_test.go` to reach MinIO through `DatasetConfig.Storage`
+   instead of `io.NewS3StorageWithClient`. **This is the point of the task** — without it the config
+   path is untested and will rot exactly as the original gap did.
+
+**Commit:** `feat: accept storage options over the REST API`
+
+---
+
+# Parity gaps against Java XTable
+
+Surveyed from `../incubator-xtable` on 2026-08-12. These are **missing features**, not defects — none
+is scheduled, and each needs a maintainer decision before it becomes work.
+
+Size context: the whole of Go's `pkg/catalog` is **652 lines**. Java's Glue support alone is
+`GlueCatalogSyncClient` (10.2K) + `GlueSchemaExtractor` (10.5K) +
+`GlueCatalogPartitionSyncOperations` (13.3K) + `GlueCatalogConversionSource` (3.7K) plus table
+builders, config and a client factory. The Go catalog layer is a thin slice of the Java one.
+
+## T13 — Hive Metastore catalog (deferred from T5)
+
+Full scope, for whoever picks it up: sync client, schema extractor, partition sync operations, three
+per-format table builders, a Thrift dependency, and an HMS container for integration tests. Start
+from `beltran/gohive`. See the T5 evaluation for why not gometastore.
+
+## T14 — Catalog conversion sources (read side)
+
+Go's `catalog.SyncClient` is **write-only**: `CatalogType`, `CreateOrUpdateTable`, `DropTable`,
+`Close`. Java additionally has `GlueCatalogConversionSource` and `HMSCatalogConversionSource` behind
+`CatalogConversionFactory`, which resolve a table **from a catalog identifier** rather than a base
+path — i.e. `--catalog glue --table db.customers` instead of `--basePath s3://…`.
+
+This is a user-visible capability the Go port simply does not have, and it is the natural companion to
+T2. Scope it only after T2 lands, since it shares the config surface.
+
+## T15 — Catalog partition synchronization
+
+Java has `CatalogPartitionSyncTool`, `CatalogPartitionSyncOperations`, `CatalogPartition`,
+`CatalogPartitionEvent` and a 13.3K `GlueCatalogPartitionSyncOperations`. Go has **none of it** — the
+Go `SyncClient` registers a table but never its partitions.
+
+Consequence: for Hive-style partitioned tables registered in Glue, engines that resolve partitions
+through the catalog will not see them. `HMSCatalogConfig` shows the shape this takes at scale —
+`maxPartitionsPerRequest = 1000` implies batching, and `CatalogPartitionEvent` implies diffing
+existing partitions rather than re-registering blindly.
+
+Verify the actual impact against a real Glue table before scheduling; it may be less severe for
+Iceberg/Delta targets, whose partition data lives in their own metadata rather than the catalog.
+
+---
+
 ## Ordering
 
-**Current Status:**
-- ✅ **Completed:** T1, T3, T4, T6, T7, T9
-- ⏳ **Blocked:** T2, T5 (decision needed), T8 (waiting for T2)
-- 🚫 **Not Started:** (none remaining independent tasks)
+**Current status**
+
+| | Tasks |
+|---|---|
+| 🔴 Blocker | **T10** (release workflow never produces a release) |
+| ✅ Done | T1, T4, T6, T9 |
+| ⚠️ Partial | T3 → finish in **T12**; T7 → blocked by **T10** |
+| ⏳ Ready | **T5** (decided, not executed) → then T2 → then T8 |
+| ⚠️ Regressions | **T11** (CI matrix, `go.mod` floor, `CLAUDE.md` drift) |
+| 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
 
 ```
-✅ T1 ──┬──> ✅ T4  (registry must exist before adding targets)
-       │
-⏳ T5 ──┴──> ⏳ T2 ──> ⏳ T8-catalog   (HMS decision unblocks the catalog constructor)
-✅ T3 ──────> ⏳ T8-daemon
-✅ T6, ✅ T7, ✅ T9 are independent — do them any time.
+T10 ─────> unblocks T7 (nothing ships until the release job runs)
+T11 ─────> independent, do it early — it is small and restores CI signal
+T5  ─────> T2 ──> T8-catalog ──> T14   (catalog read side shares T2's config surface)
+T12 ─────> completes T3 and gives the storage-config path its only test
+T13, T15 ─ unscheduled parity gaps
 ```
+
+**Do T10 and T11 first.** Both are small, and until T10 lands the release process is decorative.
 
 Do **not** batch T1 with anything. It touches six files across four entrypoints and needs to be
 revertable on its own.
