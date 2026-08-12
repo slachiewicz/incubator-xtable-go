@@ -64,19 +64,21 @@ jobs:
           GOOS=js GOARCH=wasm go build -v -o dist/xtable.wasm ./cmd/xtable-wasm
           ls -lh dist/xtable.wasm
 
-      - name: Build C-Shared Dynamic Libraries
+      - name: Build C-Shared Dynamic Libraries (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-linux-amd64.so ./bindings/c
           GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-linux-arm64.so ./bindings/c
+          ls -lh dist/libxtable-*.so
+
+      - name: Build C-Shared Dynamic Libraries (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
           GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-darwin-amd64.dylib ./bindings/c
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-darwin-arm64.dylib ./bindings/c
-          ls -lh dist/libxtable-*
+          ls -lh dist/libxtable-*.dylib
 
-      - name: Generate checksums
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          cd dist
-          sha256sum * > SHA256SUMS.txt
+      
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -101,6 +103,11 @@ jobs:
       - name: Display artifact structure
         run: |
           ls -R artifacts/
+
+      - name: Generate combined checksums
+        run: |
+          find artifacts -type f \( -name "*.so" -o -name "*.dylib" -o -name "xtable*" -o -name "xtable-service*" -o -name "xtable.wasm" \) -exec sha256sum {} \; > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
