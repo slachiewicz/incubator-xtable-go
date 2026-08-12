@@ -226,19 +226,70 @@ type Storage interface {
 
 ## 9. Performance Benchmarks & Targets
 
-| Operation | Java Apache XTable | `xtable-go` | Target |
-| :--- | :--- | :--- | :--- |
-| **Cold Start / Initialization** | 5,000 – 15,000 ms | **< 3 ms** | < 10 ms |
-| **Binary / Distribution Size** | ~1,200 MB (bundled JAR) | **4.8 MB** (static binary) | < 15 MB |
-| **Memory Footprint (Idle)** | 250 – 500 MB | **< 15 MB** | < 30 MB |
-| **Single Table Snapshot Sync** | 2,000 – 8,000 ms | **2.5 ms** | < 50 ms |
+Only two figures below have been measured. The rest are **targets**, not results, and must not be
+quoted as benchmarks until a repeatable harness exists. Earlier revisions of this document presented
+unmeasured numbers as fact — notably a 4.8 MB binary, which is off by roughly 3x.
+
+| Property | Measured | Method |
+| :--- | :--- | :--- |
+| Binary size, `cmd/xtable`, `-ldflags="-s -w"` | **13.5 MiB** | `go build` on darwin/arm64, 2026-08-12 |
+| Binary size, `cmd/xtable`, default flags | **19.5 MiB** | same |
+| Binary size, `cmd/xtable-wasm`, default flags | **26.3 MiB** | `GOOS=js GOARCH=wasm go build`, same date |
+| Binary size, `cmd/xtable-wasm`, `-ldflags="-s -w"` | **25.6 MiB** | stripping barely helps a wasm target |
+| Process start to exit, `xtable version` | **median 7.0 ms** (min 6.5, max 7.7, n=30) | wall clock around `fork`/`exec`; an upper bound, since it includes the harness |
+
+Outstanding targets, unmeasured:
+
+| Operation | Target | Status |
+| :--- | :--- | :--- |
+| Cold start / initialization | < 10 ms | consistent with the 7.0 ms figure above, but that measurement includes process spawn and is not an isolated init benchmark |
+| Memory footprint (idle) | < 30 MB | not measured |
+| Single-table snapshot sync | < 50 ms | not measured; the unit suites complete in seconds but do no I/O against real object storage |
+
+No comparison against Java Apache XTable has been run. Any such column would need both
+implementations exercised on identical tables and hardware.
+
+### 9.1 Known size problems
+
+- **The WebAssembly target links the entire AWS SDK.** `GOOS=js GOARCH=wasm go list -deps
+  ./cmd/xtable-wasm` reports 71 `aws-sdk-go-v2` packages, including `service/glue`. A browser build
+  cannot use S3 or Glue — there are no credentials, and only local and in-memory paths resolve — so
+  this is dead weight, and it dominates the 26 MiB artifact. Stripping does not help; excluding the S3
+  and Glue backends from `js/wasm` with build tags is the fix.
+- **Release artifacts are unstripped.** Symbol tables and DWARF add roughly 6 MiB per binary.
 
 ---
 
 ## 10. Roadmap & Future Extensions
 
-1. **Phase 4**: Catalog Synchronization Clients (**AWS Glue**, **Iceberg REST**) & Continuous Daemon (`cmd/xtable-service`). Hive Metastore remains outstanding.
-2. **Phase 5 (Post-Parity Superpowers)**:
-   - C-Shared Dynamic Libraries (`libxtable.so` / `libxtable.dylib`) for Python, Rust, DuckDB, and C++.
-   - WebAssembly (`GOOS=js GOARCH=wasm` / WASI) for browser-based lakehouse inspection.
-   - Paimon format reader/writer.
+### 10.1 Delivered
+
+Phases 4 and 5 have shipped. This section previously listed them as future work.
+
+| Capability | Where it lives |
+| :--- | :--- |
+| Catalog sync clients — AWS Glue, Iceberg REST | `pkg/catalog/{glue,rest}.go`, reached from `DatasetConfig.Catalogs` |
+| Catalog conversion sources — resolve a table as `db.table` instead of a path | `pkg/catalog/{glue,rest}_conversion.go`, reached from `DatasetConfig.SourceCatalog` |
+| Catalog partition synchronization | `pkg/catalog/partition.go` + `glue_partition.go`, applied automatically for Hive-style catalogs |
+| Continuous daemon and REST service | `pkg/daemon`, `cmd/xtable-service`, contract in `spec/rest-service-open-api.yaml` |
+| C-shared libraries for Python, Rust, DuckDB, C++ | `bindings/c`, built with `make bindings-c` |
+| Python SDK | `bindings/python` (`pyxtable`) |
+| WebAssembly | `cmd/xtable-wasm`, `GOOS=js GOARCH=wasm` |
+| Paimon adapter | `pkg/formats/paimon` — source and target |
+| Parquet target | `pkg/formats/parquet/target.go` |
+
+### 10.2 Outstanding
+
+| Gap | Notes |
+| :--- | :--- |
+| **Hive Metastore** | `CatalogTypeHMS` is a declared constant that returns `ErrCatalogNotImplemented`. Java's `xtable-hive-metastore` carries a sync client, schema extractor, partition sync operations and three per-format table builders; a create-tables-only port would misrepresent itself as supported. Requires a Thrift dependency and an HMS container for integration testing. |
+| **Catalog partition sync for HMS** | Follows HMS itself. The Glue implementation is in place and the `PartitionSyncOperations` contract is catalog-agnostic. |
+| **Performance harness** | See §9. Most published targets are unmeasured. |
+| **Released versions** | No tags exist. The module path and repository name were settled only recently, and Go module tags are immutable, so tagging is deliberately deferred. |
+
+### 10.3 Deliberately not planned
+
+| Item | Reason |
+| :--- | :--- |
+| Decoding deletion-vector bitmaps | Would require reading data files, violating INV-1. Deletion vectors are translated as descriptors — path, offset, size, cardinality — and the bitmap payload is passed through untouched. |
+| Renaming stuttering identifiers (`delta.DeltaCommit`, `catalog.CatalogType`) | A breaking public API change; `revive`'s stuttering check is disabled deliberately rather than obeyed. |
