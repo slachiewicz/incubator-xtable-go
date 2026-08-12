@@ -20,6 +20,7 @@ package conversion
 import (
 	"fmt"
 
+	"github.com/apache/incubator-xtable-go/pkg/catalog"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
 	"github.com/apache/incubator-xtable-go/pkg/spi"
@@ -53,6 +54,8 @@ type DatasetConfig struct {
 	SyncMode spi.SyncMode `json:"syncMode,omitempty" yaml:"syncMode,omitempty"`
 	// Storage carries optional object-store overrides (custom endpoint, path-style addressing).
 	Storage *StorageConfig `json:"storage,omitempty" yaml:"storage,omitempty"`
+	// Catalogs lists external catalogs to register the synced table in. Optional.
+	Catalogs []catalog.Config `json:"catalogs,omitempty" yaml:"catalogs,omitempty"`
 }
 
 // ToS3OptionFuncs converts StorageConfig to S3 option functions for storage initialization.

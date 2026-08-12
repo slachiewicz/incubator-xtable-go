@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/apache/incubator-xtable-go/pkg/catalog"
 	"github.com/apache/incubator-xtable-go/pkg/formats"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
@@ -71,7 +72,53 @@ func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig) (map[model.Ta
 		results[targetFormat] = syncResult
 	}
 
+	if c.hasSuccessfulSyncs(results) && len(cfg.Catalogs) > 0 {
+		catalogErr := c.syncToCatalogs(ctx, cfg, source)
+		for format, result := range results {
+			if result.StatusCode == spi.SyncStatusSuccess && catalogErr != nil {
+				results[format] = &spi.SyncResult{
+					TableFormat:       format,
+					StatusCode:        spi.SyncStatusError,
+					Error:             fmt.Sprintf("conversion succeeded but catalog sync failed: %v", catalogErr),
+					LastInstantSynced: result.LastInstantSynced,
+					Duration:          result.Duration,
+				}
+			}
+		}
+	}
+
 	return results, nil
+}
+
+func (c *Controller) hasSuccessfulSyncs(results map[model.TableFormat]*spi.SyncResult) bool {
+	for _, result := range results {
+		if result.StatusCode == spi.SyncStatusSuccess {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Controller) syncToCatalogs(ctx context.Context, cfg *DatasetConfig, source spi.ConversionSource) error {
+	snapshot, err := source.GetCurrentSnapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get snapshot for catalog sync: %w", err)
+	}
+
+	for i := range cfg.Catalogs {
+		client, err := catalog.NewSyncClient(ctx, &cfg.Catalogs[i])
+		if err != nil {
+			return fmt.Errorf("failed to create catalog sync client for %s: %w", cfg.Catalogs[i].Type, err)
+		}
+
+		if err := client.CreateOrUpdateTable(ctx, snapshot.Table, snapshot); err != nil {
+			_ = client.Close()
+			return fmt.Errorf("failed to sync to catalog %s: %w", cfg.Catalogs[i].Type, err)
+		}
+		_ = client.Close()
+	}
+
+	return nil
 }
 
 func (c *Controller) syncToTarget(
