@@ -82,3 +82,23 @@ type SyncClient interface {
 	// Close releases any network connections.
 	Close() error
 }
+
+// NewSyncClient creates a catalog sync client for the specified type. For HMS (Hive Metastore),
+// this returns ErrCatalogNotImplemented since no client implementation exists yet; see
+// docs/improvement-plan.md T13 for the full scope a real HMS implementation would require.
+func NewSyncClient(ctx context.Context, cfg *Config) (SyncClient, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	switch cfg.Type {
+	case CatalogTypeGlue:
+		return NewGlueCatalogSyncClient(ctx, cfg)
+	case CatalogTypeIcebergREST:
+		return NewIcebergRESTCatalogClient(cfg)
+	case CatalogTypeHMS:
+		return nil, fmt.Errorf("%w: Hive Metastore (HMS) catalog support is not implemented", ErrCatalogNotImplemented)
+	default:
+		return nil, fmt.Errorf("unsupported catalog type: %s", cfg.Type)
+	}
+}

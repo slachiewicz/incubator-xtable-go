@@ -25,7 +25,7 @@ This document defines repository-specific instructions, architecture rules, and 
 
 ## 1. Project Mission & Invariants
 
-Apache XTable (Go) provides **omni-directional, zero-copy metadata translation** across open lakehouse table formats (**Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and raw **Parquet**), as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is **not implemented**.
+Apache XTable (Go) provides **omni-directional, zero-copy metadata translation** across open lakehouse table formats (**Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and raw **Parquet**), as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is intentionally excluded (see docs/improvement-plan.md T5).
 
 ### Core Invariants:
 1. **Zero Data File Rewrites**: XTable translates and generates *metadata only*. It MUST NEVER alter, rewrite, or move physical Parquet/ORC data files.
