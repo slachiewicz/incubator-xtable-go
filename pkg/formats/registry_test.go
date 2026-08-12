@@ -117,16 +117,14 @@ func TestNewTarget(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "Parquet format - no target implemented",
+			name:      "Parquet format",
 			format:    model.TableFormatParquet,
-			wantError: true,
-			errorMsg:  "unsupported target table format",
+			wantError: false,
 		},
 		{
-			name:      "Paimon format - no target implemented",
+			name:      "Paimon format",
 			format:    model.TableFormatPaimon,
-			wantError: true,
-			errorMsg:  "unsupported target table format",
+			wantError: false,
 		},
 		{
 			name:      "Invalid format",
@@ -178,9 +176,11 @@ func TestSupportedTargets(t *testing.T) {
 
 	targets := formats.SupportedTargets()
 
-	require.Len(t, targets, 3, "should support exactly 3 target formats")
+	require.Len(t, targets, 5, "should support exactly 5 target formats")
 
 	require.Contains(t, targets, model.TableFormatDelta, "should support Delta as target")
 	require.Contains(t, targets, model.TableFormatIceberg, "should support Iceberg as target")
 	require.Contains(t, targets, model.TableFormatHudi, "should support Hudi as target")
+	require.Contains(t, targets, model.TableFormatParquet, "should support Parquet as target")
+	require.Contains(t, targets, model.TableFormatPaimon, "should support Paimon as target")
 }

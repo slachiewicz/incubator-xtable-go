@@ -65,6 +65,10 @@ func NewTarget(ctx context.Context, format model.TableFormat, storage io.Storage
 		target = iceberg.NewTarget(storage)
 	case model.TableFormatHudi:
 		target = hudi.NewTarget(storage)
+	case model.TableFormatParquet:
+		target = parquet.NewTarget(storage)
+	case model.TableFormatPaimon:
+		target = paimon.NewTarget(storage)
 	default:
 		return nil, fmt.Errorf("unsupported target table format: %s", format)
 	}
@@ -93,5 +97,7 @@ func SupportedTargets() []model.TableFormat {
 		model.TableFormatDelta,
 		model.TableFormatIceberg,
 		model.TableFormatHudi,
+		model.TableFormatParquet,
+		model.TableFormatPaimon,
 	}
 }
