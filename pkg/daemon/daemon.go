@@ -87,7 +87,8 @@ func (d *Daemon) syncAll(ctx context.Context) {
 
 		d.logger.Debug(fmt.Sprintf("[%d/%d] Checking table '%s' for updates", i+1, len(d.config.Datasets), ds.TableName))
 
-		storage, err := io.NewStorageForPath(ctx, ds.TableBasePath)
+		optFns := ds.Storage.ToS3OptionFuncs()
+		storage, err := io.NewStorageForPathWithOptions(ctx, ds.TableBasePath, optFns...)
 		if err != nil {
 			d.logger.Error("Failed to initialize storage", "path", ds.TableBasePath, "error", err)
 			continue

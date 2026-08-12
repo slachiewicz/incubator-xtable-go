@@ -20,9 +20,20 @@ package conversion
 import (
 	"fmt"
 
+	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
 	"github.com/apache/incubator-xtable-go/pkg/spi"
 )
+
+// StorageConfig carries optional object-store overrides (custom endpoint, path-style addressing).
+type StorageConfig struct {
+	// Region is the AWS region for S3 storage (e.g., "us-west-2").
+	Region string `json:"region,omitempty" yaml:"region,omitempty"`
+	// Endpoint is the custom S3 endpoint URL (e.g., for MinIO or other S3-compatible services).
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	// UsePathStyle enables path-style addressing for S3 (default is virtual-hosted style).
+	UsePathStyle bool `json:"usePathStyle,omitempty" yaml:"usePathStyle,omitempty"`
+}
 
 // DatasetConfig defines the synchronization configuration for a single table dataset.
 type DatasetConfig struct {
@@ -40,6 +51,37 @@ type DatasetConfig struct {
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	// SyncMode controls FULL snapshot sync vs INCREMENTAL sync.
 	SyncMode spi.SyncMode `json:"syncMode,omitempty" yaml:"syncMode,omitempty"`
+	// Storage carries optional object-store overrides (custom endpoint, path-style addressing).
+	Storage *StorageConfig `json:"storage,omitempty" yaml:"storage,omitempty"`
+}
+
+// ToS3OptionFuncs converts StorageConfig to S3 option functions for storage initialization.
+func (c *StorageConfig) ToS3OptionFuncs() []func(*io.S3Options) {
+	if c == nil {
+		return nil
+	}
+
+	optFns := make([]func(*io.S3Options), 0, 3)
+
+	if c.Region != "" {
+		optFns = append(optFns, func(opts *io.S3Options) {
+			opts.Region = c.Region
+		})
+	}
+
+	if c.Endpoint != "" {
+		optFns = append(optFns, func(opts *io.S3Options) {
+			opts.Endpoint = c.Endpoint
+		})
+	}
+
+	if c.UsePathStyle {
+		optFns = append(optFns, func(opts *io.S3Options) {
+			opts.UsePathStyle = true
+		})
+	}
+
+	return optFns
 }
 
 // Validate validates that required dataset configuration parameters are provided.

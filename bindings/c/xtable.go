@@ -77,7 +77,8 @@ func xtable_sync_json(configStr *C.char) *C.char {
 			ds.TargetFormats = cfg.TargetFormats
 		}
 
-		storage, sErr := io.NewStorageForPath(ctx, ds.TableBasePath)
+		optFns := ds.Storage.ToS3OptionFuncs()
+		storage, sErr := io.NewStorageForPathWithOptions(ctx, ds.TableBasePath, optFns...)
 		if sErr != nil {
 			return errorJSON(fmt.Sprintf("failed to initialize storage for %s: %v", ds.TableBasePath, sErr))
 		}

@@ -120,7 +120,8 @@ func newSyncCmd() *cobra.Command {
 				fmt.Printf("\n[%d/%d] Syncing Table '%s' (%s -> %v)...\n",
 					i+1, len(cfg.Datasets), ds.TableName, ds.SourceFormat, ds.TargetFormats)
 
-				storage, err := io.NewStorageForPath(ctx, ds.TableBasePath)
+				optFns := ds.Storage.ToS3OptionFuncs()
+				storage, err := io.NewStorageForPathWithOptions(ctx, ds.TableBasePath, optFns...)
 				if err != nil {
 					fmt.Printf("  ❌ Failed to initialize storage for %s: %v\n", ds.TableBasePath, err)
 					hasErrors = true

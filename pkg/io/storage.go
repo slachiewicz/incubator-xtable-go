@@ -83,8 +83,13 @@ func JoinPath(base string, elem ...string) string {
 
 // NewStorageForPath automatically resolves and instantiates the appropriate Storage implementation for a path URI.
 func NewStorageForPath(ctx context.Context, path string) (Storage, error) {
+	return NewStorageForPathWithOptions(ctx, path)
+}
+
+// NewStorageForPathWithOptions automatically resolves and instantiates Storage with optional S3 configuration.
+func NewStorageForPathWithOptions(ctx context.Context, path string, optFns ...func(*S3Options)) (Storage, error) {
 	if strings.HasPrefix(path, "s3://") || strings.HasPrefix(path, "s3a://") {
-		return NewS3Storage(ctx)
+		return NewS3Storage(ctx, optFns...)
 	}
 	if strings.HasPrefix(path, "mem://") {
 		return NewMemoryStorage(), nil
