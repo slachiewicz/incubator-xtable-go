@@ -34,7 +34,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        go-version: ["stable"]
+        # "1.25" is the minimum go.mod declares; testing only "stable" would let
+        # a change that needs a newer toolchain land unnoticed.
+        go-version: ["1.25", "stable"]
 
     steps:
       - name: Checkout repository

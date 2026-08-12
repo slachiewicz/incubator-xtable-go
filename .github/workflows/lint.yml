@@ -44,7 +44,9 @@ jobs:
           cache: true
 
       - name: Run golangci-lint
+        # Action v6 cannot drive golangci-lint v2; v7+ rejects v1. Pinned to the
+        # minor .golangci.yml was written against so CI cannot drift onto a
+        # newer linter and go red without a commit.
         uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
-          args: --timeout=5m
+          version: v2.12
