@@ -160,6 +160,7 @@ func newSyncCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&configPath, "datasetConfig", "c", "", "Path to YAML/JSON dataset config file")
+	cmd.Flags().StringVar(&configPath, "config", "", "Alias for --datasetConfig")
 	return cmd
 }
 
@@ -240,6 +241,7 @@ func newInspectCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&basePath, "basePath", "b", "", "Root directory of the table")
-	cmd.Flags().StringVarP(&formatStr, "format", "f", "", "Table format (DELTA, ICEBERG)")
+	cmd.Flags().StringVar(&basePath, "path", "", "Alias for --basePath")
+	cmd.Flags().StringVarP(&formatStr, "format", "f", "", "Table format (DELTA, ICEBERG, HUDI, PARQUET, PAIMON)")
 	return cmd
 }
