@@ -44,11 +44,15 @@ test-containers:
 lint:
 	golangci-lint run ./...
 
-check: fmt
+# Deliberately does NOT depend on `fmt`: reformatting first would make the
+# gofmt stage unable to ever fail.
+check:
 	@echo "==> gofmt"
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
 	@echo "==> go vet"
 	go vet ./...
+	@echo "==> go vet (js/wasm)"
+	GOOS=js GOARCH=wasm go vet ./cmd/xtable-wasm
 	@echo "==> go test -short"
 	go test -short ./...
 	@echo "==> golangci-lint"

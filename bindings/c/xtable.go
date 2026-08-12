@@ -34,6 +34,7 @@ import (
 	"github.com/apache/incubator-xtable-go/pkg/formats/delta"
 	"github.com/apache/incubator-xtable-go/pkg/formats/hudi"
 	"github.com/apache/incubator-xtable-go/pkg/formats/iceberg"
+	"github.com/apache/incubator-xtable-go/pkg/formats/paimon"
 	"github.com/apache/incubator-xtable-go/pkg/formats/parquet"
 	"github.com/apache/incubator-xtable-go/pkg/io"
 	"github.com/apache/incubator-xtable-go/pkg/model"
@@ -130,6 +131,8 @@ func xtable_inspect_json(formatCStr *C.char, basePathCStr *C.char) *C.char {
 		source = hudi.NewSource(storage, basePath)
 	case model.TableFormatParquet:
 		source = parquet.NewSource(storage, basePath)
+	case model.TableFormatPaimon:
+		source = paimon.NewSource(storage, basePath)
 	default:
 		return errorJSON(fmt.Sprintf("unsupported format: %s", format))
 	}
