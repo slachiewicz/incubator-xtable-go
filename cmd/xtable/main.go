@@ -120,6 +120,14 @@ func newSyncCmd() *cobra.Command {
 				fmt.Printf("\n[%d/%d] Syncing Table '%s' (%s -> %v)...\n",
 					i+1, len(cfg.Datasets), ds.TableName, ds.SourceFormat, ds.TargetFormats)
 
+				// Resolve a catalog-addressed table (db.table) into a base path first: the storage
+				// backend is chosen from that path, so this cannot wait until after.
+				if rErr := conversion.ResolveSourceCatalog(ctx, ds, nil); rErr != nil {
+					fmt.Printf("  \u274c Failed to resolve source catalog: %v\n", rErr)
+					hasErrors = true
+					continue
+				}
+
 				optFns := ds.Storage.ToS3OptionFuncs()
 				storage, err := io.NewStorageForPathWithOptions(ctx, ds.TableBasePath, optFns...)
 				if err != nil {

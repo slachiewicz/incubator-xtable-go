@@ -18,6 +18,7 @@
 package conversion
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/slachiewicz/xtable-go/pkg/catalog"
@@ -56,6 +57,74 @@ type DatasetConfig struct {
 	Storage *StorageConfig `json:"storage,omitempty" yaml:"storage,omitempty"`
 	// Catalogs lists external catalogs to register the synced table in. Optional.
 	Catalogs []catalog.Config `json:"catalogs,omitempty" yaml:"catalogs,omitempty"`
+	// SourceCatalog resolves the source table from an external catalog instead of requiring
+	// tableBasePath. Exactly one of the two must be supplied.
+	SourceCatalog *SourceCatalogConfig `json:"sourceCatalog,omitempty" yaml:"sourceCatalog,omitempty"`
+}
+
+// SourceCatalogConfig names a table inside an external catalog, so a dataset can be addressed as
+// db.table rather than by a storage path the caller has to know in advance.
+type SourceCatalogConfig struct {
+	// Catalog is the catalog to resolve against. Its DatabaseName supplies the database.
+	Catalog catalog.Config `json:"catalog" yaml:"catalog"`
+	// Table is the table name within the catalog database.
+	Table string `json:"table" yaml:"table"`
+}
+
+// Validate reports whether the source catalog reference is usable.
+func (s *SourceCatalogConfig) Validate() error {
+	if s.Table == "" {
+		return fmt.Errorf("sourceCatalog.table is required")
+	}
+	if s.Catalog.DatabaseName == "" {
+		return fmt.Errorf("sourceCatalog.catalog.databaseName is required")
+	}
+	return s.Catalog.Validate()
+}
+
+// ResolveSourceCatalog fills SourceFormat, TableBasePath, TableDataPath and TableName from the
+// catalog entry named by SourceCatalog. It must run before storage is constructed, since the
+// storage backend is chosen from the resolved base path.
+//
+// newSource is injectable for tests; pass nil to use catalog.NewConversionSource.
+func ResolveSourceCatalog(ctx context.Context, cfg *DatasetConfig,
+	newSource func(context.Context, *catalog.Config) (catalog.ConversionSource, error)) error {
+	if cfg == nil || cfg.SourceCatalog == nil {
+		return nil
+	}
+	if err := cfg.SourceCatalog.Validate(); err != nil {
+		return err
+	}
+	if newSource == nil {
+		newSource = catalog.NewConversionSource
+	}
+
+	src, err := newSource(ctx, &cfg.SourceCatalog.Catalog)
+	if err != nil {
+		return fmt.Errorf("failed to create catalog conversion source: %w", err)
+	}
+	defer func() { _ = src.Close() }()
+
+	id := catalog.TableIdentifier{Database: cfg.SourceCatalog.Catalog.DatabaseName, Table: cfg.SourceCatalog.Table}
+	resolved, err := src.GetSourceTable(ctx, id)
+	if err != nil {
+		return fmt.Errorf("failed to resolve %s from catalog: %w", id, err)
+	}
+
+	// Explicit configuration wins, so a resolved table can still be overridden field by field.
+	if cfg.SourceFormat == "" {
+		cfg.SourceFormat = resolved.Format
+	}
+	if cfg.TableBasePath == "" {
+		cfg.TableBasePath = resolved.BasePath
+	}
+	if cfg.TableDataPath == "" {
+		cfg.TableDataPath = resolved.DataPath
+	}
+	if cfg.TableName == "" {
+		cfg.TableName = resolved.Name
+	}
+	return nil
 }
 
 // ToS3OptionFuncs converts StorageConfig to S3 option functions for storage initialization.
@@ -96,7 +165,12 @@ func (c *DatasetConfig) Validate() error {
 		return fmt.Errorf("at least one targetFormat must be specified")
 	}
 	if c.TableBasePath == "" {
-		return fmt.Errorf("tableBasePath is required")
+		// A source catalog reference stands in for the path; ResolveSourceCatalog fills it in
+		// before storage is constructed.
+		if c.SourceCatalog == nil {
+			return fmt.Errorf("either tableBasePath or sourceCatalog is required")
+		}
+		return c.SourceCatalog.Validate()
 	}
 	if c.SyncMode == "" {
 		c.SyncMode = spi.SyncModeIncremental

@@ -87,6 +87,11 @@ func (d *Daemon) syncAll(ctx context.Context) {
 
 		d.logger.Debug(fmt.Sprintf("[%d/%d] Checking table '%s' for updates", i+1, len(d.config.Datasets), ds.TableName))
 
+		if rErr := conversion.ResolveSourceCatalog(ctx, ds, nil); rErr != nil {
+			d.logger.Error("Failed to resolve source catalog", "table", ds.TableName, "error", rErr)
+			continue
+		}
+
 		optFns := ds.Storage.ToS3OptionFuncs()
 		storage, err := io.NewStorageForPathWithOptions(ctx, ds.TableBasePath, optFns...)
 		if err != nil {

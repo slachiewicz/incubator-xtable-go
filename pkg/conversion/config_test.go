@@ -18,13 +18,17 @@
 package conversion_test
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/slachiewicz/xtable-go/pkg/catalog"
 	"github.com/slachiewicz/xtable-go/pkg/conversion"
 	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
 )
 
 func TestStorageConfig_ToS3OptionFuncs_NilConfig(t *testing.T) {
@@ -170,4 +174,128 @@ func TestDatasetConfig_NilStorage(t *testing.T) {
 	config := &conversion.DatasetConfig{}
 
 	require.Nil(t, config.Storage, "storage field should be nil when not set")
+}
+
+// fakeConversionSource returns a canned catalog lookup.
+type fakeConversionSource struct {
+	table    *catalog.SourceTable
+	err      error
+	gotID    catalog.TableIdentifier
+	closed   bool
+	callests int
+}
+
+func (f *fakeConversionSource) CatalogType() catalog.CatalogType { return catalog.CatalogTypeGlue }
+func (f *fakeConversionSource) Close() error                     { f.closed = true; return nil }
+func (f *fakeConversionSource) GetSourceTable(_ context.Context, id catalog.TableIdentifier) (*catalog.SourceTable, error) {
+	f.gotID = id
+	f.callests++
+	return f.table, f.err
+}
+
+func TestResolveSourceCatalog(t *testing.T) {
+	t.Parallel()
+
+	newCfg := func() *conversion.DatasetConfig {
+		return &conversion.DatasetConfig{
+			TargetFormats: []model.TableFormat{model.TableFormatIceberg},
+			SourceCatalog: &conversion.SourceCatalogConfig{
+				Catalog: catalog.Config{Type: catalog.CatalogTypeGlue, DatabaseName: "analytics"},
+				Table:   "events",
+			},
+		}
+	}
+
+	t.Run("fills format, paths and name from the catalog entry", func(t *testing.T) {
+		t.Parallel()
+
+		fake := &fakeConversionSource{table: &catalog.SourceTable{
+			Name:     "events",
+			BasePath: "s3://lake/events",
+			DataPath: "s3://lake/events/data",
+			Format:   model.TableFormatIceberg,
+		}}
+		cfg := newCfg()
+
+		err := conversion.ResolveSourceCatalog(context.Background(), cfg,
+			func(context.Context, *catalog.Config) (catalog.ConversionSource, error) { return fake, nil })
+
+		require.NoError(t, err)
+		assert.Equal(t, model.TableFormatIceberg, cfg.SourceFormat)
+		assert.Equal(t, "s3://lake/events", cfg.TableBasePath)
+		assert.Equal(t, "s3://lake/events/data", cfg.TableDataPath)
+		assert.Equal(t, "events", cfg.TableName)
+		assert.Equal(t, catalog.TableIdentifier{Database: "analytics", Table: "events"}, fake.gotID)
+		assert.True(t, fake.closed, "the conversion source must be closed")
+		assert.NoError(t, cfg.Validate(), "a resolved config must pass validation")
+	})
+
+	t.Run("explicit configuration overrides the catalog", func(t *testing.T) {
+		t.Parallel()
+
+		fake := &fakeConversionSource{table: &catalog.SourceTable{
+			Name: "events", BasePath: "s3://lake/events", Format: model.TableFormatIceberg,
+		}}
+		cfg := newCfg()
+		cfg.TableBasePath = "s3://override/path"
+		cfg.SourceFormat = model.TableFormatDelta
+
+		require.NoError(t, conversion.ResolveSourceCatalog(context.Background(), cfg,
+			func(context.Context, *catalog.Config) (catalog.ConversionSource, error) { return fake, nil }))
+
+		assert.Equal(t, "s3://override/path", cfg.TableBasePath)
+		assert.Equal(t, model.TableFormatDelta, cfg.SourceFormat)
+	})
+
+	t.Run("no source catalog is a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := &conversion.DatasetConfig{TableBasePath: "s3://lake/x"}
+		require.NoError(t, conversion.ResolveSourceCatalog(context.Background(), cfg, nil))
+		assert.Equal(t, "s3://lake/x", cfg.TableBasePath)
+	})
+
+	t.Run("a lookup failure surfaces with the identifier", func(t *testing.T) {
+		t.Parallel()
+
+		fake := &fakeConversionSource{err: errors.New("access denied")}
+		err := conversion.ResolveSourceCatalog(context.Background(), newCfg(),
+			func(context.Context, *catalog.Config) (catalog.ConversionSource, error) { return fake, nil })
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "analytics.events")
+		assert.Contains(t, err.Error(), "access denied")
+	})
+
+	t.Run("an incomplete reference is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		cfg := newCfg()
+		cfg.SourceCatalog.Table = ""
+		err := conversion.ResolveSourceCatalog(context.Background(), cfg, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "sourceCatalog.table")
+	})
+}
+
+func TestDatasetConfigValidateAcceptsSourceCatalogInsteadOfPath(t *testing.T) {
+	t.Parallel()
+
+	cfg := &conversion.DatasetConfig{
+		SourceFormat:  model.TableFormatIceberg,
+		TargetFormats: []model.TableFormat{model.TableFormatDelta},
+		SourceCatalog: &conversion.SourceCatalogConfig{
+			Catalog: catalog.Config{Type: catalog.CatalogTypeGlue, DatabaseName: "analytics"},
+			Table:   "events",
+		},
+	}
+	assert.NoError(t, cfg.Validate(), "sourceCatalog stands in for tableBasePath")
+
+	bare := &conversion.DatasetConfig{
+		SourceFormat:  model.TableFormatIceberg,
+		TargetFormats: []model.TableFormat{model.TableFormatDelta},
+	}
+	err := bare.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "either tableBasePath or sourceCatalog")
 }
