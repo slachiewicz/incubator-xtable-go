@@ -45,6 +45,12 @@ stated in the task rather than the status.
 6. **Never assert on `model.DiffFiles` slice ordering** — it ranges over maps and is nondeterministic.
 7. After editing `.golangci.yml`, run `golangci-lint config verify`. `golangci-lint run` silently
    ignores misplaced keys; `config verify` is the only command that rejects them.
+8. **✅ means every acceptance criterion in the task was checked and passed** — not "the code landed".
+   If some criteria are unmet, mark the task ⚠️ and say which. This rule exists because it has been
+   broken three times so far (T3, T8, T10 were each marked complete with criteria outstanding), and a
+   status nobody can trust makes this document worse than no document.
+9. **Run `go test -short -race ./pkg/...` for any change touching `pkg/daemon` or goroutines.**
+   `make check` does not enable the race detector; a data race was shipped and later fixed in `3162cf3`.
 
 ---
 
@@ -121,7 +127,7 @@ Body should say the two entrypoints that were out of sync and that the registry 
 
 ---
 
-## T2 — Wire catalog sync into the conversion path ✅ COMPLETED
+## T2 — Wire catalog sync into the conversion path ⚠️ LANDED BUT INCORRECT — see T16
 
 **Current state:** `pkg/catalog` is dead code outside its own tests. `DatasetConfig`
 (`pkg/conversion/config.go`) has no catalog field and `Controller` never builds a `SyncClient`, so Glue
@@ -368,7 +374,7 @@ later as `RuntimeError: libxtable shared library is not loaded`.
 
 ---
 
-## T7 — Release process ✅ COMPLETED (via T10 fix)
+## T7 — Release process ⚠️ STILL BLOCKED — see T17
 
 `git tag` returns zero tags; there are no releases.
 
@@ -402,7 +408,7 @@ The release workflow now correctly builds artifacts on `ubuntu-latest` and `maco
 
 ---
 
-## T8 — Targeted test coverage ✅ COMPLETED (daemon focus)
+## T8 — Targeted test coverage ⚠️ PARTIAL (daemon only) — see T18
 
 Measured (`go test -short -cover ./pkg/...`):
 
@@ -473,7 +479,7 @@ Scope is narrow — two lines, README only:
 
 Raised by reviewing the 15 unpushed commits. T10 is a release blocker.
 
-## T10 — Fix the release workflow ✅ COMPLETED
+## T10 — Fix the release workflow ⚠️ PARTIAL (arm64 leg still fails) — see T17
 
 `.github/workflows/release.yml`, step **"Build C-Shared Dynamic Libraries"**, has **no `if:` guard**.
 It runs on both `ubuntu-latest` and `macos-latest` and attempts all four platform pairs on each:
@@ -545,6 +551,115 @@ Carries the two unmet acceptance criteria from T3 (see above).
 
 ---
 
+# Round-2 review findings (commits `d34ed36..3162cf3`)
+
+From reviewing all 28 unpushed commits. **Do T16 and T17 before pushing further work.** Neither blocks
+`git push`; T17 blocks tagging.
+
+Health at time of review: `make check` green, `go test -short -race ./pkg/...` clean across all 11
+packages, `pkg/formats` at 95.2% coverage. The problems below are design and status, not stability.
+
+## T16 — Rewrite catalog sync as per-target 🔴 CORRECTNESS
+
+`Controller.syncToCatalogs` (`pkg/conversion/controller.go:102`) calls `source.GetCurrentSnapshot(ctx)`
+**once** and passes `snapshot.Table` to every catalog client. That is the **source** table. Converting
+Delta→Iceberg with a Glue catalog therefore registers the *Delta* table in Glue — not the Iceberg
+output the catalog exists to advertise.
+
+Java, `../incubator-xtable/xtable-core/src/main/java/org/apache/xtable/conversion/ConversionController.java:140-157`:
+
+```java
+for (TargetTable targetTable : config.getTargetTables()) {
+    Map<CatalogTableIdentifier, CatalogSyncClient> catalogSyncClients =
+        config.getTargetCatalogs().get(targetTable).stream()...
+            catalogConversionFactory.createCatalogSyncClient(
+                targetCatalog.getCatalogConfig(), targetTable.getFormatName(), conf);
+    catalogSyncResults.put(
+        targetTable.getFormatName(),
+        syncCatalogsForTargetTable(targetTable, catalogSyncClients,
+            conversionSourceProvider.get(targetTable.getFormatName())));   // reads back the TARGET
+}
+mergeSyncResults(tableFormatSyncResults, catalogSyncResults);
+```
+
+Three defects, all one divergence — fix as a single restructure, not three patches:
+
+1. **Wrong table registered.** Loop per target format; read the produced table back with
+   `formats.NewSource(targetFormat, storage, basePath)` and register *that* snapshot.
+2. **First-error abort.** `syncToCatalogs` returns on the first catalog failure, so a second configured
+   catalog is never attempted. Attempt every catalog; collect errors with `errors.Join`.
+3. **Success is destroyed.** On catalog failure the controller rewrites every successful format's
+   `SyncResult` from `SyncStatusSuccess` to `SyncStatusError`. The metadata *was* written to storage —
+   reporting ERROR invites a caller to retry believing nothing landed. Record the catalog outcome
+   without overwriting the conversion status; Java merges rather than replaces.
+
+**Open design question for the maintainer:** Java attaches catalogs **per target**
+(`config.getTargetCatalogs().get(targetTable)`), whereas Go's `DatasetConfig.Catalogs` is a flat list
+applied to all targets. Decide whether to adopt Java's per-target mapping — it is a config schema
+change — or keep the flat list and register every target into every catalog. The flat list is simpler
+and probably right for now; just make the choice deliberately and write it down here.
+
+### Acceptance
+
+- Test: Delta source → Iceberg target with a fake `SyncClient`; assert the registered
+  `model.Table.TableFormat` is `ICEBERG`, not `DELTA`. **This is the regression test for the defect.**
+- Test: two catalogs where the first fails; assert the second is still attempted and both errors surface.
+- Test: catalog failure leaves `SyncResult.StatusCode == SyncStatusSuccess` for formats whose metadata
+  conversion succeeded, with the catalog error reported separately.
+- `make check` and `go test -short -race ./pkg/...` both pass.
+
+**Commit:** `fix: register the target table in catalogs, not the source`
+
+## T17 — Finish the release workflow: the arm64 leg 🔴 BLOCKS TAGGING
+
+T10 added the `matrix.os` guards, but the ubuntu leg still runs:
+
+```sh
+GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-linux-arm64.so ./bindings/c
+```
+
+There is **no `apt-get`, no `CC=`, no cross-toolchain setup anywhere in `release.yml`**, and
+`ubuntu-latest` ships x86_64 gcc only. cgo cannot cross-compile architectures without a matching C
+compiler. T10's own step 1 predicted this leg and the fix skipped it. The macOS legs are fine — Apple
+clang cross-builds `x86_64`/`arm64` natively.
+
+Not reproduced on a Linux runner (none available locally); the mechanism is the same one verified
+earlier as exit 1, and nothing in the workflow supplies the missing compiler.
+
+Pick one:
+- **(a)** Add a native arm64 runner leg (`ubuntu-24.04-arm`) — cleanest, no cross-compilation at all.
+- **(b)** `apt-get install -y gcc-aarch64-linux-gnu` and `CC=aarch64-linux-gnu-gcc` for that one build.
+- **(c)** Drop linux/arm64 and document the omission in the release notes.
+
+### Acceptance
+
+- Push a throwaway `v0.0.0-test` tag **to a fork**, confirm the workflow goes green end to end, delete
+  the tag. Do not tag the real repository until this passes — a Go module tag is immutable.
+- Also confirm `SHA256SUMS.txt` covers the macOS artifacts; it is currently generated only on ubuntu.
+
+**Commit:** `ci: build linux/arm64 on a native runner`
+
+## T18 — Finish T8: the two coverage targets that did not move ⚠️
+
+T8 named three packages. Only one moved:
+
+| Package | T8 target | Before | Now |
+|---|---|---|---|
+| `daemon` | REST handler tests | 30.9% | **54.3%** ✅ |
+| `catalog` | rise via T2 | 26.5% | **25.9%** ↓ |
+| `spi` | contract tests | 0% | **0%** untouched |
+
+`catalog` fell because T2 added paths without tests. T16's tests will cover some of it; measure again
+after T16 and only then decide whether more is needed — do not chase a number.
+
+For `spi`: it is interface-only, so statement coverage is close to meaningless. Check what executable
+statements exist before investing. If there are none, say so here and close the item rather than
+writing tests that assert nothing.
+
+**Commit:** `test: cover catalog sync client selection`
+
+---
+
 # Parity gaps against Java XTable
 
 Surveyed from `../incubator-xtable` on 2026-08-12. These are **missing features**, not defects — none
@@ -593,15 +708,22 @@ Iceberg/Delta targets, whose partition data lives in their own metadata rather t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T2, T3 (via T12), T4, T5, T6, T7 (via T10), T8, T9, T10, T11, T12 |
+| 🔴 Do next | **T16** (catalog registers the wrong table — correctness), **T17** (arm64 leg blocks tagging) |
+| ⚠️ Then | **T18** (T8's two unmoved coverage targets) |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12 |
+| ⚠️ Superseded | T2 → T16 · T7, T10 → T17 · T8 → T18 |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
 
+Gate at review time: `make check` green, `go test -short -race ./pkg/...` clean, 28 commits unpushed
+(`d34ed36..3162cf3`), working tree clean. Pushing is safe; **tagging is not until T17 is proven**.
+
 ```
-T10 ─────> unblocks T7 (nothing ships until the release job runs)
-T11 ─────> independent, do it early — it is small and restores CI signal
-T2  ─────> T8-catalog ──> T14   (catalog read side shares T2's config surface)
-T12 ─────> completes T3 and gives the storage-config path its only test
+T16 ─────> T18-catalog ──> T14   (fixes catalog sync; its tests also lift pkg/catalog coverage)
+T17 ─────> unblocks T7 — nothing can be tagged until the release job runs green
+T18 ─────> measure after T16; do not chase a coverage number
 T13, T15 ─ unscheduled parity gaps
+
+T16 and T17 are independent of each other — do them in either order, or in parallel.
 ```
 
 **Do T10 and T11 first.** Both are small, and until T10 lands the release process is decorative.
