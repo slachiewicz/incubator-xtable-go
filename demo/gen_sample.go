@@ -31,7 +31,7 @@ import (
 
 func main() {
 	basePath, _ := filepath.Abs("./demo/sample_delta_table")
-	os.RemoveAll(basePath)
+	_ = os.RemoveAll(basePath)
 
 	idField := &model.Field{Name: "customer_id", Schema: model.NewPrimitiveSchema(model.TypeInt, false)}
 	nameField := &model.Field{Name: "customer_name", Schema: model.NewPrimitiveSchema(model.TypeString, false)}

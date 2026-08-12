@@ -34,7 +34,7 @@ func TestStorage_Implementations(t *testing.T) {
 
 	tempDir, err := os.MkdirTemp("", "xtable-io-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	storages := []struct {
 		name    string

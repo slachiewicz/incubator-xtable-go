@@ -87,7 +87,7 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("minio healthcheck returned status %d", resp.StatusCode)
 		}
@@ -98,22 +98,14 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 	ctx := context.Background()
 
 	// 3. Initialize AWS S3 Client targeting MinIO
-	customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...any) (aws.Endpoint, error) {
-		return aws.Endpoint{
-			URL:               minioEndpoint,
-			SigningRegion:     "us-east-1",
-			HostnameImmutable: true,
-		}, nil
-	})
-
 	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithEndpointResolverWithOptions(customResolver),
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(minioUser, minioPassword, "")),
 	)
 	require.NoError(t, err)
 
 	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(minioEndpoint)
 		o.UsePathStyle = true
 	})
 

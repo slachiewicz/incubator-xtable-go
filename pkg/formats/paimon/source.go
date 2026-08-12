@@ -109,7 +109,7 @@ func (s *Source) GetCurrentTable(ctx context.Context) (*model.Table, error) {
 }
 
 // GetTable returns the Table descriptor at a specific commit instant / snapshot.
-func (s *Source) GetTable(ctx context.Context, commitID string) (*model.Table, error) {
+func (s *Source) GetTable(ctx context.Context, _ string) (*model.Table, error) {
 	return s.GetCurrentTable(ctx)
 }
 
@@ -165,7 +165,7 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 }
 
 // GetSnapshot returns the Snapshot at a specific snapshot ID.
-func (s *Source) GetSnapshot(ctx context.Context, snapshotID string) (*model.Snapshot, error) {
+func (s *Source) GetSnapshot(ctx context.Context, _ string) (*model.Snapshot, error) {
 	return s.GetCurrentSnapshot(ctx)
 }
 

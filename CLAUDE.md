@@ -43,7 +43,7 @@ golangci-lint run ./...
 ```
 
 `-short` is not optional shorthand. `test/dockertest_minio_matrix_test.go` and
-`test/dockertest_nessie_catalog_test.go` gate on `testing.Short()` rather than a build tag, so a plain
+`test/dockertest_iceberg_rest_test.go` gate on `testing.Short()` rather than a build tag, so a plain
 `go test ./...` spins up MinIO and Nessie via `ory/dockertest` and fails without a running Docker daemon.
 Run the unqualified command deliberately when you want that coverage.
 

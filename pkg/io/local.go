@@ -69,10 +69,10 @@ func (s *LocalStorage) Write(_ context.Context, path string, data []byte) error 
 		return fmt.Errorf("failed to create temp file in %s: %w", dir, err)
 	}
 	tmpName := tmpFile.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 
 	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return fmt.Errorf("failed to write data: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {

@@ -103,7 +103,7 @@ func (s *S3Storage) Read(ctx context.Context, path string) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("failed to get s3 object %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return io.ReadAll(resp.Body)
 }

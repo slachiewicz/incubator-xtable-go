@@ -90,7 +90,7 @@ func TestE2E_DaemonRESTService(t *testing.T) {
 	t.Run("HealthCheck", func(t *testing.T) {
 		resp, err := client.Get(httpServer.URL + "/v1/health")
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		var health daemon.HealthStatus
@@ -109,7 +109,7 @@ func TestE2E_DaemonRESTService(t *testing.T) {
 		bodyBytes, _ := json.Marshal(inspectReq)
 		resp, err := client.Post(httpServer.URL+"/v1/conversion/inspect", "application/json", bytes.NewReader(bodyBytes))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		var inspectResp daemon.InspectTableResponse
@@ -130,7 +130,7 @@ func TestE2E_DaemonRESTService(t *testing.T) {
 		bodyBytes, _ := json.Marshal(convReq)
 		resp, err := client.Post(httpServer.URL+"/v1/conversion/table", "application/json", bytes.NewReader(bodyBytes))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		var convResp daemon.ConvertTableResponse
@@ -156,7 +156,7 @@ func TestE2E_DaemonRESTService(t *testing.T) {
 
 		resp, err := client.Do(httpReq)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusAccepted, resp.StatusCode)
 		var asyncResp daemon.ConvertTableResponse
@@ -173,7 +173,7 @@ func TestE2E_DaemonRESTService(t *testing.T) {
 			if pErr != nil {
 				return false
 			}
-			defer pResp.Body.Close()
+			defer func() { _ = pResp.Body.Close() }()
 			body, _ := io.ReadAll(pResp.Body)
 			_ = json.Unmarshal(body, &finalResp)
 			return finalResp.Status == "COMPLETED"

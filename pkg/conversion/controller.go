@@ -54,7 +54,7 @@ func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig) (map[model.Ta
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source converter: %w", err)
 	}
-	defer source.Close()
+	defer func() { _ = source.Close() }()
 
 	results := make(map[model.TableFormat]*spi.SyncResult)
 
@@ -71,7 +71,7 @@ func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig) (map[model.Ta
 		}
 
 		syncResult := c.syncToTarget(ctx, cfg, source, target, targetFormat, startTime)
-		target.Close()
+		_ = target.Close()
 		results[targetFormat] = syncResult
 	}
 

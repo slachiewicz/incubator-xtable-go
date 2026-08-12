@@ -53,7 +53,7 @@ func writeSampleParquetFile(t *testing.T, filePath string, records []CustomerRec
 
 	f, err := os.Create(filePath)
 	require.NoError(t, err)
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	w := parquet.NewGenericWriter[CustomerRecord](f)
 	_, err = w.Write(records)

@@ -68,7 +68,7 @@ func TestDockertest_IcebergRESTCatalogSync(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("iceberg rest catalog returned status %d", resp.StatusCode)
 		}
@@ -96,7 +96,7 @@ func TestDockertest_IcebergRESTCatalogSync(t *testing.T) {
 
 	client, err := catalog.NewIcebergRESTCatalogClient(catalogConfig)
 	require.NoError(t, err)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 4. Create sample canonical Table descriptor
 	idField := &model.Field{Name: "account_id", Schema: model.NewPrimitiveSchema(model.TypeLong, false)}

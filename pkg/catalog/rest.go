@@ -69,7 +69,7 @@ func (c *IcebergRESTCatalogClient) CatalogType() CatalogType {
 }
 
 // CreateOrUpdateTable registers or commits the Iceberg table metadata to the REST catalog.
-func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, table *model.Table, snapshot *model.Snapshot) error {
+func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, table *model.Table, _ *model.Snapshot) error {
 	if table == nil {
 		return fmt.Errorf("table cannot be nil")
 	}
@@ -109,7 +109,7 @@ func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, tabl
 	if err != nil {
 		return fmt.Errorf("failed to send request to iceberg rest catalog: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusConflict {
 		// Table exists, issue commit updates endpoint: POST /v1/namespaces/{ns}/tables/{table}
@@ -142,7 +142,7 @@ func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, tabl
 		if err != nil {
 			return fmt.Errorf("failed to update table in iceberg rest catalog: %w", err)
 		}
-		defer updResp.Body.Close()
+		defer func() { _ = updResp.Body.Close() }()
 		if updResp.StatusCode >= 400 {
 			body, _ := io.ReadAll(updResp.Body)
 			return fmt.Errorf("iceberg rest catalog returned error %d: %s", updResp.StatusCode, string(body))
@@ -177,7 +177,7 @@ func (c *IcebergRESTCatalogClient) DropTable(ctx context.Context, databaseName, 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusNotFound {
 		body, _ := io.ReadAll(resp.Body)

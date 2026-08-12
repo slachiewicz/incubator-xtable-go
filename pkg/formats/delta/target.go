@@ -258,7 +258,7 @@ func (t *Target) writeCommitFile(ctx context.Context, version int64, actions []S
 	return t.storage.Write(ctx, commitFilePath, buf.Bytes())
 }
 
-func (t *Target) convertDataFileToAddAction(df *model.DataFile, table *model.Table) *AddAction {
+func (t *Target) convertDataFileToAddAction(df *model.DataFile, _ *model.Table) *AddAction {
 	partitionValues := make(map[string]string)
 	for _, pv := range df.PartitionValues {
 		if pv.PartitionField != nil && pv.PartitionField.SourceField != nil && pv.Range != nil {

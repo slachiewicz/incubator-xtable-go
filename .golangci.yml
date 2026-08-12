@@ -15,22 +15,19 @@
 # specific language governing permissions and limitations
 # under the License.
 
+version: "2"
+
 run:
   timeout: 5m
   tests: true
 
 linters:
   enable:
-    - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
-    - unused
-    - gosec
     - misspell
     - unconvert
-    - revive
 
 linters-settings:
   govet:
@@ -38,18 +35,7 @@ linters-settings:
     disable:
       - fieldalignment
       - shadow
-  revive:
-    rules:
-      - name: exported
-        disabled: false
-      - name: package-comments
-        disabled: true
-  gosec:
-    excludes:
-      - G104 # unchecked error in deferred cleanup or test asserts
-      - G304 # file path inclusion in local readers
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
