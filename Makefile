@@ -19,7 +19,7 @@ SHELL := /bin/bash
 BIN_DIR := bin
 LIB_DIR := lib
 
-.PHONY: all build fmt test test-race test-containers lint check tidy clean wasm bindings-c demo
+.PHONY: all build fmt test test-race test-containers lint check tidy clean wasm bindings-c bindings-python demo
 
 all: build test
 
@@ -81,3 +81,23 @@ demo: build
 
 clean:
 	rm -rf $(BIN_DIR) $(LIB_DIR) demo/sample_delta_table
+
+bindings-python: bindings-c
+	@echo "Building Python package with bundled native library..."
+	@if [ -f $(LIB_DIR)/libxtable.dylib ]; then \
+		cp $(LIB_DIR)/libxtable.dylib bindings/python/pyxtable/; \
+		echo "Copied libxtable.dylib for macOS"; \
+	else \
+		cp $(LIB_DIR)/libxtable.so bindings/python/pyxtable/; \
+		echo "Copied libxtable.so for Linux"; \
+	fi
+	@cd bindings/python && python -m build 2>/dev/null || echo "Note: python -m build install required: pip install build"
+	@echo "✓ Python package built in bindings/python/dist/"
+	@echo "Note: Wheels are platform-specific (libxtable.dylib/.so cannot be bundled together)"
+
+bindings-python-clean:
+	@echo "Cleaning Python package build artifacts..."
+	@rm -f bindings/python/pyxtable/libxtable.*
+	@rm -rf bindings/python/build bindings/python/dist
+	@rm -rf bindings/python/pyxtable.egg-info
+	@echo "✓ Python artifacts cleaned"

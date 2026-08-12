@@ -24,8 +24,8 @@ implementation's `c-shared` library — omni-directional lakehouse metadata tran
 
 ## Requirements
 
-`pyxtable` is a thin `ctypes` wrapper. It does **not** bundle the native library, so you must build
-`libxtable` first, from the repository root:
+`pyxtable` is a `ctypes` wrapper that now bundles the appropriate native library in the wheel.
+For development or source installation, build the library from the repository root:
 
 ```sh
 make bindings-c      # writes lib/libxtable.{dylib,so}
@@ -38,9 +38,9 @@ At import time `_find_library()` searches, in order:
 3. `./lib/` relative to the current working directory
 4. the bare library name, left to the system loader
 
-In practice that means **run from the repository root** after `make bindings-c`, or copy the built
-library next to `pyxtable/__init__.py`. If it cannot be loaded, import still succeeds and the failure
-surfaces on first call as `RuntimeError: libxtable shared library is not loaded`.
+**New**: Wheels now include platform-specific native libraries, so standard `pip install` works without manual library building.
+
+If the library cannot be loaded, import still succeeds but the failure surfaces on first call with a detailed error message including the underlying exception for easier diagnosis.
 
 ## Usage
 
@@ -62,8 +62,24 @@ pyxtable.sync({
 `sync` accepts either a dict or a YAML/JSON string. Both `inspect` and `sync` return plain dicts
 decoded from the library's JSON output.
 
+## Packaging
+
+The package now includes build automation and proper wheels:
+
+```sh
+# Build wheel with bundled native library (platform-specific)
+make bindings-python    # builds native lib, copies to pyxtable/, creates wheel in dist/
+
+# Install from built wheel
+pip install bindings/python/dist/pyxtable-0.1.0-*.whl
+
+# Or install from source (requires manual library building first)
+make bindings-c
+pip install bindings/python/
+```
+
+**Platform-specific wheels**: macOS wheels bundle `libxtable.dylib`, Linux wheels bundle `libxtable.so`. They cannot be combined in a universal wheel due to platform differences.
+
 ## Status
 
-Packaging is incomplete: there is no build hook that compiles or vendors the native library into a
-wheel, so `pip install .` produces a distribution that only works alongside a separately built
-`libxtable`. Treat this as a source-tree binding rather than a publishable package.
+Packaging now includes the native library in wheels via `setuptools.package-data`. Standard pip installation works without manual library building. Error reporting improved to show underlying exceptions for easier troubleshooting.

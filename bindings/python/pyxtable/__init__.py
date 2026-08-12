@@ -55,6 +55,7 @@ def _find_library() -> str:
 
 
 _lib_path = _find_library()
+_lib_error = None
 try:
     _lib = ctypes.CDLL(_lib_path)
 
@@ -71,12 +72,16 @@ try:
     _lib.xtable_inspect_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
 except Exception as e:
     _lib = None
+    _lib_error = str(e)
 
 
 def version() -> str:
     """Returns the native XTable engine version."""
     if _lib is None:
-        return f"{__version__} (shared library not loaded)"
+        error_msg = f"{__version__} (shared library not loaded)"
+        if _lib_error:
+            error_msg += f" - {_lib_error}"
+        return error_msg
     res_ptr = _lib.xtable_version()
     val = res_ptr.decode("utf-8") if res_ptr else ""
     return val
@@ -87,7 +92,10 @@ def sync(config: Union[Dict[str, Any], str]) -> Dict[str, Any]:
     Synchronizes lakehouse table formats using the provided configuration dict or JSON/YAML string.
     """
     if _lib is None:
-        raise RuntimeError("libxtable shared library is not loaded")
+        error_msg = "libxtable shared library is not loaded"
+        if _lib_error:
+            error_msg += f" - {_lib_error}"
+        raise RuntimeError(error_msg)
 
     if isinstance(config, dict):
         config_str = json.dumps(config)
@@ -113,7 +121,10 @@ def inspect(format_name: str, base_path: str) -> Dict[str, Any]:
     Inspects lakehouse table metadata, schema, and active files.
     """
     if _lib is None:
-        raise RuntimeError("libxtable shared library is not loaded")
+        error_msg = "libxtable shared library is not loaded"
+        if _lib_error:
+            error_msg += f" - {_lib_error}"
+        raise RuntimeError(error_msg)
 
     res_ptr = _lib.xtable_inspect_json(format_name.encode("utf-8"), base_path.encode("utf-8"))
     if not res_ptr:
