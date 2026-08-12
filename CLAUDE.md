@@ -77,7 +77,8 @@ from any existing file in `pkg/model/`. This repo is headed for ASF donation; `L
 
 ## Go version
 
-`go.mod` declares `go 1.25.5` (bumped from `1.25.0` in `4c1a620`). With `GOTOOLCHAIN=auto`, editing that
+`go.mod` declares `go 1.25` — a minor-level floor, deliberately not a patch pin, so consumers are not
+forced onto a specific patch. With `GOTOOLCHAIN=auto`, editing that
 line silently downloads a different toolchain. Leave it alone unless the version bump is the point of the
 change — and if you do change it, update the `ci.yml` matrix in the same commit.
 
