@@ -22,6 +22,7 @@ import "fmt"
 // Type represents the canonical data type in XTable's internal type system.
 type Type string
 
+// Canonical data types.
 const (
 	TypeRecord       Type = "RECORD"
 	TypeEnum         Type = "ENUM"
@@ -62,6 +63,7 @@ func (t Type) IsNonScalar() bool {
 // MetadataKey represents keys for type-specific metadata (e.g. decimal precision, time unit).
 type MetadataKey string
 
+// Type-specific metadata keys.
 const (
 	MetadataKeyDecimalScale       MetadataKey = "DECIMAL_SCALE"
 	MetadataKeyDecimalPrecision   MetadataKey = "DECIMAL_PRECISION"
@@ -73,6 +75,7 @@ const (
 // MetadataValue represents values for metadata configurations.
 type MetadataValue string
 
+// Time-unit metadata values.
 const (
 	MetadataValueMicros MetadataValue = "MICROS"
 	MetadataValueMillis MetadataValue = "MILLIS"
@@ -82,6 +85,7 @@ const (
 // FileFormat represents the physical data file format.
 type FileFormat string
 
+// Supported physical data file formats.
 const (
 	FileFormatParquet FileFormat = "APACHE_PARQUET"
 	FileFormatORC     FileFormat = "APACHE_ORC"
@@ -91,6 +95,7 @@ const (
 // TableFormat represents standard lakehouse table format identifiers.
 type TableFormat string
 
+// Supported lakehouse table formats.
 const (
 	TableFormatHudi    TableFormat = "HUDI"
 	TableFormatIceberg TableFormat = "ICEBERG"

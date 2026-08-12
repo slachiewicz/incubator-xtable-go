@@ -35,11 +35,11 @@ type DataField struct {
 
 // TableSchema represents an Apache Paimon schema JSON file (schema/schema-N).
 type TableSchema struct {
-	ID             int64       `json:"id"`
-	Fields         []DataField `json:"fields"`
-	HighestFieldID int         `json:"highestFieldId"`
-	PartitionKeys  []string    `json:"partitionKeys,omitempty"`
-	PrimaryKeys    []string    `json:"primaryKeys,omitempty"`
+	ID             int64             `json:"id"`
+	Fields         []DataField       `json:"fields"`
+	HighestFieldID int               `json:"highestFieldId"`
+	PartitionKeys  []string          `json:"partitionKeys,omitempty"`
+	PrimaryKeys    []string          `json:"primaryKeys,omitempty"`
 	Options        map[string]string `json:"options,omitempty"`
 }
 

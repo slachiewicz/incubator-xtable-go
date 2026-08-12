@@ -22,6 +22,7 @@ import "strings"
 // PartitionTransformType represents the transform applied on a source column to produce partition values.
 type PartitionTransformType string
 
+// Supported partition transforms.
 const (
 	PartitionTransformValue PartitionTransformType = "VALUE"
 	PartitionTransformYear  PartitionTransformType = "YEAR"

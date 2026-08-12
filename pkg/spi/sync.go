@@ -26,6 +26,7 @@ import (
 // SyncMode represents whether a sync operation is a full snapshot rebuild or incremental delta replay.
 type SyncMode string
 
+// Supported sync modes.
 const (
 	SyncModeFull        SyncMode = "FULL"
 	SyncModeIncremental SyncMode = "INCREMENTAL"
@@ -34,6 +35,7 @@ const (
 // SyncStatusCode represents the execution status code of a format sync.
 type SyncStatusCode string
 
+// Terminal status codes for a format sync.
 const (
 	SyncStatusSuccess SyncStatusCode = "SUCCESS"
 	SyncStatusError   SyncStatusCode = "ERROR"

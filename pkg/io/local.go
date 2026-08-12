@@ -59,6 +59,9 @@ func (s *LocalStorage) Read(_ context.Context, path string) ([]byte, error) {
 func (s *LocalStorage) Write(_ context.Context, path string, data []byte) error {
 	cleanPath := CleanPath(path)
 	dir := filepath.Dir(cleanPath)
+	// 0o755 is deliberate: table metadata is routinely read back by query engines
+	// running as a different user, which 0o750 would lock out.
+	//nolint:gosec // G301: group/world read is required for shared lakehouse tables
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}

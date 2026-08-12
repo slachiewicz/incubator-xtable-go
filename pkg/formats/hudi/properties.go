@@ -24,17 +24,18 @@ import (
 	"strings"
 )
 
+// Property keys used in a Hudi table's .hoodie/hoodie.properties file.
 const (
-	PropTableName          = "hoodie.table.name"
-	PropTableType          = "hoodie.table.type"
-	PropTableVersion       = "hoodie.table.version"
-	PropBaseFileFormat     = "hoodie.table.base.file.format"
-	PropPartitionFields    = "hoodie.table.partition.fields"
-	PropRecordKeyFields    = "hoodie.table.recordkey.fields"
-	PropKeyGeneratorClass  = "hoodie.table.keygenerator.class"
-	PropPrecombineField    = "hoodie.table.precombine.field"
-	PropChecksum           = "hoodie.table.checksum"
-	PropTableSchema        = "hoodie.table.schema"
+	PropTableName         = "hoodie.table.name"
+	PropTableType         = "hoodie.table.type"
+	PropTableVersion      = "hoodie.table.version"
+	PropBaseFileFormat    = "hoodie.table.base.file.format"
+	PropPartitionFields   = "hoodie.table.partition.fields"
+	PropRecordKeyFields   = "hoodie.table.recordkey.fields"
+	PropKeyGeneratorClass = "hoodie.table.keygenerator.class"
+	PropPrecombineField   = "hoodie.table.precombine.field"
+	PropChecksum          = "hoodie.table.checksum"
+	PropTableSchema       = "hoodie.table.schema"
 )
 
 // TableProperties represents parsed key-value pairs from .hoodie/hoodie.properties.

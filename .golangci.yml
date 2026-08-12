@@ -22,19 +22,35 @@ run:
   tests: true
 
 linters:
+  # "standard" is errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
   enable:
-    - govet
-    - ineffassign
-    - staticcheck
+    - gosec
     - misspell
+    - revive
     - unconvert
-
-linters-settings:
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment
-      - shadow
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    revive:
+      rules:
+        # Doc comments on exported symbols are enforced. The stuttering check is
+        # not: silencing it would require renaming the public API (delta.DeltaCommit
+        # -> delta.Commit, catalog.CatalogType -> catalog.Type, ...), which is a
+        # deliberate breaking change and not something a linter should force.
+        - name: exported
+          disabled: false
+          arguments:
+            - disableStutteringCheck
+        - name: package-comments
+          disabled: true
+    gosec:
+      excludes:
+        - G104 # unchecked error in deferred cleanup or test asserts
+        - G304 # file path inclusion in local readers
 
 issues:
   max-issues-per-linter: 0

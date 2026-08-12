@@ -19,7 +19,7 @@ SHELL := /bin/bash
 BIN_DIR := bin
 LIB_DIR := lib
 
-.PHONY: all build test test-race test-containers lint tidy clean wasm bindings-c demo
+.PHONY: all build fmt test test-race test-containers lint check tidy clean wasm bindings-c demo
 
 all: build test
 
@@ -29,17 +29,31 @@ build:
 	go build -v -o $(BIN_DIR)/xtable-service ./cmd/xtable-service
 	@echo "✓ Binaries built in $(BIN_DIR)/"
 
+fmt:
+	gofmt -w .
+
 test:
-	go test -v ./...
+	go test -short -v ./...
 
 test-race:
-	go test -race -v ./...
+	go test -short -race -v ./...
 
 test-containers:
 	go test -race -v -count=1 ./test/...
 
 lint:
 	golangci-lint run ./...
+
+check: fmt
+	@echo "==> gofmt"
+	@test -z "$$(gofmt -l .)" || { gofmt -l .; exit 1; }
+	@echo "==> go vet"
+	go vet ./...
+	@echo "==> go test -short"
+	go test -short ./...
+	@echo "==> golangci-lint"
+	golangci-lint run ./...
+	@echo "✓ All checks passed"
 
 tidy:
 	go mod tidy

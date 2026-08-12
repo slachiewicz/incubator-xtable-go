@@ -43,9 +43,9 @@ var (
 
 func main() {
 	var (
-		configPath string
-		port       int
-		interval   time.Duration
+		configPath   string
+		port         int
+		interval     time.Duration
 		enableDaemon bool
 	)
 

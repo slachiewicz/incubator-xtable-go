@@ -22,6 +22,7 @@ import (
 	"time"
 )
 
+// HudiInstantFormat is the Go layout for Hudi timeline instants (YYYYMMDDHHMMSSmmm).
 const (
 	HudiInstantFormat = "20060102150405000"
 )
@@ -45,15 +46,15 @@ func TimeFromInstant(instantStr string) (time.Time, error) {
 
 // HoodieWriteStat holds metadata for a data file written during a Hudi commit.
 type HoodieWriteStat struct {
-	FileID          string            `json:"fileId"`
-	Path            string            `json:"path"`
-	PrevCommit      string            `json:"prevCommit,omitempty"`
-	NumWrites       int64             `json:"numWrites"`
-	TotalWriteBytes int64             `json:"totalWriteBytes"`
-	FileSizeInBytes int64             `json:"fileSizeInBytes"`
-	MinValues       map[string]any    `json:"minValues,omitempty"`
-	MaxValues       map[string]any    `json:"maxValues,omitempty"`
-	NullCount       map[string]int64  `json:"nullCount,omitempty"`
+	FileID          string           `json:"fileId"`
+	Path            string           `json:"path"`
+	PrevCommit      string           `json:"prevCommit,omitempty"`
+	NumWrites       int64            `json:"numWrites"`
+	TotalWriteBytes int64            `json:"totalWriteBytes"`
+	FileSizeInBytes int64            `json:"fileSizeInBytes"`
+	MinValues       map[string]any   `json:"minValues,omitempty"`
+	MaxValues       map[string]any   `json:"maxValues,omitempty"`
+	NullCount       map[string]int64 `json:"nullCount,omitempty"`
 }
 
 // HoodieCommitMetadata represents the JSON body of a .commit or .deltacommit timeline file.

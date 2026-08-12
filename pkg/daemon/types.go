@@ -38,12 +38,12 @@ type ConvertTableRequest struct {
 
 // ConvertTableResponse represents the JSON response for conversion operations.
 type ConvertTableResponse struct {
-	ConversionID string                                 `json:"conversionId"`
-	Status       string                                 `json:"status"` // COMPLETED, RUNNING, FAILED
-	SubmittedAt  time.Time                              `json:"submittedAt,omitempty"`
-	FinishedAt   *time.Time                             `json:"finishedAt,omitempty"`
+	ConversionID string                                `json:"conversionId"`
+	Status       string                                `json:"status"` // COMPLETED, RUNNING, FAILED
+	SubmittedAt  time.Time                             `json:"submittedAt,omitempty"`
+	FinishedAt   *time.Time                            `json:"finishedAt,omitempty"`
 	Results      map[model.TableFormat]*spi.SyncResult `json:"results,omitempty"`
-	Error        string                                 `json:"error,omitempty"`
+	Error        string                                `json:"error,omitempty"`
 }
 
 // InspectTableRequest represents POST /v1/conversion/inspect.

@@ -134,14 +134,18 @@ func (s *Server) handleConvertTable(w http.ResponseWriter, r *http.Request) {
 		s.conversions[conversionID] = resp
 		s.mu.Unlock()
 
+		// The conversion outlives this request, so cancellation is detached from
+		// r.Context() while request-scoped values are preserved.
+		bgCtx := context.WithoutCancel(r.Context())
+
 		go func() {
-			storage, err := s.getStorage(context.Background(), datasetConfig.TableBasePath)
+			storage, err := s.getStorage(bgCtx, datasetConfig.TableBasePath)
 			if err != nil {
 				s.recordFailure(conversionID, err)
 				return
 			}
 			controller := conversion.NewController(storage)
-			results, err := controller.Sync(context.Background(), datasetConfig)
+			results, err := controller.Sync(bgCtx, datasetConfig)
 			if err != nil {
 				s.recordFailure(conversionID, err)
 				return

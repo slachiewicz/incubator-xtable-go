@@ -48,7 +48,7 @@ type CustomerRecord struct {
 
 func writeSampleParquetFile(t *testing.T, filePath string, records []CustomerRecord) {
 	t.Helper()
-	err := os.MkdirAll(filepath.Dir(filePath), 0755)
+	err := os.MkdirAll(filepath.Dir(filePath), 0o750)
 	require.NoError(t, err)
 
 	f, err := os.Create(filePath)

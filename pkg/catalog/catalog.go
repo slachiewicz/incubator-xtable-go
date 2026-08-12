@@ -27,6 +27,8 @@ import (
 // CatalogType represents supported external metastores / data catalogs.
 type CatalogType string
 
+// Supported catalog types. Note that CatalogTypeHMS is declared for parity with
+// Java XTable but has no client implementation in this repository yet.
 const (
 	CatalogTypeGlue        CatalogType = "AWS_GLUE"
 	CatalogTypeHMS         CatalogType = "HIVE_METASTORE"
