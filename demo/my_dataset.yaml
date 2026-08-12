@@ -1,0 +1,7 @@
+sourceFormat: DELTA
+targetFormats:
+  - ICEBERG
+datasets:
+  - tableBasePath: ./demo/sample_delta_table
+    tableName: customers
+    syncMode: FULL
