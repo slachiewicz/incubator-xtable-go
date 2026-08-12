@@ -17,14 +17,14 @@
 
 openapi: 3.0.3
 info:
-  title: Apache XTable (Go) REST Service API
+  title: xtable-go REST Service API
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   version: 0.1.0
   description: |
     A native REST API for initiating zero-copy lakehouse metadata conversion, monitoring
-    sync jobs, and managing catalog synchronization using Apache XTable (Go).
+    sync jobs, and managing catalog synchronization using xtable-go.
 
 servers:
   - url: "{scheme}://{host}:{port}/{prefix}"

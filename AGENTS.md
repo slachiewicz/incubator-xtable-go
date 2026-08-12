@@ -17,7 +17,10 @@
   under the License.
 -->
 
-# Apache XTable (Go) Agent Guide
+# xtable-go Agent Guide
+
+> **Not an Apache Software Foundation project.** `xtable-go` is an independent, unofficial Go port
+> of Apache XTable (incubating), not affiliated with or endorsed by the ASF.
 
 This document defines repository-specific instructions, architecture rules, and validation workflows for AI coding agents working on **Apache XTable in Go (`xtable-go`)**.
 

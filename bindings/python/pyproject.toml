@@ -6,9 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "pyxtable"
 version = "0.1.0"
 authors = [
-  { name="Apache XTable Authors", email="dev@xtable.apache.org" },
+  { name="the xtable-go authors" },
 ]
-description = "Native Python bindings for Apache XTable in Go (zero-JVM lakehouse metadata translation)"
+description = "Python bindings for xtable-go, an unofficial Go port of Apache XTable (zero-JVM lakehouse metadata translation)"
 readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://xtable.apache.org"
+"Homepage" = "https://github.com/slachiewicz/xtable-go"
 "Source" = "https://github.com/slachiewicz/xtable-go"
 
 [tool.setuptools.package-data]

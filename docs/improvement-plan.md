@@ -712,6 +712,35 @@ path relies on. `a86e258` covers both; `pkg/spi` now reports **100.0% of stateme
 
 ---
 
+## T19 — Decide what the per-file licence header should say ⏳ NEEDS A DECISION
+
+All 80 `.go` files carry the ASF grant header: *"Licensed to the Apache Software Foundation (ASF)
+under one or more contributor license agreements ... The ASF licenses this file to you under the
+Apache License, Version 2.0."*
+
+That sentence describes a grant **to the ASF**. It is accurate for code ported from Apache XTable and
+inaccurate for files written in this repository, which was never donated. `DISCLAIMER-WIP` is gone and
+`NOTICE` now disclaims affiliation, so the headers are the last place still implying ASF ownership.
+
+The licence itself is not in question — the code is Apache-2.0 either way, and `NOTICE` carries the
+upstream attribution Apache-2.0 §4(d) requires.
+
+Options, for a maintainer rather than an agent to choose:
+
+- **(a) Plain Apache-2.0 header everywhere.** Replace the grant wording with the standard
+  "Copyright 2026 the xtable-go authors / Licensed under the Apache License, Version 2.0" boilerplate.
+  Uniform and accurate; loses the visual link to upstream, which `NOTICE` already records.
+- **(b) Split by provenance.** Keep the ASF header on ported files, use the plain header on new ones.
+  Most accurate, but requires deciding file by file what counts as ported, and the tree stops being
+  uniform.
+- **(c) Leave as is.** Simplest, and arguably defensible while most of the tree derives from upstream,
+  but it keeps a statement that is untrue for new files.
+
+Whichever is chosen, update the licensing section of `CLAUDE.md` in the same commit — it currently
+tells contributors to copy the ASF header verbatim.
+
+---
+
 # Parity gaps against Java XTable
 
 Surveyed from `../incubator-xtable` on 2026-08-12. These are **missing features**, not defects — none

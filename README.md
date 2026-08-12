@@ -17,7 +17,7 @@
   under the License.
 -->
 
-# Apache XTable (Go)
+# xtable-go
 
 [![CI](https://github.com/slachiewicz/xtable-go/actions/workflows/ci.yml/badge.svg)](https://github.com/slachiewicz/xtable-go/actions/workflows/ci.yml)
 [![Integration Tests](https://github.com/slachiewicz/xtable-go/actions/workflows/integration.yml/badge.svg)](https://github.com/slachiewicz/xtable-go/actions/workflows/integration.yml)
@@ -25,11 +25,18 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/slachiewicz/xtable-go)](https://goreportcard.com/report/github.com/slachiewicz/xtable-go)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-**Apache XTable (Go)** is a lightweight, ultra-high performance, **zero-JVM** lakehouse metadata translation engine written in pure Go. It facilitates **omni-directional, zero-copy interoperability** across open lakehouse table formats (**Delta Lake**, **Apache Iceberg**, **Apache Hudi**, **Apache Paimon**, and **Raw Parquet**) without rewriting underlying data files.
+> **Not an Apache Software Foundation project.** `xtable-go` is an independent, unofficial Go port of
+> [Apache XTable (incubating)](https://github.com/apache/incubator-xtable). It is not affiliated with,
+> endorsed by, or supported by the ASF, and it is not an Apache release. "Apache", "Apache XTable",
+> "Apache Iceberg", "Apache Hudi" and "Apache Paimon" are trademarks of The Apache Software
+> Foundation, used here only to identify the upstream projects this software derives from or
+> interoperates with. For the official project, see [xtable.apache.org](https://xtable.apache.org).
+
+**xtable-go** is a lightweight, ultra-high performance, **zero-JVM** lakehouse metadata translation engine written in pure Go. It facilitates **omni-directional, zero-copy interoperability** across open lakehouse table formats (**Delta Lake**, **Apache Iceberg**, **Apache Hudi**, **Apache Paimon**, and **Raw Parquet**) without rewriting underlying data files.
 
 ---
 
-## 🌟 Why Apache XTable in Go?
+## 🌟 Why a Go port?
 
 - ⚡ **Instant Execution**: Native static binary (~15MB) with **zero JVM boot latency** (<2ms execution).
 - 🛡️ **Pure Go & Zero-JVM**: No Spark, Hadoop XML, Java, or Scala runtime dependencies required.
@@ -183,9 +190,12 @@ For detailed architectural diagrams, domain models, and conversion invariants, r
 
 ## ⚖️ License & Disclaimer
 
-Apache XTable is an effort undergoing incubation at The Apache Software Foundation (ASF).
+`xtable-go` is licensed under the [Apache License, Version 2.0](LICENSE).
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+It is **not** an Apache Software Foundation project and carries no ASF endorsement. Portions derive
+from [Apache XTable (incubating)](https://github.com/apache/incubator-xtable); see [`NOTICE`](NOTICE)
+for the upstream attribution required by Apache-2.0 §4(d). The official Apache project is at
+[xtable.apache.org](https://xtable.apache.org) — bug reports for it do not belong here.
 
 ## WebAssembly status
 

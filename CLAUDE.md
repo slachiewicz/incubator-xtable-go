@@ -71,9 +71,16 @@ API surface. The root `Makefile` covers everything else.
 
 ## Licensing
 
-Every `.go` file carries the identical 16-line Apache-2.0 ASF header. New files must too — copy it verbatim
-from any existing file in `pkg/model/`. This repo is headed for ASF donation; `LICENSE`, `NOTICE` and
-`DISCLAIMER-WIP` at the root come from the parent Java project and should stay in sync with it.
+**This is not an ASF project.** It is an independent Go port, not affiliated with or endorsed by the
+Apache Software Foundation. `DISCLAIMER-WIP` was removed because it claimed incubation this repo does
+not have, and `NOTICE` now disclaims affiliation while preserving the upstream attribution that
+Apache-2.0 §4(d) requires for derived work. Do not reintroduce ASF branding: the project is
+`xtable-go`, not "Apache XTable (Go)".
+
+Every `.go` file still carries the 16-line ASF grant header, which is **inconsistent** with the above
+for files written here rather than ported — it states the copyright owner licensed the file *to the
+ASF*. Copy it verbatim from `pkg/model/` for now so the tree stays uniform, but this is an open
+question; see the note in `docs/improvement-plan.md`.
 
 ## Go version
 

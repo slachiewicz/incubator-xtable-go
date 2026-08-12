@@ -17,7 +17,10 @@
   under the License.
 -->
 
-# Apache XTable (Go) Technical Specification
+# xtable-go Technical Specification
+
+> **Not an Apache Software Foundation project.** `xtable-go` is an independent, unofficial Go port
+> of Apache XTable (incubating), not affiliated with or endorsed by the ASF.
 
 **Version:** 0.1.0-SNAPSHOT  
 **Status:** Active Draft / Implementation  
@@ -27,7 +30,7 @@
 
 ## 1. Executive Summary & Mission
 
-**Apache XTable (Go)** is a pure Go, omni-directional, zero-copy metadata translation engine and synchronization daemon for open lakehouse table formats. It enables seamless interoperability across **Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and unmanaged **Parquet** datasets, as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is a declared
+**xtable-go** is a pure Go, omni-directional, zero-copy metadata translation engine and synchronization daemon for open lakehouse table formats. It enables seamless interoperability across **Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and unmanaged **Parquet** datasets, as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is a declared
 parity target but is **not implemented**; `CatalogTypeHMS` exists as a constant only.
 
 ### Primary Motivations for the Go-Native Implementation:

@@ -44,8 +44,8 @@ var (
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "xtable",
-		Short: "Apache XTable (Go): Cross-table format converter for modern lakehouses",
-		Long: `Apache XTable (Go) provides omni-directional, zero-copy metadata translation
+		Short: "xtable-go: cross-format lakehouse metadata converter (unofficial Go port of Apache XTable)",
+		Long: `xtable-go provides omni-directional, zero-copy metadata translation
 across Apache Iceberg, Delta Lake, Apache Hudi, and other open lakehouse table formats.`,
 		// Wires up --version, which people reach for before discovering `xtable version`.
 		Version:      fmt.Sprintf("%s (commit: %s, date: %s)", version, commit, date),

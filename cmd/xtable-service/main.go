@@ -155,7 +155,7 @@ func main() {
 // printStartupBanner tells the operator what is actually running: where to reach it, which endpoints
 // exist, whether background sync is on, and how to stop it.
 func printStartupBanner(w io.Writer, port int, configPath string, daemonEnabled bool, interval time.Duration) {
-	_, _ = fmt.Fprintf(w, "Apache XTable (Go) service %s\n", version)
+	_, _ = fmt.Fprintf(w, "xtable-go service %s\n", version)
 	_, _ = fmt.Fprintf(w, "  Listening      http://localhost:%d\n", port)
 	_, _ = fmt.Fprintf(w, "  Endpoints      GET  /v1/health\n")
 	_, _ = fmt.Fprintf(w, "                 POST /v1/conversion/table\n")
