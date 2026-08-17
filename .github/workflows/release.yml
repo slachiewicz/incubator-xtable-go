@@ -43,7 +43,7 @@ jobs:
         with:
           go-version: "1.25.12"
           check-latest: true
-          cache: false
+          cache: true
 
       # Pure Go, no cgo, so one runner cross-builds every platform. Running this on all
       # three runners would triplicate identical binaries across the merged artifacts.

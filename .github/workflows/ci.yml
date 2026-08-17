@@ -45,7 +45,7 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
           check-latest: true
-          cache: false
+          cache: true
 
       - name: Verify dependencies
         run: |

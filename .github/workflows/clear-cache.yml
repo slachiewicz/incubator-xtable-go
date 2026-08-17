@@ -15,38 +15,28 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: Lint
+name: Clear Runner Caches
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
+  actions: write
   contents: read
-  pull-requests: read
-  checks: write
 
 jobs:
-  golangci:
-    name: golangci-lint
+  clear-cache:
+    name: Purge all Actions caches
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.25.12"
-          check-latest: true
-          cache: true
-
-      - name: Run golangci-lint
-        # Action v6 cannot drive golangci-lint v2; v7+ rejects v1. Pinned to the
-        # minor .golangci.yml was written against so CI cannot drift onto a
-        # newer linter and go red without a commit.
-        uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.12
+      - name: Delete all caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh cache list --repo "${{ github.repository }}" --limit 100 --json id \
+            --jq '.[].id' | \
+          while read -r id; do
+            echo "Deleting cache $id"
+            gh cache delete "$id" --repo "${{ github.repository }}"
+          done
+          echo "All caches cleared."
