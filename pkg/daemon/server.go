@@ -31,6 +31,8 @@ import (
 	"github.com/slachiewicz/xtable-go/pkg/conversion"
 	"github.com/slachiewicz/xtable-go/pkg/formats"
 	"github.com/slachiewicz/xtable-go/pkg/io"
+	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/xtable-go/pkg/spi"
 )
 
 // Server implements the HTTP REST server for Apache XTable matching the OpenAPI spec.
@@ -170,7 +172,7 @@ func (s *Server) handleConvertTable(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		snapshot := *resp
+		snapshot := cloneConvertTableResponse(resp)
 		_ = json.NewEncoder(w).Encode(&snapshot)
 		return
 	}
@@ -225,7 +227,7 @@ func (s *Server) handleGetConversionStatus(w http.ResponseWriter, r *http.Reques
 
 	// Snapshot under the lock so the background goroutine cannot mutate
 	// fields (Status, Results, FinishedAt) while we JSON-encode them.
-	snapshot := *resp
+	snapshot := cloneConvertTableResponse(resp)
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -302,4 +304,31 @@ func (s *Server) recordFailure(id string, err error) {
 		conv.Error = err.Error()
 	}
 	s.mu.Unlock()
+}
+
+func cloneConvertTableResponse(resp *ConvertTableResponse) ConvertTableResponse {
+	if resp == nil {
+		return ConvertTableResponse{}
+	}
+
+	snapshot := *resp
+	if resp.FinishedAt != nil {
+		finishedAt := *resp.FinishedAt
+		snapshot.FinishedAt = &finishedAt
+	}
+	if len(resp.Results) == 0 {
+		return snapshot
+	}
+
+	snapshot.Results = make(map[model.TableFormat]*spi.SyncResult, len(resp.Results))
+	for format, result := range resp.Results {
+		if result == nil {
+			snapshot.Results[format] = nil
+			continue
+		}
+		clonedResult := *result
+		snapshot.Results[format] = &clonedResult
+	}
+
+	return snapshot
 }
