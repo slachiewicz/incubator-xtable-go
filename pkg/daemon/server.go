@@ -326,6 +326,8 @@ func cloneConvertTableResponse(resp *ConvertTableResponse) ConvertTableResponse 
 			snapshot.Results[format] = nil
 			continue
 		}
+		// spi.SyncResult currently contains only value fields, so a shallow copy
+		// is sufficient to detach the response snapshot from later mutations.
 		clonedResult := *result
 		snapshot.Results[format] = &clonedResult
 	}
