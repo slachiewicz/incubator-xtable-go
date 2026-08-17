@@ -170,7 +170,8 @@ func (s *Server) handleConvertTable(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(resp)
+		snapshot := *resp
+		_ = json.NewEncoder(w).Encode(&snapshot)
 		return
 	}
 
