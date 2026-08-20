@@ -87,7 +87,7 @@ Apache XTable (Go) provides **omni-directional, zero-copy metadata translation**
 ## 3. Development, Build & Testing Workflows
 
 ### Prerequisites
-- Go 1.22+ (tested with Go 1.26+)
+- Go 1.26+ (the `go.mod` floor; CI builds and tests on 1.27)
 - `golangci-lint` (for code quality audits)
 
 ### Common Commands
