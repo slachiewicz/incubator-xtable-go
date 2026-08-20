@@ -19,6 +19,7 @@ package parquet
 
 import (
 	"github.com/parquet-go/parquet-go"
+	"github.com/parquet-go/parquet-go/format"
 
 	"github.com/slachiewicz/xtable-go/pkg/model"
 )
@@ -84,22 +85,20 @@ func convertType(t parquet.Type, nullable bool) *model.Schema {
 		return model.NewPrimitiveSchema(model.TypeString, nullable)
 	}
 
-	// Check logical types first
+	// Check logical types first. parquet-go v0.32 models the thrift union as a sum type, so this
+	// switches on the single Value field rather than testing one pointer field per member.
 	if lt := t.LogicalType(); lt != nil {
-		if lt.UTF8 != nil || lt.Enum != nil {
+		switch v := lt.Value.(type) {
+		case *format.StringType, *format.EnumType:
 			return model.NewPrimitiveSchema(model.TypeString, nullable)
-		}
-		if lt.Date != nil {
+		case *format.DateType:
 			return model.NewPrimitiveSchema(model.TypeDate, nullable)
-		}
-		if lt.Timestamp != nil {
+		case *format.TimestampType:
 			return model.NewPrimitiveSchema(model.TypeTimestamp, nullable)
-		}
-		if lt.UUID != nil {
+		case *format.UUIDType:
 			return model.NewPrimitiveSchema(model.TypeUUID, nullable)
-		}
-		if dec := lt.Decimal; dec != nil {
-			return model.NewDecimalSchema(int(dec.Precision), int(dec.Scale), nullable)
+		case *format.DecimalType:
+			return model.NewDecimalSchema(int(v.Precision), int(v.Scale), nullable)
 		}
 	}
 
