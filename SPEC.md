@@ -229,10 +229,12 @@ type Storage interface {
 
 ## 9. Performance Benchmarks & Targets
 
-All figures below were measured; none is a projection. Reproduce with `make bench` and
+All figures below were measured; none is a projection. Reproduce with `make bench COUNT=10` and
 `make bench-footprint`. Absolute timings are hardware-specific — these come from an Apple M1
-(darwin/arm64, Go 1.26.5) — so treat the **shape** of the curve as the durable result and re-measure
-before quoting a number anywhere it matters.
+(darwin/arm64, Go 1.27.0) — so treat the **shape** of the curve as the durable result and re-measure
+before quoting a number anywhere it matters. The toolchain is part of the measurement: Go 1.27 backs
+`encoding/json` with the v2 implementation, which cut allocations here by 40% (geomean, p=0.002)
+against this same tree built with Go 1.26.6.
 
 ### 9.1 Snapshot sync
 
@@ -241,28 +243,42 @@ isolates translation cost from object-store latency. A network backend adds its 
 
 | Data files | Time per sync | Allocated | Allocations |
 | ---: | ---: | ---: | ---: |
-| 10 | 0.20 ms | 68 KiB | 892 |
-| 100 | 0.99 ms | 456 KiB | 6,279 |
-| 1,000 | 5.96 ms | 4.6 MiB | 60,332 |
-| 10,000 | 58.0 ms | 50.2 MiB | 600,422 |
+| 10 | 0.067 ms | 53 KiB | 554 |
+| 100 | 0.51 ms | 461 KiB | 3,905 |
+| 1,000 | 5.23 ms | 4.3 MiB | 37,089 |
+| 10,000 | 52.5 ms | 46.1 MiB | 367,978 |
+
+Timings are medians of `-count=10`. The two small rows are the noisy ones — ±30% at 10 files and
+±51% at 100, where a single sync is short enough that scheduler jitter dominates — while the 1,000
+and 10,000-file rows hold to ±4% and ±3%. Allocation counts do not vary at all. Prefer the large
+rows for any claim that matters.
 
 Cost is linear in file count: each 10x more files costs roughly 10x the time and memory. **The
-"< 50 ms" target in earlier revisions holds up to a few thousand files and is exceeded at 10,000
-(58 ms).** State the file count alongside any latency claim; a bare "2.5 ms sync" is meaningless.
+"< 50 ms" target in earlier revisions holds up to a few thousand files and is still missed at 10,000
+(52.5 ms), though by a far smaller margin than the 58 ms measured on Go 1.26.5.** State the file
+count alongside any latency claim; a bare "2.5 ms sync" is meaningless.
 
-`BenchmarkSnapshotRead` isolates the read half — 48.0 ms of the 58.0 ms at 10,000 files, so roughly
-83% of a full sync is spent parsing the source table's log, not writing the target's metadata. That
-is where optimisation effort belongs.
+`BenchmarkSnapshotRead` isolates the read half — 33.5 ms of the 52.5 ms at 10,000 files, so roughly
+64% of a full sync is spent parsing the source table's log rather than writing the target's metadata.
+That is still where optimisation effort belongs, but the read half is no longer as dominant as it
+was: it was 83% before Go 1.27, and the json v2 rewrite took more out of parsing than out of writing.
 
 ### 9.2 Footprint
 
 | Property | Measured | Method |
 | :--- | :--- | :--- |
-| `cmd/xtable`, `-ldflags="-s -w"` | 13.5 MiB | `go build`, darwin/arm64 |
-| `cmd/xtable-service`, same flags | 14.0 MiB | same |
-| `cmd/xtable-wasm`, same flags | 17.6 MiB | after excluding the AWS SDK from `js` builds; was 25.6 MiB |
-| `xtable version`, process start to exit | median 7.0 ms (min 6.5, max 7.7, n=30) | wall clock around `fork`/`exec`; an upper bound, it includes the harness |
-| `xtable-service` idle RSS | 16.4 MiB, unchanged after serving requests | `ps -o rss=` two seconds after the health endpoint answered |
+| `cmd/xtable`, `-ldflags="-s -w"` | 13.9 MiB | `go build`, darwin/arm64 |
+| `cmd/xtable-service`, same flags | 14.4 MiB | same |
+| `cmd/xtable-wasm`, same flags | 18.4 MiB | after excluding the AWS SDK from `js` builds; was 25.6 MiB |
+| `xtable version`, process start to exit | median 6.6 ms (min 6.3, max 7.3, n=30) | wall clock around `fork`/`exec`; an upper bound, it includes the harness |
+| `xtable-service` idle RSS | 15.9 MiB, unchanged after serving requests | `ps -o rss=` two seconds after the health endpoint answered |
+
+The three binary sizes are each larger than the figure this section carried previously, by 0.4 MiB
+for the two native binaries and 0.8 MiB for the WebAssembly artifact; idle RSS and startup time both
+moved slightly the other way, to 15.9 MiB and 6.6 ms. Growth is the expected direction — json v2
+and the size-specialized allocation routines are both more code — but the comparison is against a
+recorded number, not a controlled one: the tree moved between the two measurements as well as the
+toolchain, so do not read the delta as attributable to Go 1.27 alone.
 
 ### 9.3 Comparison with Java Apache XTable
 
@@ -276,12 +292,12 @@ Earlier revisions published such a column, and its figures were not measured.
   implementations in `pkg/catalog` now carry `//go:build !js`, with `js` counterparts returning
   `ErrS3Unsupported` and `ErrGlueUnsupported`. `GOOS=js GOARCH=wasm go list -deps ./cmd/xtable-wasm`
   now reports **zero** `aws-sdk-go-v2` and `smithy` packages, down from 103, and the artifact fell
-  from 25.6 MiB to **17.6 MiB**. An `s3://` path in a browser now fails with a stated reason rather
+  from 25.6 MiB to **18.4 MiB**. An `s3://` path in a browser now fails with a stated reason rather
   than dragging in an SDK that could never have worked there.
 - ~~Release artifacts are unstripped~~ — **fixed.** The release workflow, `build-artifacts.yml` and
   the `Makefile` all build with `-ldflags="-s -w"`, cutting roughly 6 MiB from each of the eight
-  published binaries. The `c-shared` build is deliberately left unstripped: its dynamic symbol table
-  is the interface.
+  published binaries — `cmd/xtable` measures 20.2 MiB unstripped against 13.9 MiB stripped. The
+  `c-shared` build is deliberately left unstripped: its dynamic symbol table is the interface.
 
 ---
 
