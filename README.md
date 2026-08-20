@@ -208,9 +208,9 @@ Two known limitations, both consequences of how the target is currently built:
 - **Only local and in-memory paths can work.** `NewStorageForPath` selects the S3 backend for
   `s3://` and `s3a://` URIs, which needs AWS credentials and network access that a browser sandbox
   does not provide. Catalog synchronization (AWS Glue, Iceberg REST) is likewise unreachable.
-- **The artifact is 17.6 MiB.** The AWS SDK is no longer linked: `pkg/io/s3.go` and the Glue files
+- **The artifact is 18.4 MiB.** The AWS SDK is no longer linked: `pkg/io/s3.go` and the Glue files
   in `pkg/catalog` are built `!js`, with `js` stubs returning `ErrS3Unsupported` and
-  `ErrGlueUnsupported`. That removed all 103 `aws-sdk-go-v2` and `smithy` packages and cut 8 MiB.
+  `ErrGlueUnsupported`. That removed all 103 `aws-sdk-go-v2` and `smithy` packages and cut 7 MiB.
   The remainder is the Go runtime and the format adapters.
 
 Treat `xtableInspect` and `xtableSync` as unvalidated. Report anything that works as much as
