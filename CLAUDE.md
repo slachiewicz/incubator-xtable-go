@@ -43,6 +43,12 @@ go test -short ./...                       # see below: without -short this star
 golangci-lint run ./...
 ```
 
+Your local `golangci-lint` must be built with the same Go minor as your toolchain, or the last stage
+fails on the standard library rather than on this code. A Homebrew or release-tarball binary is
+typically a minor behind; reinstall it with `go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0`
+under the toolchain you are using. `lint.yml` does exactly this, for the reason recorded under
+"Go version" below.
+
 The `js/wasm` vet is not redundant. `cmd/xtable-wasm` is behind `//go:build js && wasm`, so a plain
 `go build`/`go vet` never compiles it — a break there is invisible locally without that line.
 
@@ -109,19 +115,27 @@ floor left 1.25 when Go 1.27 shipped and 1.25 fell out of the two-release suppor
 `GOTOOLCHAIN=auto`, editing the line silently downloads a different toolchain. Note `go get -u ./...`
 rewrites this directive on its own, so re-check it after any dependency sweep.
 
-**The workflow `go-version:` pins are the build toolchain**: `1.27.0` in `release.yml`,
-`integration.yml`, `security.yml`, `bench.yml` and `build-artifacts.yml`, and these *should* track the
-newest supported patch. CI's `govulncheck` job scans the standard library, so a stale pin fails the
+**The workflow `go-version:` pins are the build toolchain**: `1.27.0` in every job — `release.yml`,
+`integration.yml`, `security.yml`, `bench.yml`, `build-artifacts.yml` and `lint.yml` — and these
+*should* track the newest supported patch. CI's `govulncheck` job scans the standard library, so a stale pin fails the
 build on stdlib CVEs even when every dependency is clean — `1.25.5` was rejected for 13 `crypto/tls`
 findings. `security.yml` carries two pins, `go-version` and the action's own `go-version-input`; bump
 both. `ci.yml`'s matrix is `["1.26", "stable"]`: the first lane is the declared floor and moves with the
 `go` directive, the second resolves to the newest release automatically.
 
-**`lint.yml` is deliberately one release behind**, on `1.26.7` with `golangci-lint` v2.13. golangci-lint
-type-checks the standard library with its own vendored `go/types`, so a binary built with an older
-toolchain cannot parse newer stdlib syntax: v2.13 is built with go1.26 and fails on Go 1.27's
-`math/rand/v2`, which now declares a generic method. Bump this job only once golangci-lint ships a
-release built with the toolchain you want, and move both pins together.
+**`lint.yml` builds `golangci-lint` from source rather than downloading it**, with `go install ...@v2.13.0`
+under the same 1.27.0 toolchain as the other jobs. This is not a style preference: golangci-lint
+type-checks the standard library with the `go/types` it was compiled against, and every *published*
+v2.13.0 binary is built with go1.26, which cannot parse Go 1.27's `math/rand/v2` — it declares a
+generic method. The downloaded binary fails with `method must have no type parameters (typecheck)`;
+the same tag rebuilt under go1.27 lints clean. Two consequences: the linter compiles on each CI run
+instead of being fetched, and `golangci-lint-action`'s GitHub annotations are gone. Move back to the
+action once upstream ships a release built with go1.27.
+
+A second, separate constraint applies whenever the `go.mod` floor rises: golangci-lint refuses
+outright to run against a module whose `go` directive exceeds its own build Go, with `the Go language
+version (goX.Y) used to build golangci-lint is lower than the targeted Go version`. That is what
+forced v2.12 out when the floor moved to 1.26.
 
 ## Known defects in the current model
 
