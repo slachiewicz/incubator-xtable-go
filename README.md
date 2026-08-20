@@ -38,7 +38,7 @@
 
 ## 🌟 Why a Go port?
 
-- ⚡ **Instant Execution**: Native static binary (~15MB) with **zero JVM boot latency** (<2ms execution).
+- ⚡ **Instant Execution**: Native static binary (13.9 MiB stripped) with **zero JVM boot latency** — 6.6 ms start to exit, measured; see `SPEC.md` section 9.2.
 - 🛡️ **Pure Go & Zero-JVM**: No Spark, Hadoop XML, Java, or Scala runtime dependencies required.
 - 🔄 **Omni-Directional Sync**: Any format $\longleftrightarrow$ Any format (e.g., Delta $\to$ Iceberg & Hudi; Parquet $\to$ Delta $\to$ Iceberg; Hudi $\to$ Delta).
 - 📦 **Deletion Vectors**: Full translation of deletion vector descriptors across modern lakehouse formats, preserving roaring bitmap payloads untouched.
