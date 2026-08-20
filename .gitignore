@@ -26,6 +26,12 @@ go.work.sum
 CLAUDE.local.md
 .claude/settings.local.json
 
+# Python bindings build and cache artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
 # Demo generated data
 demo/sample_delta_table/
 
