@@ -101,18 +101,27 @@ at donation time.
 
 Two different versions, for two different jobs — do not conflate them.
 
-**`go.mod`'s `go` directive is the language floor**: `go 1.25.0`, the 1.25 minor floor rather than a
-patch pin. `golang.org/x/sys` declares `go 1.25.0` itself, so the toolchain rejects a bare `go 1.25`
-here; `1.25.0` is the first 1.25 release, so this excludes no 1.25 user. Do **not** let it drift to a
-later patch such as `1.25.5` — that would force every consumer onto that patch for no benefit. With
+**`go.mod`'s `go` directive is the language floor**: `go 1.26.0`, the 1.26 minor floor rather than a
+patch pin. Spell it `1.26.0`, not a bare `1.26`: `golang.org/x/sys` already forces the three-part form,
+and `1.26.0` is the first 1.26 release, so this excludes no 1.26 user. Do **not** let it drift to a
+later patch such as `1.26.7` — that would force every consumer onto that patch for no benefit. The
+floor left 1.25 when Go 1.27 shipped and 1.25 fell out of the two-release support window. With
 `GOTOOLCHAIN=auto`, editing the line silently downloads a different toolchain. Note `go get -u ./...`
 rewrites this directive on its own, so re-check it after any dependency sweep.
 
-**The workflow `go-version:` pins are the build toolchain**: `1.25.12`, and these *should* track the
-newest 1.25 patch. CI's `govulncheck` job scans the standard library, so a stale pin fails the build on
-stdlib CVEs even when every dependency is clean — `1.25.5` was rejected for 13 `crypto/tls` findings.
-`security.yml` carries two pins, `go-version` and the action's own `go-version-input`; bump both.
-`ci.yml`'s matrix uses `"1.25"`, which resolves to the newest 1.25 patch automatically.
+**The workflow `go-version:` pins are the build toolchain**: `1.27.0` in `release.yml`,
+`integration.yml`, `security.yml`, `bench.yml` and `build-artifacts.yml`, and these *should* track the
+newest supported patch. CI's `govulncheck` job scans the standard library, so a stale pin fails the
+build on stdlib CVEs even when every dependency is clean — `1.25.5` was rejected for 13 `crypto/tls`
+findings. `security.yml` carries two pins, `go-version` and the action's own `go-version-input`; bump
+both. `ci.yml`'s matrix is `["1.26", "stable"]`: the first lane is the declared floor and moves with the
+`go` directive, the second resolves to the newest release automatically.
+
+**`lint.yml` is deliberately one release behind**, on `1.26.7` with `golangci-lint` v2.13. golangci-lint
+type-checks the standard library with its own vendored `go/types`, so a binary built with an older
+toolchain cannot parse newer stdlib syntax: v2.13 is built with go1.26 and fails on Go 1.27's
+`math/rand/v2`, which now declares a generic method. Bump this job only once golangci-lint ships a
+release built with the toolchain you want, and move both pins together.
 
 ## Known defects in the current model
 

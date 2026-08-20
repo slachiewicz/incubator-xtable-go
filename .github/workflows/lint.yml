@@ -39,14 +39,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.25.12"
+          go-version: "1.26.7"
           check-latest: true
           cache: true
 
       - name: Run golangci-lint
         # Action v6 cannot drive golangci-lint v2; v7+ rejects v1. Pinned to the
         # minor .golangci.yml was written against so CI cannot drift onto a
-        # newer linter and go red without a commit.
+        # newer linter and go red without a commit. The Go pin above is held at
+        # 1.26 to match: golangci-lint type-checks the standard library itself,
+        # and a v2.13 binary (built with go1.26) cannot parse Go 1.27's
+        # math/rand/v2, which declares a generic method.
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12
+          version: v2.13
