@@ -131,3 +131,51 @@ func TestParquet_SyncToDeltaAndIceberg(t *testing.T) {
 	assert.Equal(t, spi.SyncStatusSuccess, results[model.TableFormatDelta].StatusCode)
 	assert.Equal(t, spi.SyncStatusSuccess, results[model.TableFormatIceberg].StatusCode)
 }
+
+// TestParquetSchemaToModel_LogicalTypes pins the mapping from parquet logical types onto the
+// canonical model. parquet-go v0.32 changed format.LogicalType from one pointer field per union
+// member to a single Value field, so this mapping is a type switch that compiles cleanly whichever
+// arm is wrong; only an assertion catches a mis-wired arm.
+func TestParquetSchemaToModel_LogicalTypes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		node  parquet.Node
+		want  model.Type
+		check func(t *testing.T, s *model.Schema)
+	}{
+		{name: "string", node: parquet.String(), want: model.TypeString},
+		{name: "enum", node: parquet.Enum(), want: model.TypeString},
+		{name: "date", node: parquet.Date(), want: model.TypeDate},
+		{name: "timestamp", node: parquet.Timestamp(parquet.Millisecond), want: model.TypeTimestamp},
+		{name: "uuid", node: parquet.UUID(), want: model.TypeUUID},
+		{
+			name: "decimal",
+			node: parquet.Decimal(2, 9, parquet.Int32Type),
+			want: model.TypeDecimal,
+			check: func(t *testing.T, s *model.Schema) {
+				assert.Equal(t, 9, s.Metadata[model.MetadataKeyDecimalPrecision])
+				assert.Equal(t, 2, s.Metadata[model.MetadataKeyDecimalScale])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := parquet.NewSchema("root", parquet.Group{"col": tt.node})
+			got := pqformat.ParquetSchemaToModel(schema)
+			require.NotNil(t, got)
+			require.Len(t, got.Fields, 1)
+
+			col := got.Fields[0]
+			require.Equal(t, "col", col.Name)
+			require.Equal(t, tt.want, col.Schema.DataType)
+			if tt.check != nil {
+				tt.check(t, col.Schema)
+			}
+		})
+	}
+}
