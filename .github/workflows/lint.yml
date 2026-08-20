@@ -39,17 +39,24 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.26.7"
+          go-version: "1.27.0"
           check-latest: true
           cache: true
 
+      - name: Install golangci-lint
+        # Built from source instead of downloaded through golangci-lint-action.
+        # golangci-lint type-checks the standard library with the go/types it
+        # was compiled against, and every published v2.13.0 binary is built
+        # with go1.26, which cannot parse Go 1.27's math/rand/v2 -- it declares
+        # a generic method. Building the same pinned tag with the toolchain
+        # above resolves that. Move back to the action once upstream ships a
+        # release built with go1.27; the cost of this form is that the linter
+        # is compiled on each run rather than fetched, and GitHub annotations
+        # are lost.
+        #
+        # The tag stays pinned to the minor .golangci.yml was written against,
+        # so CI cannot drift onto a newer linter and go red without a commit.
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0
+
       - name: Run golangci-lint
-        # Action v6 cannot drive golangci-lint v2; v7+ rejects v1. Pinned to the
-        # minor .golangci.yml was written against so CI cannot drift onto a
-        # newer linter and go red without a commit. The Go pin above is held at
-        # 1.26 to match: golangci-lint type-checks the standard library itself,
-        # and a v2.13 binary (built with go1.26) cannot parse Go 1.27's
-        # math/rand/v2, which declares a generic method.
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13
+        run: $(go env GOPATH)/bin/golangci-lint run ./...
