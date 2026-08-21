@@ -394,9 +394,9 @@ func TestForeignFixtures_ConvertDelta(t *testing.T) {
 		// The Parquet source rebuilds the schema from a data file footer, which is missing the
 		// Hive partition column entirely.
 		model.TableFormatParquet: {schemaCheck: assertParquetSchemaGaps},
-		// The Paimon target writes metadata/schema-<epoch>.json while the Paimon source reads
-		// schema/schema-*, so nothing polytable writes as Paimon can be read back as Paimon.
-		model.TableFormatPaimon: {readBackError: "no paimon schema files found"},
+		// T32 aligned the Paimon target with the schema/ + snapshot/ layout its source reads, so a
+		// Paimon table polytable wrote is now read back like any other target.
+		model.TableFormatPaimon: {schemaCheck: assertSchemaMatchesManifest},
 	}
 
 	for _, target := range formats.SupportedTargets() {
