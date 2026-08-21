@@ -138,7 +138,7 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 		MetaData: &MetadataAction{
 			ID:               tableID,
 			Name:             snapshot.Table.Name,
-			Format:           FormatProvider{Provider: "parquet"},
+			Format:           NewParquetFormat(),
 			SchemaString:     schemaJSON,
 			PartitionColumns: partitionColumns,
 			Configuration:    config,
@@ -196,7 +196,7 @@ func (t *Target) CommitChanges(ctx context.Context, changes *model.IncrementalTa
 			MetaData: &MetadataAction{
 				ID:               uuid.New().String(),
 				Name:             change.TableAsOfChange.Name,
-				Format:           FormatProvider{Provider: "parquet"},
+				Format:           NewParquetFormat(),
 				SchemaString:     schemaJSON,
 				PartitionColumns: partitionColumns,
 				Configuration:    config,

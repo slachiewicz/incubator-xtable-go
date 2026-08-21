@@ -71,7 +71,7 @@ func writeDeltaLog(t *testing.T, storage io.Storage, basePath string, commits []
 			actions = append(actions, delta.SingleAction{MetaData: &delta.MetadataAction{
 				ID:           "fixture",
 				Name:         "fixture",
-				Format:       delta.FormatProvider{Provider: "parquet"},
+				Format:       delta.NewParquetFormat(),
 				SchemaString: deltaSchemaJSON(t, spec.columns),
 			}})
 		}

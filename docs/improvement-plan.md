@@ -1199,6 +1199,88 @@ tasks.
 
 ---
 
+# Integration-test plan — 2026-08-21
+
+Everything above verifies polytable's output with polytable's own reader. A deviation both sides
+share is invisible to that: the writer emits it, the reader accepts it, the test goes green, and
+the table is unreadable to the engines the project exists to serve. These tasks put independent
+readers on the output.
+
+## T29 — Engine verification of polytable output with DuckDB ⚠️ PARTIAL
+
+DuckDB reads Delta through `delta_scan` (delta-kernel-rs) and Iceberg through `iceberg_scan`, is a
+single static binary and needs no JVM, which makes it the cheapest independent judge available.
+
+**Scope.** A `test/` suite, gated on `testing.Short()` and on `exec.LookPath("duckdb")`, that syncs
+small tables to Delta and Iceberg from three source formats each, then shells out to `duckdb -json`
+and asserts on the row count, on a predicate outside the written value range returning nothing, and
+on a partition-value predicate returning the right subset. Out of `make check` on purpose; CI runs
+it through `integration.yml`, which already invokes `./test/...` without `-short`.
+
+**Acceptance:** the suite passes against a real duckdb; `make check` stays green; CI installs a
+pinned duckdb before the test step.
+
+**Commit:** `test: verify Delta and Iceberg outputs with DuckDB`
+
+### Outcome ⚠️
+
+Verified with **duckdb v1.5.5 (Variegata)** on macOS arm64, core `delta` extension `45c4087` and
+core `iceberg` extension `45163a28`.
+
+| Pair | Result |
+|---|---|
+| Parquet → Delta | ✅ read by `delta_scan` |
+| Iceberg → Delta | ✅ read by `delta_scan` |
+| Hudi → Delta | ✅ read by `delta_scan` |
+| Parquet → Iceberg | ⚠️ `iceberg_scan` cannot read it |
+| Delta → Iceberg | ⚠️ `iceberg_scan` cannot read it |
+| Hudi → Iceberg | ⚠️ `iceberg_scan` cannot read it |
+
+**The Delta writer was broken for every non-polytable reader, and this is the headline finding.**
+Two keys were emitted with `omitempty`, so a table with no format options and no field metadata —
+that is, every table polytable has ever written — omitted them entirely:
+
+- `metaData.format.options`. The Delta protocol declares it non-nullable. delta-kernel-rs fails the
+  whole log with `Encountered unmasked nulls in non-nullable StructArray child`.
+- `metadata` on each `schemaString` field. delta-kernel-rs fails with ``missing field `metadata` ``.
+
+Both are now written as empty objects, via `delta.NewParquetFormat()` and a non-omitempty tag, and
+`TestDelta_MetadataCarriesKernelRequiredKeys` guards them on the raw JSON. It has to assert on the
+JSON: a round trip through polytable's own Delta source passes either way, because the reader
+ignores both keys — which is exactly how this survived until an outside reader looked at it. The
+same defect would have hit delta-rs, Spark's Delta reader and anything else built on the kernel.
+
+**Iceberg output is not readable by any Iceberg engine.** `pkg/formats/iceberg/target.go` writes
+manifest files and manifest lists as JSON (`*-m0.json`, `snap-*.json`); the Iceberg spec mandates
+Avro, and DuckDB rejects them with `Incorrect Avro container file magic number`. This is a feature
+gap, not a bug to fix in a test commit — it needs an Avro writer, and `go.mod` has no Avro
+dependency. The three Iceberg subtests sync, assert the sync succeeded, then `t.Skip` with the
+DuckDB error attached; they will start asserting on their own once the manifests are Avro, because
+the skip is conditional on the scan failing rather than hard-coded. Tracked as T30.
+
+**Not verified:** pruning. `EXPLAIN`/`EXPLAIN ANALYZE` output is not a stable contract across DuckDB
+releases, so the suite proves correctness under a predicate rather than that files were skipped.
+Reading every column (`SELECT *`) is in the suite so the checks decode data pages rather than
+answering from the Parquet footer — this is what confirms the `timestamp(millisecond)` column
+survives the Delta round trip.
+
+## T30 — Iceberg manifests must be Avro, not JSON 🎯 OPEN
+
+Found by T29. `pkg/formats/iceberg/target.go` writes the manifest file and the manifest list as
+JSON. The Iceberg spec requires Avro for both, so no Iceberg engine can read a polytable-written
+Iceberg table — DuckDB's `iceberg_scan` stops at the container magic number. `pkg/formats/iceberg`'s
+own source reads the JSON back, which is why every existing test passes.
+
+Needs an Avro encoder (`github.com/hamba/avro/v2` is the usual choice; `go.mod` has none today) and
+the manifest-entry and manifest-list schemas from the spec, including the `field_id` key-value
+annotations Iceberg readers rely on. Writing Avro on the write side means the source must read both
+during the transition, or the reader breaks on tables written before the change.
+
+Unblocking this turns the three skipped T29 Iceberg subtests into real assertions with no change to
+the test.
+
+---
+
 ## Ordering
 
 **Current status**
@@ -1208,11 +1290,13 @@ tasks.
 | ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T26, T27 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
+| ⚠️ Partial | T29 — Delta output verified by DuckDB; Iceberg output unreadable by any engine, see T30 |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit) |
+| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T30 (Avro Iceberg manifests) |
 
 **Picking up the queue.** The tasks are independent; take them in any order. Suggested value order
-is T23, T25. T24 is a decision
+is T30, T23, T25 — T30 first, because until it lands polytable's Iceberg output is metadata no
+Iceberg engine can open. T24 is a decision
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.
 

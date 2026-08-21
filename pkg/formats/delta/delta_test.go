@@ -19,6 +19,8 @@ package delta_test
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,6 +136,67 @@ func TestDelta_SnapshotCommitAndRead(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	assert.Equal(t, table.LatestCommitTime, meta.LastInstantSynced)
+}
+
+// TestDelta_MetadataCarriesKernelRequiredKeys guards the two keys delta-kernel-rs refuses to read a
+// log without: metaData.format.options and a metadata object on every schemaString field. Both were
+// emitted with omitempty until T29 put DuckDB's delta_scan on the output, which failed the whole
+// table on each in turn. The assertions are on the raw JSON on purpose — a round trip through the
+// Go source would pass either way, because the reader ignores both keys.
+func TestDelta_MetadataCarriesKernelRequiredKeys(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	memStorage := io.NewMemoryStorage()
+	basePath := "mem://lake/delta_kernel_keys"
+
+	idField := &model.Field{Name: "id", Schema: model.NewPrimitiveSchema(model.TypeLong, false)}
+	nested := model.NewRecordSchema("addr", []*model.Field{
+		{Name: "city", Schema: model.NewPrimitiveSchema(model.TypeString, true)},
+	}, true)
+	table := &model.Table{
+		Name:             "people",
+		TableFormat:      model.TableFormatDelta,
+		ReadSchema:       model.NewRecordSchema("people", []*model.Field{idField, {Name: "addr", Schema: nested}}, false),
+		BasePath:         basePath,
+		LatestCommitTime: time.Now().UnixMilli(),
+	}
+
+	target := delta.NewTarget(memStorage)
+	require.NoError(t, target.Init(ctx, table))
+	require.NoError(t, target.CommitSnapshot(ctx, &model.Snapshot{
+		Table: table,
+		DataFiles: []*model.DataFile{{
+			PhysicalPath:  basePath + "/part-0.parquet",
+			FileFormat:    model.FileFormatParquet,
+			FileSizeBytes: 512,
+			RecordCount:   4,
+			LastModified:  time.Now().UnixMilli(),
+		}},
+		SourceIdentifier: "snap-1",
+	}))
+
+	raw, err := memStorage.Read(ctx, io.JoinPath(basePath, "_delta_log", "00000000000000000000.json"))
+	require.NoError(t, err)
+
+	var metaAction *delta.MetadataAction
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var action delta.SingleAction
+		require.NoError(t, json.Unmarshal([]byte(line), &action))
+		if action.MetaData != nil {
+			metaAction = action.MetaData
+		}
+	}
+	require.NotNil(t, metaAction)
+
+	encoded, err := json.Marshal(metaAction)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"options":{}`, "delta-kernel rejects a format without options")
+	assert.NotNil(t, metaAction.Format.Options)
+
+	// Every field at every depth, not just the top level.
+	assert.Equal(t, 3, strings.Count(metaAction.SchemaString, `"metadata":{}`))
+	assert.NotContains(t, metaAction.SchemaString, `"metadata":null`)
 }
 
 func TestDelta_DeletionVectors(t *testing.T) {
