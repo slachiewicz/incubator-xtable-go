@@ -778,8 +778,7 @@ func TestForeignFixtures_ConvertIceberg(t *testing.T) {
 		// F3, tracked as T33: the raw-Parquet source rebuilds the schema from one data file footer,
 		// so a column added mid-history is present or absent depending on which file sorts first.
 		model.TableFormatParquet: {schemaCheck: assertParquetSchemaFromFooter},
-		// F2, tracked as T32: the Paimon target and the Paimon source disagree on the layout.
-		model.TableFormatPaimon: {readBackError: "no paimon schema files found"},
+		model.TableFormatPaimon:  {schemaCheck: assertSchemaMatchesManifest},
 	}
 
 	for _, target := range formats.SupportedTargets() {
