@@ -1694,7 +1694,42 @@ before choosing.
 table's base path; both `pathsDoubled` pins in `TestForeignFixtures_ConvertIceberg` are deleted
 rather than adjusted.
 
-**Commit:** `fix: trim the base path from a data file location scheme and all`
+**Commit:** `fix: relativize data file paths against the base path scheme-aware`
+
+### Outcome ✅ — one helper in `pkg/io`, three targets
+
+`io.RelativizePath(physicalPath, basePath) (string, error)` in `pkg/io/storage.go` replaces the
+trim-by-prefix in all three targets that carried it. It strips a recognized scheme from *either*
+side before comparing — the list is now the package-level `uriSchemes` that `JoinPath` and
+`NewStorageForPathWithOptions` already keyed off, so `s3://` and `s3a://` compare equal, which is
+right: they name the same store. Both sides go through `path.Clean`, so a base path written with or
+without a trailing slash behaves the same, and the match has to end on a separator, so `/data/events`
+does not claim `/data/events2/f.parquet`. A path already relative (no scheme, no leading separator)
+comes back unchanged — `model.DataFile` documents `PhysicalPath` as "fully qualified URI or relative
+path" — unless it climbs out with `..`.
+
+**Which targets carried the pattern.** Hudi (`target.go`, the reported defect), Paimon
+(`manifest.go`'s `relativeFilePath`, now gone) and Delta (`target.go`'s `makeRelativePath`). The
+Parquet target does not: it only joins, under `_metadata/`. `parquet/partition.go`'s
+`HivePartitionsForFile` trims by prefix but is source-side, where the file path and the base path
+come from the same crawl and cannot disagree on scheme, so it was left alone.
+
+**A file outside the base path is handled per format, which is the asymmetry worth recording.** Hudi
+and Paimon cannot represent one — a write stat's path and a manifest entry's `_FILE_NAME` are both
+joined back onto the base path on read — so they fail the commit. Delta can: the protocol allows an
+absolute URI in an add action, which is why `delta/source.go`'s `resolveDataPath` accepts one, so the
+Delta target keeps the absolute path deliberately. Paimon's `applyDiff` keys files by the same
+relative name but falls back to the physical path, since that key is identity only and a file that
+cannot be relativized still fails in `entryForDataFile`.
+
+`JoinPath` was fixed in passing: it dropped the leading separator after a scheme, turning
+`file:///data/events` into the relative `file://data/events`, so the round trip the targets depend on
+did not close for a `file://` base path.
+
+Verified: `make check` green; `go test -short -race ./pkg/...` clean; `go test -short -count=1
+./test/` green with both `pathsDoubled` pins in `TestForeignFixtures_ConvertIceberg` deleted — the
+field and its handling in `assertFileListMatchesManifest` had no users left and went with them, so
+Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other target asserts.
 
 ---
 
@@ -1704,13 +1739,13 @@ rather than adjusted.
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T34 (Paimon real-spec: Avro manifests + engine verification), T35 (scheme-qualified paths double through Hudi and Paimon — F4) |
+| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T34 (Paimon real-spec: Avro manifests + engine verification) |
 
-**Picking up the queue.** Suggested value order is T35 (small, twice-pinned), then T34, then T30.
+**Picking up the queue.** Suggested value order is T34, then T30.
 T24 is a decision before it is code — read `SPEC.md:335` first and do not start writing an Iceberg
 deletion-vector translator until the INV-1 question in the task is answered.
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector

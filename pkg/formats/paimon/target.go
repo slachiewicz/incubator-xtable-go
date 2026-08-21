@@ -172,6 +172,19 @@ func (t *Target) Close() error {
 	return nil
 }
 
+// entriesFor converts a file list into manifest entries of one kind.
+func (t *Target) entriesFor(files []*model.DataFile, kind int, schemaID int64) ([]ManifestEntry, error) {
+	entries := make([]ManifestEntry, 0, len(files))
+	for _, file := range files {
+		entry, err := entryForDataFile(t.basePath, file, kind, schemaID)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
+}
+
 // commitParams describes one Paimon commit.
 type commitParams struct {
 	schemaID   int64
@@ -185,18 +198,20 @@ type commitParams struct {
 // commit writes the manifests, the manifest lists, the snapshot and the snapshot hints of a single
 // commit.
 func (t *Target) commit(ctx context.Context, params commitParams) error {
-	baseEntries := make([]ManifestEntry, 0, len(params.base))
-	for _, file := range params.base {
-		baseEntries = append(baseEntries, entryForDataFile(t.basePath, file, manifestEntryKindAdd, params.schemaID))
+	baseEntries, err := t.entriesFor(params.base, manifestEntryKindAdd, params.schemaID)
+	if err != nil {
+		return err
 	}
 
-	deltaEntries := make([]ManifestEntry, 0, len(params.added)+len(params.removed))
-	for _, file := range params.removed {
-		deltaEntries = append(deltaEntries, entryForDataFile(t.basePath, file, manifestEntryKindDelete, params.schemaID))
+	deltaEntries, err := t.entriesFor(params.removed, manifestEntryKindDelete, params.schemaID)
+	if err != nil {
+		return err
 	}
-	for _, file := range params.added {
-		deltaEntries = append(deltaEntries, entryForDataFile(t.basePath, file, manifestEntryKindAdd, params.schemaID))
+	addedEntries, err := t.entriesFor(params.added, manifestEntryKindAdd, params.schemaID)
+	if err != nil {
+		return err
 	}
+	deltaEntries = append(deltaEntries, addedEntries...)
 
 	baseList, err := t.writeManifestList(ctx, baseEntries, params.schemaID)
 	if err != nil {
@@ -405,13 +420,13 @@ func (t *Target) currentFiles(ctx context.Context) ([]*model.DataFile, error) {
 func applyDiff(basePath string, base, added, removed []*model.DataFile) []*model.DataFile {
 	dropped := make(map[string]struct{}, len(removed))
 	for _, file := range removed {
-		dropped[relativeFilePath(basePath, file.PhysicalPath)] = struct{}{}
+		dropped[fileKey(basePath, file)] = struct{}{}
 	}
 
 	result := make([]*model.DataFile, 0, len(base)+len(added))
 	seen := make(map[string]struct{}, len(base)+len(added))
 	for _, file := range base {
-		name := relativeFilePath(basePath, file.PhysicalPath)
+		name := fileKey(basePath, file)
 		if _, gone := dropped[name]; gone {
 			continue
 		}
@@ -422,7 +437,7 @@ func applyDiff(basePath string, base, added, removed []*model.DataFile) []*model
 	// A file rewritten in place is reported as both removed and added, so the additions are folded
 	// in after the removals rather than filtered by them.
 	for _, file := range added {
-		name := relativeFilePath(basePath, file.PhysicalPath)
+		name := fileKey(basePath, file)
 		if _, duplicate := seen[name]; duplicate {
 			continue
 		}
@@ -430,6 +445,17 @@ func applyDiff(basePath string, base, added, removed []*model.DataFile) []*model
 		result = append(result, file)
 	}
 	return result
+}
+
+// fileKey identifies a data file the way a manifest entry does, by its path relative to the table.
+// A file outside the table has no such path; its physical path is the key instead, which keeps this
+// comparison consistent without deciding anything — writing that file still fails in
+// entryForDataFile, so the fallback cannot hide a broken manifest.
+func fileKey(basePath string, file *model.DataFile) string {
+	if name, err := io.RelativizePath(file.PhysicalPath, basePath); err == nil {
+		return name
+	}
+	return file.PhysicalPath
 }
 
 // syncProperties builds the sync metadata a commit embeds in its snapshot properties.

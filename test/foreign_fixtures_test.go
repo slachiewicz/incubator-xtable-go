@@ -598,16 +598,13 @@ func foldColumnBounds(t *testing.T, files []*model.DataFile) map[string]fixtureB
 }
 
 // convertExpectation records how far a target can be verified today. Everything the conversion
-// really does — file list, row counts — is asserted for every target; the two fields mark the two
-// places where T28 found the round trip stops short, so that a fix turns a pin into a failure.
+// really does — file list, row counts — is asserted for every target; readBackError marks the one
+// place where T28 found the round trip stops short, so that a fix turns a pin into a failure.
 type convertExpectation struct {
 	// readBackError is the error the target's own source returns instead of a snapshot.
 	readBackError string
 	// schemaCheck asserts the schema the target's source recovered.
 	schemaCheck func(t *testing.T, manifest *fixtureManifest, schema *model.Schema)
-	// pathsDoubled marks a target that reports each data file under the table's base path twice.
-	// See F4.
-	pathsDoubled bool
 }
 
 // TestForeignFixtures_ConvertDelta syncs the delta-rs table into every other supported target and
@@ -665,7 +662,7 @@ func TestForeignFixtures_ConvertDelta(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, snapshot.DataFiles, manifest.DataFileCount)
 
-			assertFileListMatchesManifest(t, target, tableDir, manifest, snapshot.DataFiles, expected)
+			assertFileListMatchesManifest(t, target, tableDir, manifest, snapshot.DataFiles)
 
 			require.NotNil(t, expected.schemaCheck)
 			expected.schemaCheck(t, manifest, snapshot.Table.ReadSchema)
@@ -681,7 +678,6 @@ func assertFileListMatchesManifest(
 	tableDir string,
 	manifest *fixtureManifest,
 	files []*model.DataFile,
-	expected convertExpectation,
 ) {
 	t.Helper()
 
@@ -690,11 +686,7 @@ func assertFileListMatchesManifest(
 
 	var total int64
 	for _, file := range manifest.DataFiles {
-		key := file.Path
-		if expected.pathsDoubled {
-			key = "file:" + tableDir + "/" + file.Path
-		}
-		actual, ok := byPath[key]
+		actual, ok := byPath[file.Path]
 		require.True(t, ok, "%s dropped %s", target, file.Path)
 		assert.Equal(t, file.RecordCount, actual, "row count of %s", file.Path)
 		total += actual
@@ -750,15 +742,13 @@ func TestForeignFixtures_ConvertIceberg(t *testing.T) {
 
 	expectations := map[model.TableFormat]convertExpectation{
 		model.TableFormatDelta: {schemaCheck: assertSchemaWithoutFieldIDs},
-		// F4: the Hudi target trims the base path off a data file path by string prefix, and the
-		// Iceberg source reports the location with the scheme the manifest recorded, so the prefix
-		// never matches and the Hudi source joins the whole absolute path onto the base path again.
-		model.TableFormatHudi: {schemaCheck: assertSchemaWithoutFieldIDs, pathsDoubled: true},
+		// F4 closed by T35: an Iceberg source reports scheme-qualified locations, which the Hudi and
+		// Paimon targets now relativize scheme-aware instead of storing whole and reading back
+		// doubled under the base path.
+		model.TableFormatHudi: {schemaCheck: assertSchemaWithoutFieldIDs},
 		// F3 closed by T33: the merged footer schema carries every column whatever the file order.
 		model.TableFormatParquet: {schemaCheck: assertParquetSchemaFromDataFiles},
-		// F4, tracked as T35: like Hudi, the Paimon target trims the base path by string prefix,
-		// so the Iceberg source's scheme-qualified locations survive whole and read back doubled.
-		model.TableFormatPaimon: {schemaCheck: assertSchemaMatchesManifest, pathsDoubled: true},
+		model.TableFormatPaimon:  {schemaCheck: assertSchemaMatchesManifest},
 	}
 
 	for _, target := range formats.SupportedTargets() {
@@ -796,7 +786,7 @@ func TestForeignFixtures_ConvertIceberg(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			assertFileListMatchesManifest(t, target, tableDir, manifest, snapshot.DataFiles, expected)
+			assertFileListMatchesManifest(t, target, tableDir, manifest, snapshot.DataFiles)
 
 			require.NotNil(t, expected.schemaCheck)
 			expected.schemaCheck(t, manifest, snapshot.Table.ReadSchema)

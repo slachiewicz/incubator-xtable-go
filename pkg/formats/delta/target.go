@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -331,10 +330,14 @@ func finiteBound(v any) (any, bool) {
 	}
 }
 
+// makeRelativePath names a data file the way an add or remove action should: relative to the table
+// directory, so the log survives the table being copied. Unlike Hudi and Paimon, the Delta protocol
+// also allows an absolute URI here — resolveDataPath on the read side accepts one — so a file
+// outside the table is kept whole rather than failing the commit.
 func (t *Target) makeRelativePath(path string) string {
-	if strings.HasPrefix(path, t.targetTable.BasePath) {
-		rel := strings.TrimPrefix(path, t.targetTable.BasePath)
-		return strings.TrimPrefix(rel, "/")
+	rel, err := io.RelativizePath(path, t.targetTable.BasePath)
+	if err != nil {
+		return path
 	}
-	return path
+	return rel
 }
