@@ -918,7 +918,7 @@ Upstream issue #889 is open and unresolved, so this is a place the port can lead
 Related upstream: #821 and PR #823 (per-table timeout), PR #794 (fail on sync error), #594
 (continuous sync).
 
-`cmd/xtable/main.go` exposes three flags — `--datasetConfig`, `--basePath`, `--format` — and prints
+`cmd/polytable/main.go` exposes three flags — `--datasetConfig`, `--basePath`, `--format` — and prints
 emoji-decorated prose to stdout (`:119`, `:124`, `:153`). Exit codes are already correct: `:164`
 aggregates `hasErrors` and returns an error, so a failed sync exits non-zero. What is missing:
 
@@ -934,8 +934,8 @@ aggregates `hasErrors` and returns an error, so a failed sync exits non-zero. Wh
   new commits (`pkg/conversion/controller.go:205` already returns success with an unchanged instant —
   that is the no-op case, and it is currently indistinguishable from real work).
 
-**Acceptance:** `xtable sync --output json` output parses with `encoding/json` and round-trips into a
-struct in `cmd/xtable`; `--mode full` forces a snapshot sync on a table that would otherwise go
+**Acceptance:** `polytable sync --output json` output parses with `encoding/json` and round-trips into a
+struct in `cmd/polytable`; `--mode full` forces a snapshot sync on a table that would otherwise go
 incremental; `--dry-run` leaves the target's metadata directory byte-identical; a table whose source
 has no new commits reports `NO_OP`. Golden-file tests for the JSON shape.
 
@@ -959,7 +959,7 @@ Scope:
 1. Add `ListTables(ctx, database string, filter TableFilter) iter.Seq2[TableIdentifier, error]` to
    `ConversionSource`, implemented with the Glue paginator.
 2. Add target-format resolution from table properties, alongside the existing source resolution.
-3. Expose it as `xtable sync --catalog glue --database <db>`, converting every marked table.
+3. Expose it as `polytable sync --catalog glue --database <db>`, converting every marked table.
 
 **Acceptance:** a fake Glue client returning three pages yields every table exactly once and
 surfaces a mid-pagination error rather than truncating silently; a table with no target-format
@@ -1075,7 +1075,7 @@ commit has no timestamp at all, rather than reading 0 as "old enough".
 One migration edge, no code: a target synced before this change whose stored instant sits at an
 anomaly can see one commit re-emitted on the next sync. That is at-least-once, not loss.
 
-## T27 — Rename the project to `polytable`
+## T27 — Rename the project to `polytable` ✅ COMPLETED
 
 **Decided by the maintainer, 2026-08-21.** "XTable" is an ASF podling mark, so publishing
 independently under `xtable-go` is a trademark problem. The new name is **polytable** — cleared
@@ -1120,6 +1120,31 @@ The C header, wheel and REST spec all carry the new name. No tag exists yet when
 
 **Commit:** `refactor: rename the project to polytable`
 
+### Outcome ✅
+
+Done in one commit. The module path, the three `cmd/` directories, the C library and its four
+exported symbols, the Python package and the REST spec title all carry the new name; `make check`
+passes, `oapi-codegen` regenerates from the retitled spec, and the generated `libpolytable.h`
+declares `polytable_version`, `polytable_free_string`, `polytable_sync_json` and
+`polytable_inspect_json`.
+
+Three on-disk strings the task text did not list were renamed too, because the carve-out's stated
+reason is Java interop and these have no Java counterpart: the Delta/Hudi commit operation labels
+(`XTABLE_SYNC_SNAPSHOT` → `POLYTABLE_SYNC_SNAPSHOT` and siblings — Java writes
+`DeltaOperations.Update("xtable-delta-sync")` and `WriteOperationType.UNKNOWN`), the Parquet
+sidecar directory `_xtable_metadata`, and the Glue parameter `xtable_synced_time`. Nothing is
+released, so this was the last free moment to change them. `MetadataPropertyPrefix = "xtable_"`
+stays with the two keys it prefixes, and its doc comment now says why.
+
+All four C symbols were renamed rather than the two the task names: a `polytable_sync_json` beside
+an `xtable_version` would be an incoherent ABI.
+
+What is left on a case-insensitive grep, by category: the two metadata keys and the prefix constant
+(plus their `pkg/catalog/rest.go` literals and the `SPEC.md`/`AGENTS.md` invariants that quote
+them); nominative references to Apache XTable, `../incubator-xtable`, `xtable.apache.org` and the
+upstream Maven module names in docs and `.claude/skills/`; and this file's history of earlier
+tasks.
+
 ---
 
 ## Ordering
@@ -1128,14 +1153,14 @@ The C header, wheel and REST spec all carry the new name. No tag exists yet when
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T26 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T26, T27 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T27 (polytable rename — blocks the first tag) |
+| 🎯 Open queue | T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit) |
 
 **Picking up the queue.** The tasks are independent; take them in any order. Suggested value order
-is T22, T23, T25, then T27 last before any tag. T24 is a decision
+is T22, T23, T25. T24 is a decision
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.
 

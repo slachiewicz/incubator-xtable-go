@@ -17,23 +17,23 @@
   under the License.
 -->
 
-# pyxtable
+# polytable
 
 Python bindings for [Apache XTable (incubating)](https://xtable.apache.org) via the Go
 implementation's `c-shared` library — omni-directional lakehouse metadata translation with no JVM.
 
 ## Requirements
 
-`pyxtable` is a `ctypes` wrapper that now bundles the appropriate native library in the wheel.
+`polytable` is a `ctypes` wrapper that now bundles the appropriate native library in the wheel.
 For development or source installation, build the library from the repository root:
 
 ```sh
-make bindings-c      # writes lib/libxtable.{dylib,so}
+make bindings-c      # writes lib/libpolytable.{dylib,so}
 ```
 
 At import time `_find_library()` searches, in order:
 
-1. `<pyxtable package dir>/libxtable.{dylib,so,dll}`
+1. `<polytable package dir>/libpolytable.{dylib,so,dll}`
 2. `../../lib/` and `../lib/` relative to the package
 3. `./lib/` relative to the current working directory
 4. the bare library name, left to the system loader
@@ -45,13 +45,13 @@ If the library cannot be loaded, import still succeeds but the failure surfaces 
 ## Usage
 
 ```python
-import pyxtable
+import polytable
 
-pyxtable.version()
+polytable.version()
 
-pyxtable.inspect("DELTA", "/path/to/delta_table")
+polytable.inspect("DELTA", "/path/to/delta_table")
 
-pyxtable.sync({
+polytable.sync({
     "sourceFormat": "DELTA",
     "targetFormats": ["ICEBERG"],
     "tableBasePath": "/path/to/delta_table",
@@ -68,17 +68,17 @@ The package now includes build automation and proper wheels:
 
 ```sh
 # Build wheel with bundled native library (platform-specific)
-make bindings-python    # builds native lib, copies to pyxtable/, creates wheel in dist/
+make bindings-python    # builds native lib, copies to polytable/, creates wheel in dist/
 
 # Install from built wheel
-pip install bindings/python/dist/pyxtable-0.1.0-*.whl
+pip install bindings/python/dist/polytable-0.1.0-*.whl
 
 # Or install from source (requires manual library building first)
 make bindings-c
 pip install bindings/python/
 ```
 
-**Platform-specific wheels**: macOS wheels bundle `libxtable.dylib`, Linux wheels bundle `libxtable.so`. They cannot be combined in a universal wheel due to platform differences.
+**Platform-specific wheels**: macOS wheels bundle `libpolytable.dylib`, Linux wheels bundle `libpolytable.so`. They cannot be combined in a universal wheel due to platform differences.
 
 ## Status
 

@@ -25,13 +25,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 const (
-	parquetMetadataDir      = "_xtable_metadata"
+	parquetMetadataDir      = "_polytable_metadata"
 	parquetManifestFile     = "manifest.json"
 	parquetSyncMetadataFile = "sync_metadata.json"
 )

@@ -1,4 +1,4 @@
-module github.com/slachiewicz/xtable-go
+module github.com/slachiewicz/polytable
 
 go 1.26.0
 

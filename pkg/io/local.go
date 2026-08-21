@@ -67,7 +67,7 @@ func (s *LocalStorage) Write(_ context.Context, path string, data []byte) error 
 	}
 
 	// Write to temporary file in same directory then atomic rename
-	tmpFile, err := os.CreateTemp(dir, ".xtable-tmp-*")
+	tmpFile, err := os.CreateTemp(dir, ".polytable-tmp-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file in %s: %w", dir, err)
 	}

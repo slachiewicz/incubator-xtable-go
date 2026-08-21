@@ -28,11 +28,11 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/formats"
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/formats"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 var (
@@ -43,11 +43,11 @@ var (
 
 func main() {
 	rootCmd := &cobra.Command{
-		Use:   "xtable",
-		Short: "xtable-go: cross-format lakehouse metadata converter (unofficial Go port of Apache XTable)",
-		Long: `xtable-go provides omni-directional, zero-copy metadata translation
+		Use:   "polytable",
+		Short: "polytable: cross-format lakehouse metadata converter (unofficial Go port of Apache XTable)",
+		Long: `polytable provides omni-directional, zero-copy metadata translation
 across Apache Iceberg, Delta Lake, Apache Hudi, and other open lakehouse table formats.`,
-		// Wires up --version, which people reach for before discovering `xtable version`.
+		// Wires up --version, which people reach for before discovering `polytable version`.
 		Version:      fmt.Sprintf("%s (commit: %s, date: %s)", version, commit, date),
 		SilenceUsage: true,
 	}
@@ -67,7 +67,7 @@ func newVersionCmd() *cobra.Command {
 		Short: "Print version information",
 		Run: func(cmd *cobra.Command, _ []string) {
 			// Same string as --version, so the two never drift apart.
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "xtable version %s (commit: %s, date: %s)\n", version, commit, date)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "polytable version %s (commit: %s, date: %s)\n", version, commit, date)
 		},
 	}
 }
@@ -78,8 +78,8 @@ func newSyncCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Synchronize table formats using a dataset configuration file",
-		Example: `  xtable sync --datasetConfig config.yaml
-  xtable sync -c my_dataset.json`,
+		Example: `  polytable sync --datasetConfig config.yaml
+  polytable sync -c my_dataset.json`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if configPath == "" {
 				return fmt.Errorf("--datasetConfig flag is required")
@@ -116,7 +116,7 @@ func newSyncCmd() *cobra.Command {
 				ctx = context.Background()
 			}
 
-			fmt.Println("🚀 Starting Apache XTable Synchronization...")
+			fmt.Println("🚀 Starting polytable synchronization...")
 			overallStart := time.Now()
 
 			hasErrors := false
@@ -180,9 +180,9 @@ func newInspectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "inspect",
 		Short: "Inspect table schema and metadata",
-		Example: `  xtable inspect --basePath ./my_table --format DELTA
-  xtable inspect --basePath ./my_table --format ICEBERG
-  xtable inspect --basePath ./my_parquet_data --format PARQUET`,
+		Example: `  polytable inspect --basePath ./my_table --format DELTA
+  polytable inspect --basePath ./my_table --format ICEBERG
+  polytable inspect --basePath ./my_parquet_data --format PARQUET`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if basePath == "" {
 				return fmt.Errorf("--basePath flag is required")

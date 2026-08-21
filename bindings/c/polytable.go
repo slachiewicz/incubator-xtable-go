@@ -30,25 +30,25 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/formats"
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/formats"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
-//export xtable_version
-func xtable_version() *C.char {
+//export polytable_version
+func polytable_version() *C.char {
 	return C.CString("0.1.0-SNAPSHOT")
 }
 
-//export xtable_free_string
-func xtable_free_string(ptr *C.char) {
+//export polytable_free_string
+func polytable_free_string(ptr *C.char) {
 	C.free(unsafe.Pointer(ptr))
 }
 
-//export xtable_sync_json
-func xtable_sync_json(configStr *C.char) *C.char {
+//export polytable_sync_json
+func polytable_sync_json(configStr *C.char) *C.char {
 	if configStr == nil {
 		return errorJSON("config string is null")
 	}
@@ -98,8 +98,8 @@ func xtable_sync_json(configStr *C.char) *C.char {
 	return C.CString(string(outBytes))
 }
 
-//export xtable_inspect_json
-func xtable_inspect_json(formatCStr *C.char, basePathCStr *C.char) *C.char {
+//export polytable_inspect_json
+func polytable_inspect_json(formatCStr *C.char, basePathCStr *C.char) *C.char {
 	if formatCStr == nil || basePathCStr == nil {
 		return errorJSON("format and basePath arguments are required")
 	}

@@ -21,10 +21,10 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
-// ParquetSchemaToModel converts a parquet-go Schema into XTable's canonical model.Schema.
+// ParquetSchemaToModel converts a parquet-go Schema into polytable's canonical model.Schema.
 func ParquetSchemaToModel(schema *parquet.Schema) *model.Schema {
 	if schema == nil {
 		return nil

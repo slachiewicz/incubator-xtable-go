@@ -22,7 +22,7 @@ import (
 	"strings"
 )
 
-// Type represents the canonical data type in XTable's internal type system.
+// Type represents the canonical data type in polytable's internal type system.
 type Type string
 
 // Canonical data types.

@@ -51,40 +51,40 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir -p dist
-          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/xtable-linux-amd64 ./cmd/xtable
-          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/xtable-linux-arm64 ./cmd/xtable
-          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/xtable-darwin-amd64 ./cmd/xtable
-          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/xtable-darwin-arm64 ./cmd/xtable
+          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/polytable-linux-amd64 ./cmd/polytable
+          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/polytable-linux-arm64 ./cmd/polytable
+          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/polytable-darwin-amd64 ./cmd/polytable
+          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/polytable-darwin-arm64 ./cmd/polytable
           
-          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/xtable-service-linux-amd64 ./cmd/xtable-service
-          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/xtable-service-linux-arm64 ./cmd/xtable-service
-          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/xtable-service-darwin-amd64 ./cmd/xtable-service
-          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/xtable-service-darwin-arm64 ./cmd/xtable-service
+          GOOS=linux GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/polytable-service-linux-amd64 ./cmd/polytable-service
+          GOOS=linux GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/polytable-service-linux-arm64 ./cmd/polytable-service
+          GOOS=darwin GOARCH=amd64 go build -v -ldflags="-s -w" -o dist/polytable-service-darwin-amd64 ./cmd/polytable-service
+          GOOS=darwin GOARCH=arm64 go build -v -ldflags="-s -w" -o dist/polytable-service-darwin-arm64 ./cmd/polytable-service
 
       - name: Build WebAssembly Engine
         if: matrix.os == 'ubuntu-latest'
         run: |
-          GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o dist/xtable.wasm ./cmd/xtable-wasm
-          ls -lh dist/xtable.wasm
+          GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o dist/polytable.wasm ./cmd/polytable-wasm
+          ls -lh dist/polytable.wasm
 
       - name: Build C-Shared Dynamic Libraries (Linux AMD64)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-linux-amd64.so ./bindings/c
-          ls -lh dist/libxtable-linux-amd64.so
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libpolytable-linux-amd64.so ./bindings/c
+          ls -lh dist/libpolytable-linux-amd64.so
 
       - name: Build C-Shared Dynamic Libraries (Linux ARM64)
         if: matrix.os == 'ubuntu-24.04-arm'
         run: |
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-linux-arm64.so ./bindings/c
-          ls -lh dist/libxtable-linux-arm64.so
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libpolytable-linux-arm64.so ./bindings/c
+          ls -lh dist/libpolytable-linux-arm64.so
 
       - name: Build C-Shared Dynamic Libraries (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-darwin-amd64.dylib ./bindings/c
-          GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libxtable-darwin-arm64.dylib ./bindings/c
-          ls -lh dist/libxtable-*.dylib
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libpolytable-darwin-amd64.dylib ./bindings/c
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build -buildmode=c-shared -o dist/libpolytable-darwin-arm64.dylib ./bindings/c
+          ls -lh dist/libpolytable-*.dylib
 
       
 
@@ -114,7 +114,7 @@ jobs:
 
       - name: Generate combined checksums
         run: |
-          find artifacts -type f \( -name "*.so" -o -name "*.dylib" -o -name "xtable*" -o -name "xtable-service*" -o -name "xtable.wasm" \) -exec sha256sum {} \; > SHA256SUMS.txt
+          find artifacts -type f \( -name "*.so" -o -name "*.dylib" -o -name "polytable*" -o -name "polytable-service*" -o -name "polytable.wasm" \) -exec sha256sum {} \; > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release

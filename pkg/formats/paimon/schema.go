@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // DataField represents a field in Apache Paimon schema.

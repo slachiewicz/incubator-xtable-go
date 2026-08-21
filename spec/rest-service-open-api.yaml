@@ -17,14 +17,14 @@
 
 openapi: 3.0.3
 info:
-  title: xtable-go REST Service API
+  title: polytable REST Service API
   license:
     name: Apache 2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
   version: 0.1.0
   description: |
     A native REST API for initiating zero-copy lakehouse metadata conversion, monitoring
-    sync jobs, and managing catalog synchronization using xtable-go.
+    sync jobs, and managing catalog synchronization using polytable.
 
 servers:
   - url: "{scheme}://{host}:{port}/{prefix}"

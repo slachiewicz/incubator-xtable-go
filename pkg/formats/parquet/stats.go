@@ -23,7 +23,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // columnAggregate accumulates one leaf column's statistics across the row groups of a file.

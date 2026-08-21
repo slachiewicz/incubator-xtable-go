@@ -25,25 +25,25 @@ import (
 	"fmt"
 	"syscall/js"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/formats"
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/formats"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 func main() {
 	// The build is compile-checked only and has never been run in a browser; say so where a user
 	// will actually see it rather than only in the README.
-	js.Global().Set("xtableVersion", js.FuncOf(func(this js.Value, args []js.Value) any {
+	js.Global().Set("polytableVersion", js.FuncOf(func(this js.Value, args []js.Value) any {
 		return "0.1.0-WASM (experimental, untested)"
 	}))
 
 	js.Global().Get("console").Call("warn",
-		"xtable.wasm is experimental and untested: only local and in-memory paths can work, "+
+		"polytable.wasm is experimental and untested: only local and in-memory paths can work, "+
 			"and S3, AWS Glue and Iceberg REST are unreachable from a browser sandbox.")
 
-	js.Global().Set("xtableInspect", js.FuncOf(func(this js.Value, args []js.Value) any {
+	js.Global().Set("polytableInspect", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 2 {
 			return makeErrorResult("arguments 'format' and 'basePath' are required")
 		}
@@ -97,7 +97,7 @@ func main() {
 		return string(outBytes)
 	}))
 
-	js.Global().Set("xtableSync", js.FuncOf(func(this js.Value, args []js.Value) any {
+	js.Global().Set("polytableSync", js.FuncOf(func(this js.Value, args []js.Value) any {
 		if len(args) < 1 {
 			return makeErrorResult("configuration JSON string is required")
 		}

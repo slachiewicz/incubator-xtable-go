@@ -17,21 +17,21 @@
   under the License.
 -->
 
-# xtable-go Agent Guide
+# polytable Agent Guide
 
-> **Not an Apache Software Foundation project.** `xtable-go` is an independent, unofficial Go port
+> **Not an Apache Software Foundation project.** `polytable` is an independent, unofficial Go port
 > of Apache XTable (incubating), not affiliated with or endorsed by the ASF.
 
-This document defines repository-specific instructions, architecture rules, and validation workflows for AI coding agents working on **Apache XTable in Go (`xtable-go`)**.
+This document defines repository-specific instructions, architecture rules, and validation workflows for AI coding agents working on **polytable**.
 
 ---
 
 ## 1. Project Mission & Invariants
 
-Apache XTable (Go) provides **omni-directional, zero-copy metadata translation** across open lakehouse table formats (**Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and raw **Parquet**), as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is intentionally excluded (see docs/improvement-plan.md T5).
+polytable provides **omni-directional, zero-copy metadata translation** across open lakehouse table formats (**Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and raw **Parquet**), as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is intentionally excluded (see docs/improvement-plan.md T5).
 
 ### Core Invariants:
-1. **Zero Data File Rewrites**: XTable translates and generates *metadata only*. It MUST NEVER alter, rewrite, or move physical Parquet/ORC data files.
+1. **Zero Data File Rewrites**: polytable translates and generates *metadata only*. It MUST NEVER alter, rewrite, or move physical Parquet/ORC data files.
 2. **Schema & Field ID Integrity**: Field IDs, nullability, and data types MUST be accurately preserved across format translations (crucial for Iceberg time travel and schema evolution).
 3. **No JVM / Hadoop Dependencies**: All code in this repository MUST be pure Go. Never introduce Java, Scala, Spark, or Hadoop XML configuration dependencies.
 4. **Embedded Sync Continuity**: All target converters MUST embed and read `TableSyncMetadata` (`xtable_last_instant_synced`, `xtable_source_format`) to guarantee incremental synchronization safety.
@@ -43,8 +43,8 @@ Apache XTable (Go) provides **omni-directional, zero-copy metadata translation**
 ```
 .
 ├── cmd/
-│   ├── xtable/               # Main CLI tool (sync, inspect, version)
-│   └── xtable-service/       # REST Service & continuous daemon
+│   ├── polytable/            # Main CLI tool (sync, inspect, version)
+│   └── polytable-service/    # REST Service & continuous daemon
 ├── pkg/
 │   ├── model/                # Canonical pivot domain model
 │   │   ├── types.go          # Canonical lakehouse types (TypeInt, TypeString, etc.)
@@ -99,7 +99,7 @@ go test -v ./...
 go test -race ./...
 
 # Build the CLI binary
-go build -o bin/xtable ./cmd/xtable
+go build -o bin/polytable ./cmd/polytable
 
 # Run linter
 golangci-lint run ./...
@@ -188,5 +188,5 @@ Agents working in this codebase should activate and leverage the following Go sk
 
 When working on this repository, agents MUST invoke `icm store`:
 1. When resolving a difficult bug or test failure (`-t errors-resolved`).
-2. When making an architectural or format design decision (`-t decisions-xtable-go`).
-3. When completing a milestone or significant task (`-t context-xtable-go`).
+2. When making an architectural or format design decision (`-t decisions-polytable`).
+3. When completing a milestone or significant task (`-t context-polytable`).

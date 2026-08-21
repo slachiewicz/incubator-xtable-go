@@ -32,7 +32,9 @@ type TableSyncMetadata struct {
 }
 
 const (
-	// MetadataPropertyPrefix is the key prefix for XTable sync metadata stored in table properties.
+	// MetadataPropertyPrefix is the key prefix for sync metadata stored in table properties. The
+	// "xtable_" spelling is deliberate: it is the on-disk contract with Java-XTable-synced tables
+	// and renaming it would break round-tripping against upstream.
 	MetadataPropertyPrefix = "xtable_"
 	// KeyLastInstantSynced is the property key for the last synced instant.
 	KeyLastInstantSynced = "xtable_last_instant_synced"

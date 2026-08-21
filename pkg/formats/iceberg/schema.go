@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // SchemaToIceberg converts a canonical model.Schema to an Iceberg TableSchema, assigning field IDs.

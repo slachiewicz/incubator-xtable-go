@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pyxtable"
+name = "polytable"
 version = "0.1.0"
 authors = [
-  { name="the xtable-go authors" },
+  { name="the polytable authors" },
 ]
-description = "Python bindings for xtable-go, an unofficial Go port of Apache XTable (zero-JVM lakehouse metadata translation)"
+description = "Python bindings for polytable, an unofficial Go port of Apache XTable (zero-JVM lakehouse metadata translation)"
 readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
@@ -18,8 +18,8 @@ classifiers = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/slachiewicz/xtable-go"
-"Source" = "https://github.com/slachiewicz/xtable-go"
+"Homepage" = "https://github.com/slachiewicz/polytable"
+"Source" = "https://github.com/slachiewicz/polytable"
 
 [tool.setuptools.package-data]
-"pyxtable" = ["libxtable.*"]
+"polytable" = ["libpolytable.*"]

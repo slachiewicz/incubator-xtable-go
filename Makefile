@@ -25,8 +25,8 @@ all: build test
 
 build:
 	@mkdir -p $(BIN_DIR)
-	go build -v -ldflags="-s -w" -o $(BIN_DIR)/xtable ./cmd/xtable
-	go build -v -ldflags="-s -w" -o $(BIN_DIR)/xtable-service ./cmd/xtable-service
+	go build -v -ldflags="-s -w" -o $(BIN_DIR)/polytable ./cmd/polytable
+	go build -v -ldflags="-s -w" -o $(BIN_DIR)/polytable-service ./cmd/polytable-service
 	@echo "✓ Binaries built in $(BIN_DIR)/"
 
 fmt:
@@ -56,9 +56,9 @@ bench:
 # Report the process-level figures a Go benchmark cannot: binary size and idle RSS.
 bench-footprint: build
 	@echo "== binary size =="
-	@ls -l $(BIN_DIR)/xtable $(BIN_DIR)/xtable-service | awk '{printf "%-28s %6.1f MiB\n", $$NF, $$5/1048576}'
-	@echo "== idle RSS of xtable-service =="
-	@$(BIN_DIR)/xtable-service --port 18199 >/dev/null 2>&1 & \
+	@ls -l $(BIN_DIR)/polytable $(BIN_DIR)/polytable-service | awk '{printf "%-28s %6.1f MiB\n", $$NF, $$5/1048576}'
+	@echo "== idle RSS of polytable-service =="
+	@$(BIN_DIR)/polytable-service --port 18199 >/dev/null 2>&1 & \
 	 SVC=$$!; \
 	 until curl -sf http://127.0.0.1:18199/v1/health >/dev/null 2>&1; do sleep 0.2; done; \
 	 sleep 1; \
@@ -73,7 +73,7 @@ check:
 	@echo "==> go vet"
 	go vet ./...
 	@echo "==> go vet (js/wasm)"
-	GOOS=js GOARCH=wasm go vet ./cmd/xtable-wasm
+	GOOS=js GOARCH=wasm go vet ./cmd/polytable-wasm
 	@echo "==> go test -short"
 	go test -short ./...
 	@echo "==> golangci-lint"
@@ -86,40 +86,40 @@ tidy:
 
 wasm:
 	@mkdir -p $(BIN_DIR)
-	GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o $(BIN_DIR)/xtable.wasm ./cmd/xtable-wasm
-	@echo "✓ WebAssembly built: $(BIN_DIR)/xtable.wasm"
+	GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o $(BIN_DIR)/polytable.wasm ./cmd/polytable-wasm
+	@echo "✓ WebAssembly built: $(BIN_DIR)/polytable.wasm"
 	@echo "  ⚠ experimental: never executed in a browser, no test coverage, S3/Glue/Iceberg-REST unreachable"
 
 bindings-c:
 	@mkdir -p $(LIB_DIR)
-	CGO_ENABLED=1 go build -buildmode=c-shared -o $(LIB_DIR)/libxtable.dylib ./bindings/c || \
-	CGO_ENABLED=1 go build -buildmode=c-shared -o $(LIB_DIR)/libxtable.so ./bindings/c
+	CGO_ENABLED=1 go build -buildmode=c-shared -o $(LIB_DIR)/libpolytable.dylib ./bindings/c || \
+	CGO_ENABLED=1 go build -buildmode=c-shared -o $(LIB_DIR)/libpolytable.so ./bindings/c
 	@echo "✓ C-shared library built in $(LIB_DIR)/"
 
 demo: build
 	go run ./demo/gen_sample.go
-	./bin/xtable sync --config ./demo/my_dataset.yaml
-	./bin/xtable inspect --path ./demo/sample_delta_table --format iceberg
+	./bin/polytable sync --config ./demo/my_dataset.yaml
+	./bin/polytable inspect --path ./demo/sample_delta_table --format iceberg
 
 clean:
 	rm -rf $(BIN_DIR) $(LIB_DIR) demo/sample_delta_table
 
 bindings-python: bindings-c
 	@echo "Building Python package with bundled native library..."
-	@if [ -f $(LIB_DIR)/libxtable.dylib ]; then \
-		cp $(LIB_DIR)/libxtable.dylib bindings/python/pyxtable/; \
-		echo "Copied libxtable.dylib for macOS"; \
+	@if [ -f $(LIB_DIR)/libpolytable.dylib ]; then \
+		cp $(LIB_DIR)/libpolytable.dylib bindings/python/polytable/; \
+		echo "Copied libpolytable.dylib for macOS"; \
 	else \
-		cp $(LIB_DIR)/libxtable.so bindings/python/pyxtable/; \
-		echo "Copied libxtable.so for Linux"; \
+		cp $(LIB_DIR)/libpolytable.so bindings/python/polytable/; \
+		echo "Copied libpolytable.so for Linux"; \
 	fi
 	@cd bindings/python && python -m build 2>/dev/null || echo "Note: python -m build install required: pip install build"
 	@echo "✓ Python package built in bindings/python/dist/"
-	@echo "Note: Wheels are platform-specific (libxtable.dylib/.so cannot be bundled together)"
+	@echo "Note: Wheels are platform-specific (libpolytable.dylib/.so cannot be bundled together)"
 
 bindings-python-clean:
 	@echo "Cleaning Python package build artifacts..."
-	@rm -f bindings/python/pyxtable/libxtable.*
+	@rm -f bindings/python/polytable/libpolytable.*
 	@rm -rf bindings/python/build bindings/python/dist
-	@rm -rf bindings/python/pyxtable.egg-info
+	@rm -rf bindings/python/polytable.egg-info
 	@echo "✓ Python artifacts cleaned"

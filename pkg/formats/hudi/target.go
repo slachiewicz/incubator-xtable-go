@@ -27,9 +27,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 // Target implements spi.ConversionTarget for Apache Hudi tables.
@@ -129,7 +129,7 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 	commitMeta := HoodieCommitMetadata{
 		PartitionToWriteStats: partitionStats,
 		ExtraMetadata:         extraMeta,
-		OperationType:         "XTABLE_SYNC",
+		OperationType:         "POLYTABLE_SYNC",
 	}
 
 	commitBytes, err := json.Marshal(commitMeta)

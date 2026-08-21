@@ -30,7 +30,7 @@ import (
 	gluetypes "github.com/aws/aws-sdk-go-v2/service/glue/types"
 	"github.com/aws/smithy-go"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // GlueCatalogSyncClient manages table and partition metadata synchronization to AWS Glue Data Catalog.
@@ -182,7 +182,7 @@ func (g *GlueCatalogSyncClient) buildTableInput(table *model.Table, _ *model.Sna
 
 	parameters := make(map[string]string)
 	parameters["EXTERNAL"] = "TRUE"
-	parameters["xtable_synced_time"] = fmt.Sprintf("%d", table.LatestCommitTime)
+	parameters["polytable_synced_time"] = fmt.Sprintf("%d", table.LatestCommitTime)
 
 	inputFormat := "org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat"
 	outputFormat := "org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat"
