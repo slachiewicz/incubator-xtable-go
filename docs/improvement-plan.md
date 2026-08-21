@@ -1232,51 +1232,79 @@ tasks.
 
 # Integration-test plan — 2026-08-21
 
-Every existing e2e and container suite converts tables polytable wrote and reads them back with
-polytable. A bug symmetrical in our reader and writer passes all of it. T28–T30 attack that blind
-spot, cheapest first. Convention for all three: anything needing Docker, an external binary or the
-network gates on `testing.Short()` (never a build tag — matches the dockertest suites and keeps
-`make check` self-contained), no `t.Parallel()` in container/binary-gated suites.
+## T28 — Real-writer fixtures ⚠️ PARTIAL (Delta proven, Iceberg blocked on Avro)
 
-## T28 — Real-writer fixtures under `test/testdata/fixtures/`
+Every suite in the tree reads metadata polytable itself wrote, so a reader that agrees with
+polytable's writer passes even where the pair disagrees with the format. Check in small tables
+written by engines that have never seen this code, and assert the readers against them.
 
-Check in small tables written by real engines and test that polytable reads foreign metadata, not
-just its own. JVM-free generators only: Delta via `delta-rs` (Python `deltalake`), Iceberg via
-`pyiceberg`. Each fixture: ~3 commits, a schema change, partitions, column stats; data files a few
-KB. Spark-written and Hudi fixtures need a JVM — they belong to T30's job, not here; record the gap.
-A committed `test/fixtures/generate.py` documents provenance (run manually, never in CI).
+### Steps
 
-Tests: per-format read tests asserting schema/files/stats extracted from the foreign metadata match
-the generator's manifest (a small JSON the generator writes alongside), plus sync tests converting
-each fixture through the target matrix. Plain `go test -short` — no Docker.
+1. `test/fixtures/generate.py` writes the fixtures from delta-rs and pyiceberg — JVM-free writers —
+   each with three commits, a mid-history column addition, a partition column and numeric columns so
+   statistics exist.
+2. Beside each fixture, a `manifest.json` records what the writer reported: schema, commit count,
+   row totals, per-column bounds, partition values, per-file row counts. The Go tests assert against
+   that, so regenerating a fixture regenerates its expectations.
+3. `test/foreign_fixtures_test.go` reads each fixture through `pkg/formats.NewSource` and converts
+   it to the other formats through `pkg/conversion`.
 
-**Acceptance:** fixtures for Delta (delta-rs) and Iceberg (pyiceberg) committed with a provenance
-script and manifest; read + convert tests green; any reader bug they expose fixed in the same
-change or filed as its own task in this file.
+**Acceptance:** the fixtures are committed and under 1 MB; the tests run under `go test -short` with
+no container; every assertion traces to `manifest.json`; a reader gap is fixed or recorded, never
+assumed away.
 
-## T29 — Engine verification of polytable output with DuckDB
+**Commit:** `test: read fixtures written by delta-rs and pyiceberg`
 
-After converting a source through the matrix, read the *output* with DuckDB (`delta_scan`,
-`iceberg_scan`) — a single static binary, no JVM. New `test/engineverify_duckdb_test.go`: gated on
-`testing.Short()` and skipped with a clear message when `duckdb` is not on PATH. Assert row counts
-match and that a stats predicate prunes (proves bounds are real, not just present). CI: install the
-DuckDB binary in `integration.yml`.
+### Outcome ⚠️ — the fixtures landed and found three reader gaps
 
-**Acceptance:** Delta and Iceberg outputs of at least three matrix pairs each verified by DuckDB
-locally; `integration.yml` runs the suite; the suite skips cleanly where duckdb is absent.
+Fixtures: `test/testdata/fixtures/delta-rs/sales` (delta-rs 1.6.2, 3 commits, 6 data files, 14 rows)
+and `test/testdata/fixtures/pyiceberg/events` (pyiceberg 0.11.1, 3 snapshots, 5 metadata versions,
+6 data files, 12 rows). 55 KiB in total.
 
-## T30 — Java XTable interop nightly (unscheduled until T28/T29 land)
+**The Delta source reads delta-rs output correctly** — schema including the merged column, partition
+values from `partitionValues` rather than the directory name, per-file row counts, and the bounds
+delta-rs recorded. Walked as an incremental backlog it returns all three commits, each carrying the
+schema as of that commit rather than the latest. Conversion to Iceberg and Hudi keeps the file list
+and the row counts. That is the first evidence in this repo that any polytable reader agrees with a
+foreign writer.
 
-The sharpest claim: tables move between polytable and Apache XTable without resync (shared
-`xtable_*` keys). A `workflow_dispatch` + nightly job pulls the upstream bundled jar, syncs a
-fixture with Java XTable, continues **incrementally** with polytable, and the reverse — asserting
-the second tool reports incremental, not a snapshot fallback. Never gates PRs (bench.yml
-philosophy: failures prompt investigation, not red builds). This job is also where Spark-written
-and Hudi fixtures for T28 get generated. Needs a maintainer decision on jar version pinning.
+**The Iceberg source could not read the pyiceberg table at all.** Two causes, one fixed here:
 
-Follow-ups noted, not scheduled: a bindings smoke lane (the C ABI and wheel are built but never
-executed in CI; one `polytable.sync()` via ctypes and a node run of `polytable.wasm`), and
-LocalStack-Glue for catalog sync integration.
+- *Fixed:* `listMetadataFiles` matched only `v<N>.metadata.json`, the Hadoop-layout name polytable's
+  own target writes. Every catalog-backed writer — pyiceberg, the Java library, Spark — writes
+  `<%05d version>-<uuid>.metadata.json`, so a real table looked like it had no metadata whatsoever.
+  `iceberg.MetadataFileVersion` now accepts both and `listMetadataFiles` carries the path rather than
+  rebuilding it from the version, since the UUID cannot be reconstructed. With that, the schema,
+  field IDs, partition spec and commit instant of the pyiceberg table all read correctly.
+- *Recorded, not fixed:* the file list still cannot be read. See F1.
+
+### Watch list
+
+- **F1 — Iceberg manifests are Avro, and polytable parses them as JSON.** `iceberg.Source`
+  `json.Unmarshal`s both the manifest list and the manifests, a format only polytable's own target
+  produces. The spec mandates Avro OCF and every other writer emits it, so **no foreign Iceberg
+  table can be a conversion source**: `GetCurrentSnapshot` fails and the controller fails with it.
+  Fixing this needs an Avro decoder and therefore a dependency decision — `go.mod` has none —
+  which is why it is a task of its own rather than part of T28. Pinned by
+  `TestForeignFixtures_ReadIcebergSnapshotIsUnsupported` and
+  `TestForeignFixtures_ConvertIcebergIsUnsupported`; the error names the limitation instead of
+  reporting malformed JSON.
+- **F2 — the Paimon target and the Paimon source disagree on the table layout.** The target writes
+  `metadata/schema-<epoch>.json` and `metadata/manifest.json`; the source reads `schema/schema-*`
+  and `snapshot/`, which is the real Paimon layout. Nothing polytable writes as Paimon can be read
+  back as Paimon, in either direction of the mismatch. No existing test caught it because the e2e
+  matrix round-trips only Delta, Iceberg and Hudi. Pinned in `TestForeignFixtures_ConvertDelta`.
+- **F3 — the raw-Parquet source rebuilds the schema from one data file.** It reads the footer of
+  whichever file sorts first, so on a schema-evolved table the result depends on file names, and the
+  Hive partition column — which lives in the directory name, not in the file — is missing from the
+  schema even though the same source reports it as a partitioning field. The table it returns is
+  partitioned by a column its own schema does not contain.
+
+### Out of scope
+
+Spark-written and Hudi fixtures need a JVM; they are T30's, and nothing here presumes what they will
+show. Neither fixture proves polytable can *write* a table another engine will read — that is the
+other half of the question, and it needs those engines as readers.
 
 ## T31 — Iceberg manifests must be Avro, not JSON
 
@@ -1315,6 +1343,37 @@ T29 suite — that is the regression test); Iceberg→Delta→Iceberg round trip
 
 **Commit:** `fix: write and read Iceberg manifests as Avro per the spec`
 
+## T32 — Paimon round-trip is broken: target and source disagree on layout
+
+T28's F2. The Paimon target writes `metadata/schema-<epoch>.json`; the Paimon source reads
+`schema/schema-*` and `snapshot/`. Nothing polytable writes as Paimon can be read back as Paimon —
+the e2e matrix round-trips only Delta, Iceberg and Hudi, so nothing caught it. Decide which side
+matches the real Paimon spec (almost certainly the source's `schema/` + `snapshot/` layout — check
+`../incubator-xtable`'s Paimon module and the Paimon docs), fix the other side, add Paimon to the
+round-trip matrix, and pin it with the T28-style assertion already in place.
+
+**Acceptance:** a Paimon table written by the target is read back by the source; the e2e matrix
+includes Paimon↔Delta both ways; the T28 pinning assertion flips from "expected broken" to green.
+
+**Commit:** `fix: align the Paimon target with the source's on-disk layout`
+
+## T33 — Parquet source schema: merge footers, include the partition column
+
+T28's F3, two related defects in `pkg/formats/parquet/source.go`:
+1. The schema comes from a single file's footer — whichever sorts first — so a schema-evolved
+   directory reports whichever generation that happens to be. Merge footers across files (newest
+   superset wins; conflicting types are an error, not a guess).
+2. The Hive partition column lives only in directory names, so it is reported as a partition field
+   but missing from the schema. Engines converting the output see a partition key that no column
+   defines. Synthesize the column (type-inferred from the values, STRING on ambiguity) the way
+   Java's parquet source does — check `../incubator-xtable` for its behavior first.
+
+**Acceptance:** a fixture directory with two file generations reports the merged schema
+deterministically regardless of file naming; the partition column appears in the schema with a
+type; the T28 pinning assertions flip to green.
+
+**Commit:** `fix: merge Parquet footers and surface the Hive partition column`
+
 ---
 
 ## Ordering
@@ -1324,10 +1383,11 @@ T29 suite — that is the regression test); Iceberg→Delta→Iceberg round trip
 | | Tasks |
 |---|---|
 | ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T25, T26, T27 |
-| ⚠️ Superseded | T2 → T16 · T8 → T18 |
+| ⚠️ Superseded / partial | T2 → T16 · T8 → T18 · T28 (fixtures + Delta half landed; Iceberg convert blocked on T31, F2/F3 → T32/T33) |
+| ⚠️ Partial | T28 — fixtures landed and the Delta half is proven; the Iceberg half is blocked on F1 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T28 (real-writer fixtures), T29 (DuckDB output verification), T30 (Java interop nightly — after T28/T29), T31 (Avro manifests — largest interop defect; blocks credible Iceberg output) |
+| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T29 (DuckDB output verification), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T32 (Paimon round-trip layout), T33 (Parquet schema merge + partition column) |
 
 **Picking up the queue.** The tasks are independent; take them in any order. Suggested value order
 is T23 first. T24 is a decision

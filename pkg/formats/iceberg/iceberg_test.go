@@ -63,6 +63,44 @@ func TestIceberg_SchemaRoundTrip(t *testing.T) {
 	assert.Equal(t, model.TypeDecimal, canonicalSchema.Fields[2].Schema.DataType)
 }
 
+// TestIceberg_MetadataFileVersion covers both metadata file naming conventions. The
+// `<version>-<uuid>.metadata.json` form is what every catalog-backed writer emits — pyiceberg, the
+// Java library, Spark — and matching only polytable's own `v<N>.metadata.json` made a table written
+// by any of them look empty.
+func TestIceberg_MetadataFileVersion(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		file   string
+		want   int
+		wantOK bool
+	}{
+		{name: "polytable form", file: "v3.metadata.json", want: 3, wantOK: true},
+		{name: "polytable form at zero", file: "v0.metadata.json", want: 0, wantOK: true},
+		{name: "catalog form", file: "00002-4163fc97-f5ea-4684-b936-1836edf04b60.metadata.json", want: 2, wantOK: true},
+		{name: "catalog form at zero", file: "00000-12b8b0f8-4b89-4a8a-9fde-41825354af52.metadata.json", want: 0, wantOK: true},
+		{name: "catalog form beyond five digits", file: "123456-abc.metadata.json", want: 123456, wantOK: true},
+		{name: "manifest list", file: "snap-7248439550557988192-0-950c80ca.avro"},
+		{name: "no version", file: "metadata.json"},
+		{name: "unparsable version", file: "vlatest.metadata.json"},
+		{name: "unparsable catalog version", file: "current-abc.metadata.json"},
+		{name: "empty stem", file: ".metadata.json"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := iceberg.MetadataFileVersion(tt.file)
+			assert.Equal(t, tt.wantOK, ok)
+			if tt.wantOK {
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
 func TestIceberg_SnapshotCommitAndRead(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

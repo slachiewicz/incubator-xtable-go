@@ -64,13 +64,13 @@ func (t *Target) GetTableMetadata(ctx context.Context) (*model.TableSyncMetadata
 	if t.source == nil {
 		return nil, nil
 	}
-	versions, err := t.source.listMetadataFiles(ctx)
+	versions, paths, err := t.source.listMetadataFiles(ctx)
 	if err != nil || len(versions) == 0 {
 		return nil, nil
 	}
 
 	latestVer := versions[len(versions)-1]
-	meta, err := t.source.readMetadata(ctx, latestVer)
+	meta, err := t.source.readMetadata(ctx, paths[latestVer])
 	if err != nil {
 		return nil, err
 	}
@@ -97,13 +97,13 @@ func (t *Target) GetTableMetadata(ctx context.Context) (*model.TableSyncMetadata
 
 // CommitSnapshot writes a full snapshot into Apache Iceberg metadata and manifests.
 func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) error {
-	versions, _ := t.source.listMetadataFiles(ctx)
+	versions, paths, _ := t.source.listMetadataFiles(ctx)
 	nextVersion := 1
 	var prevMeta *TableMetadata
 	if len(versions) > 0 {
 		latestVer := versions[len(versions)-1]
 		nextVersion = latestVer + 1
-		prevMeta, _ = t.source.readMetadata(ctx, latestVer)
+		prevMeta, _ = t.source.readMetadata(ctx, paths[latestVer])
 	}
 
 	now := time.Now().UnixMilli()
