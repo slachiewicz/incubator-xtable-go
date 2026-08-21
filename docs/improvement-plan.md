@@ -1061,6 +1061,37 @@ Highest-value candidates, each with a Java test to port:
 against current Go or accompanied by the fix. Report the tally — a row that already passes is a
 result worth recording, not a wasted test.
 
+### Outcome — all seven resolved: 3 already correct, 2 fixed, 2 with no Go counterpart ✅
+
+Tests live in `pkg/formats/<format>/upstream_audit_test.go`, one per row, each naming the Java
+commit and test it was written from.
+
+| Upstream | Verdict | What the audit found |
+| :--- | :--- | :--- |
+| #826 | Passes (path half no-counterpart) | No Go adapter populates `model.Field.ParentPath`, so there is no path to mis-qualify. The portable half — a struct-keyed map keeping its key and value subtrees apart — was already correct. |
+| #795 | Passes | Go's parser takes the type node and its nullability directly and never reads field metadata, so the null dereference the binary branch had in Java is structurally impossible. |
+| #828 | No counterpart | Generated-column partitions do not exist in Go: every Delta partition column becomes its own `VALUE` field, so nothing joins components with `-` and no `"2013-null-20"` can be produced. |
+| #816 | **Fixed** | Mirror image of the Java bug. Go never lost adds, but `HoodieCommitMetadata` had no `partitionToReplaceFileIds` at all, so an `INSERT_OVERWRITE` left the overwritten files in the snapshot beside their replacements. |
+| #732 | No counterpart | `IsIncrementalSyncSafeFrom` compares the earliest instant still in the active timeline and reads no clean metadata, so the empty `earliestCommitToRetain` branch cannot arise. |
+| #797 | **Fixed** | The Go target writes whole metadata rather than name-addressed column updates, so nothing under-qualifies a name — but nested docs were dropped on the way out and never read back into `Comment` in either direction, so a nested comment could not survive a sync at all. |
+| #806 | Passes | The Java change was test-only; the Go source re-crawls on every call and handles successive waves of files, into existing and into new partitions. |
+
+Both no-counterpart rows still got a test, covering the invariant the Java fix protects rather than
+the branch that does not exist: for #828, that a missing or null component yields no fabricated
+composite; for #732, that unreadable retention metadata resolves to "unsafe" and never to "safe by
+default".
+
+Parity gaps the audit surfaced but did not close — each is a feature, not a regression:
+
+- `model.Field.ParentPath` is dead in production code; no format adapter sets it.
+- Delta `AddAction.PartitionValues` is `map[string]string`, so a JSON `null` decodes to `""` and a
+  null partition value is indistinguishable from an empty one. Fixing the representation ripples
+  into every target that formats `Range.MinValue` into a path.
+- Generated-column (composite) Delta partitions are unsupported.
+- Hudi reads no clean or archival metadata.
+- Hudi `GetTableChangeForCommit` ignores its `commitID` and returns the whole snapshot as adds.
+- The Delta reader ignores field metadata, so the `__xtable_logical_type` UUID mapping is absent.
+
 ## T26 — Investigate the timestamp basis of Delta incremental sync
 
 **Investigate before writing code.** Upstream #779 ("handle log truncation in Delta to Iceberg
@@ -1255,14 +1286,14 @@ LocalStack-Glue for catalog sync integration.
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T26, T27 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T25, T26, T27 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T28 (real-writer fixtures), T29 (DuckDB output verification), T30 (Java interop nightly — after T28/T29) |
+| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T28 (real-writer fixtures), T29 (DuckDB output verification), T30 (Java interop nightly — after T28/T29) |
 
 **Picking up the queue.** The tasks are independent; take them in any order. Suggested value order
-is T23, T25. T24 is a decision
+is T23 first. T24 is a decision
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.
 

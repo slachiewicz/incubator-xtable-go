@@ -134,6 +134,7 @@ func convertTypeToIceberg(s *model.Schema, nextID int) (any, int, error) {
 				Name:     cf.Name,
 				Type:     cType,
 				Required: !cf.Schema.IsNullable,
+				Doc:      cf.Schema.Comment,
 			})
 		}
 		return map[string]any{
@@ -195,6 +196,9 @@ func IcebergToSchema(icebergSchema *TableSchema) (*model.Schema, error) {
 		fSchema, err := parseIcebergType(nf.Type, !nf.Required)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse iceberg field %s: %w", nf.Name, err)
+		}
+		if nf.Doc != "" {
+			fSchema.Comment = nf.Doc
 		}
 		fieldID := nf.ID
 		fields = append(fields, &model.Field{
@@ -269,6 +273,10 @@ func parseIcebergType(raw any, nullable bool) (*model.Schema, error) {
 				cSchema, err := parseIcebergType(fType, !fReq)
 				if err != nil {
 					return nil, err
+				}
+				// A nested field's doc is as much part of the schema as a top-level one's.
+				if fDoc, _ := fMap["doc"].(string); fDoc != "" {
+					cSchema.Comment = fDoc
 				}
 				fields = append(fields, &model.Field{
 					Name:   fName,
