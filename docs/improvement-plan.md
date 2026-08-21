@@ -991,7 +991,7 @@ throughout. `make check` passes, including `go test -short -race ./pkg/...` (thi
 `pkg/conversion` and `pkg/spi`, not goroutine code, but the race run was still executed per the
 ground rules and is clean).
 
-## T23 — Catalog table discovery (list and scan)
+## T23 — Catalog table discovery (list and scan) ✅ COMPLETED
 
 Extends T14, and blocked on nothing.
 
@@ -1016,6 +1016,65 @@ Scope:
 **Acceptance:** a fake Glue client returning three pages yields every table exactly once and
 surfaces a mid-pagination error rather than truncating silently; a table with no target-format
 property is skipped, not failed; the CLI path is covered by a test against the fake.
+
+### Outcome ✅ COMPLETED
+
+`ConversionSource` gained `ListTables(ctx, database, TableFilter) iter.Seq2[TableIdentifier, error]`,
+implemented in `pkg/catalog/glue_conversion.go` over the SDK's `glue.NewGetTablesPaginator`; the
+unexported `glueTableReader` seam widened with the `glue.GetTablesAPIClient` signature so a fake can
+be handed straight to the paginator. `TableFilter` carries one field, `RequireConversionMarkers`; its
+zero value selects everything. A failing page yields the error and ends the sequence, and abandoning
+the sequence stops the paging. `IcebergRESTConversionSource.ListTables` yields a single
+`ErrCatalogNotImplemented` — listing is Glue-only for now, and refusing beats reporting an empty
+namespace.
+
+**Marker key decision: `polytable_target_formats`**, comma-separated `model.TableFormat` values,
+resolved by `catalog.TargetFormatsFromProperties`. It is this project's own convention: Java XTable
+has no target-format property at all, and the AWS Lambda reference architecture's
+`xtable_target_formats` is that solution's private convention, deliberately not adopted (the doc
+comment on `PropTargetFormats` says so). The `polytable_` prefix matches `polytable_synced_time`,
+which `GlueCatalogSyncClient` already writes. Absent or blank marker returns `(nil, nil)` so an
+unmarked table is skipped; a marker naming an unknown format is an error, since that is a typo the
+operator wants to hear about. Source-format resolution is untouched — `TableFormatFromProperties`
+still reads `table_type` then `spark.sql.sources.provider`, keeping Java `TableFormatUtils` parity.
+
+`conversion.DiscoverDatasets(ctx, *catalog.Config, CatalogSourceFactory)` (new
+`pkg/conversion/discovery.go`) turns a database into `[]*DatasetConfig` — format, paths and name from
+the catalog entry, targets from the marker, namespace from the database. `CatalogSourceFactory` is
+the read-side counterpart of `CatalogClientFactory` and the fake seam; `ResolveSourceCatalog`'s
+inline factory parameter now uses the same named type. Materialization lives in `pkg/conversion`
+rather than `cmd/polytable` so the CLI, the daemon and the bindings can all reach it.
+
+`polytable sync` gained `--catalog glue --database <db>` (plus `--catalogId`). `RunE` is now a thin
+wrapper over `runSync(cmd, *syncOptions)`; both source paths produce `[]*conversion.DatasetConfig`
+and converge on the pre-existing loop, so `--output json`, `--dry-run`, `--timeout` and `--mode`
+apply identically to a discovered table and a configured one, and per-table results land in the same
+`SyncOutput` document. `--datasetConfig` and `--catalog`/`--database` are mutually exclusive, and
+naming neither is an error that names both options. `syncOptions.newCatalogSource` is per-call
+injection rather than a package-level variable, so the CLI tests stay parallel-safe.
+
+Acceptance, checked directly:
+- **Three pages, every table exactly once**: `TestGlueConversionSourceListTables/three pages yield
+  every table exactly once` (`pkg/catalog/conversion_test.go`) drives the real SDK paginator against
+  a fake serving 2+2+1 tables with distinct continuation tokens, and asserts a count of 1 per table
+  plus exactly three page calls.
+- **A mid-pagination error surfaces**: the same test's error subtest fails page 2 of 3 and asserts
+  the yielded error names the database and the cause, with only the first page's table yielded —
+  never a short listing that looks complete. `TestDiscoverDatasets/a listing error surfaces` shows
+  the same at the `pkg/conversion` layer, returning no partial slice.
+- **An unmarked table is skipped, not failed**: asserted at all three layers —
+  `TestGlueConversionSourceListTables` (filter drops it), `TestTargetFormatsFromProperties` (absent
+  and blank markers return `nil, nil`), `TestDiscoverDatasets`, and the CLI test below.
+- **The CLI path is covered against the fake**: `TestRunSync_CatalogDiscovery`
+  (`cmd/polytable/catalog_sync_test.go`) builds three real one-commit Delta tables, two marked and
+  one not, hands `runSync` a fake `catalog.ConversionSource`, and parses the emitted JSON: two tables
+  each `SUCCESS` on `ICEBERG`, the unmarked one absent, progress chatter on stderr only. Sibling
+  subtests cover `--dry-run` (no `metadata/` directory written), text output, a discovery failure
+  surfacing instead of an empty run, and `TestRunSync_SourceSelectionFlags` covers every rejected
+  flag combination.
+
+Same `package main` deviation as T22 for the CLI tests, for the same reason: Go cannot import a
+`main` package. `make check` passes, and `go test -short -race ./pkg/...` is clean.
 
 ## T24 — Deletion vectors beyond Delta: implement or narrow the claim
 
@@ -1460,17 +1519,16 @@ type; the T28 pinning assertions flip to green.
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T25, T26, T27 |
-| ⚠️ Superseded / partial | T2 → T16 · T8 → T18 · T28 (fixtures + Delta half landed; Iceberg convert blocked on T31, F2/F3 → T32/T33) |
-| ⚠️ Partial | T28 — fixtures landed and the Delta half is proven; the Iceberg half is blocked on F1 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27 |
+| ⚠️ Superseded / partial | T2 → T16 · T8 → T18 · T28 (fixtures + Delta half proven; Iceberg convert blocked on T31, F2/F3 → T32/T33) · T29 (Delta output verified by DuckDB; Iceberg pairs skipped until T31) |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
-| ⚠️ Partial | T29 — Delta output verified by DuckDB; Iceberg output unreadable by any engine, see T30 |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T32 (Paimon round-trip layout), T33 (Parquet schema merge + partition column) |
+| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T32 (Paimon round-trip layout), T33 (Parquet schema merge + partition column) |
 
 **Picking up the queue.** Suggested value order is T31 first — until it lands, polytable's
 Iceberg output is metadata no Iceberg engine can open, and the T28/T29 suites hold skipped
-assertions waiting on it — then T32, T33, T23. T24 is a decisionbefore it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
+assertions waiting on it — then T32, T33. T24 is a decision
+before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.
 
 Gate at review time: `make check` green, `go test -short -race ./pkg/...` clean, 28 commits unpushed

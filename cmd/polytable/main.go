@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/slachiewicz/polytable/pkg/catalog"
 	"github.com/slachiewicz/polytable/pkg/conversion"
 	"github.com/slachiewicz/polytable/pkg/formats"
 	xtio "github.com/slachiewicz/polytable/pkg/io"
@@ -101,125 +102,206 @@ func parseSyncModeFlag(s string) (spi.SyncMode, error) {
 	}
 }
 
+// parseCatalogTypeFlag validates the --catalog flag. An empty string means "no catalog discovery;
+// read a dataset config file instead". Only Glue can list a database today, so naming any other
+// catalog here is rejected up front rather than at the first API call.
+func parseCatalogTypeFlag(s string) (catalog.CatalogType, error) {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "":
+		return "", nil
+	case "GLUE", string(catalog.CatalogTypeGlue):
+		return catalog.CatalogTypeGlue, nil
+	default:
+		return "", fmt.Errorf("--catalog must be %q, got %q", "glue", s)
+	}
+}
+
+// syncOptions is the resolved flag set of `polytable sync`. It exists so runSync can be driven from
+// a test without a cobra flag parse, and so newCatalogSource can be injected per call rather than
+// through a package-level variable that parallel tests would race on.
+type syncOptions struct {
+	configPath string
+	catalogStr string
+	database   string
+	catalogID  string
+	outputStr  string
+	modeStr    string
+	dryRun     bool
+	timeout    time.Duration
+	// newCatalogSource overrides how the catalog conversion source is built. nil means the real one.
+	newCatalogSource conversion.CatalogSourceFactory
+}
+
 func newSyncCmd() *cobra.Command {
-	var (
-		configPath string
-		outputStr  string
-		modeStr    string
-		dryRun     bool
-		timeout    time.Duration
-	)
+	opts := &syncOptions{}
 
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Synchronize table formats using a dataset configuration file",
+		Short: "Synchronize table formats from a dataset configuration file or a catalog database",
 		Example: `  polytable sync --datasetConfig config.yaml
   polytable sync -c my_dataset.json
   polytable sync -c config.yaml --output json --dry-run
-  polytable sync -c config.yaml --mode full --timeout 5m`,
+  polytable sync -c config.yaml --mode full --timeout 5m
+  polytable sync --catalog glue --database analytics
+  polytable sync --catalog glue --database analytics --output json --dry-run`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if configPath == "" {
-				return fmt.Errorf("--datasetConfig flag is required")
-			}
-
-			outputJSON, err := parseOutputFormat(outputStr)
-			if err != nil {
-				return err
-			}
-			modeOverride, err := parseSyncModeFlag(modeStr)
-			if err != nil {
-				return err
-			}
-
-			data, err := os.ReadFile(configPath)
-			if err != nil {
-				return fmt.Errorf("failed to read config file %s: %w", configPath, err)
-			}
-
-			var cfg conversion.Config
-			if strings.HasSuffix(configPath, ".json") {
-				if err := json.Unmarshal(data, &cfg); err != nil {
-					return fmt.Errorf("failed to parse JSON config: %w", err)
-				}
-			} else {
-				if err := yaml.Unmarshal(data, &cfg); err != nil {
-					return fmt.Errorf("failed to parse YAML config: %w", err)
-				}
-			}
-
-			// If top-level sourceFormat and targetFormats are set, propagate to datasets. Apply
-			// --mode here too, so every dataset sees the same override regardless of what its
-			// individual config entry said.
-			for _, ds := range cfg.Datasets {
-				if ds.SourceFormat == "" && cfg.SourceFormat != "" {
-					ds.SourceFormat = cfg.SourceFormat
-				}
-				if len(ds.TargetFormats) == 0 && len(cfg.TargetFormats) > 0 {
-					ds.TargetFormats = cfg.TargetFormats
-				}
-				if modeOverride != "" {
-					ds.SyncMode = modeOverride
-				}
-			}
-
-			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
-
-			// Progress chatter always goes to stderr when emitting JSON, so stdout carries only
-			// the machine-readable document. In text mode both go to stdout, matching prior
-			// behavior.
-			stdout := cmd.OutOrStdout()
-			progress := stdout
-			if outputJSON {
-				progress = cmd.ErrOrStderr()
-			}
-
-			_, _ = fmt.Fprintln(progress, "🚀 Starting polytable synchronization...")
-			overallStart := time.Now()
-
-			out := SyncOutput{StartedAt: overallStart, DryRun: dryRun}
-			hasErrors := false
-
-			for i, ds := range cfg.Datasets {
-				_, _ = fmt.Fprintf(progress, "\n[%d/%d] Syncing Table '%s' (%s -> %v)...\n",
-					i+1, len(cfg.Datasets), ds.TableName, ds.SourceFormat, ds.TargetFormats)
-
-				tableOut := syncOneDataset(ctx, ds, dryRun, timeout, progress)
-				if tableOut.hasFailure() {
-					hasErrors = true
-				}
-				out.Tables = append(out.Tables, tableOut)
-			}
-
-			out.Duration = time.Since(overallStart)
-			out.HasErrors = hasErrors
-
-			_, _ = fmt.Fprintf(progress, "\n✨ Finished all dataset syncs in %v\n", out.Duration)
-
-			if outputJSON {
-				enc := json.NewEncoder(stdout)
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(out); err != nil {
-					return fmt.Errorf("failed to encode JSON output: %w", err)
-				}
-			}
-
-			if hasErrors {
-				return fmt.Errorf("one or more table syncs failed")
-			}
-			return nil
+			return runSync(cmd, opts)
 		},
 	}
 
-	cmd.Flags().StringVarP(&configPath, "datasetConfig", "c", "", "Path to YAML/JSON dataset config file")
-	cmd.Flags().StringVar(&configPath, "config", "", "Alias for --datasetConfig")
-	cmd.Flags().StringVarP(&outputStr, "output", "o", "text", `Output format: "text" or "json"`)
-	cmd.Flags().StringVar(&modeStr, "mode", "", `Override DatasetConfig.SyncMode: "full" or "incremental"`)
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Resolve the source and compute changes without committing them")
-	cmd.Flags().DurationVar(&timeout, "timeout", 0, "Per-table timeout (e.g. 30s, 5m); 0 means no timeout")
+	cmd.Flags().StringVarP(&opts.configPath, "datasetConfig", "c", "", "Path to YAML/JSON dataset config file")
+	cmd.Flags().StringVar(&opts.configPath, "config", "", "Alias for --datasetConfig")
+	cmd.Flags().StringVar(&opts.catalogStr, "catalog", "", `Discover tables from a catalog instead of a config file: "glue"`)
+	cmd.Flags().StringVar(&opts.database, "database", "", "Catalog database to scan, required with --catalog")
+	cmd.Flags().StringVar(&opts.catalogID, "catalogId", "", "Glue catalog ID (AWS account) to scan; defaults to the caller's account")
+	cmd.Flags().StringVarP(&opts.outputStr, "output", "o", "text", `Output format: "text" or "json"`)
+	cmd.Flags().StringVar(&opts.modeStr, "mode", "", `Override DatasetConfig.SyncMode: "full" or "incremental"`)
+	cmd.Flags().BoolVar(&opts.dryRun, "dry-run", false, "Resolve the source and compute changes without committing them")
+	cmd.Flags().DurationVar(&opts.timeout, "timeout", 0, "Per-table timeout (e.g. 30s, 5m); 0 means no timeout")
 	return cmd
+}
+
+// runSync resolves the dataset list — from a config file or from a catalog scan — and syncs each
+// one. Both paths converge on the same loop, so --output, --dry-run, --timeout and --mode behave
+// identically whichever way the datasets were named.
+func runSync(cmd *cobra.Command, opts *syncOptions) error {
+	outputJSON, err := parseOutputFormat(opts.outputStr)
+	if err != nil {
+		return err
+	}
+	modeOverride, err := parseSyncModeFlag(opts.modeStr)
+	if err != nil {
+		return err
+	}
+	catalogType, err := parseCatalogTypeFlag(opts.catalogStr)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case opts.configPath != "" && (catalogType != "" || opts.database != ""):
+		return fmt.Errorf("--datasetConfig and --catalog/--database are mutually exclusive: " +
+			"a config file names its own tables, a catalog scan discovers them")
+	case catalogType != "" && opts.database == "":
+		return fmt.Errorf("--database is required with --catalog")
+	case catalogType == "" && opts.database != "":
+		return fmt.Errorf("--database requires --catalog")
+	case opts.configPath == "" && catalogType == "":
+		return fmt.Errorf("either --datasetConfig or --catalog with --database is required")
+	}
+
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Progress chatter always goes to stderr when emitting JSON, so stdout carries only the
+	// machine-readable document. In text mode both go to stdout, matching prior behavior.
+	stdout := cmd.OutOrStdout()
+	progress := stdout
+	if outputJSON {
+		progress = cmd.ErrOrStderr()
+	}
+
+	var datasets []*conversion.DatasetConfig
+	if catalogType != "" {
+		datasets, err = discoverCatalogDatasets(ctx, catalogType, opts, progress)
+	} else {
+		datasets, err = loadDatasetConfig(opts.configPath)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Applied after both paths so a discovered dataset honours --mode exactly as a configured one
+	// does.
+	if modeOverride != "" {
+		for _, ds := range datasets {
+			ds.SyncMode = modeOverride
+		}
+	}
+
+	_, _ = fmt.Fprintln(progress, "🚀 Starting polytable synchronization...")
+	overallStart := time.Now()
+
+	out := SyncOutput{StartedAt: overallStart, DryRun: opts.dryRun}
+	hasErrors := false
+
+	for i, ds := range datasets {
+		_, _ = fmt.Fprintf(progress, "\n[%d/%d] Syncing Table '%s' (%s -> %v)...\n",
+			i+1, len(datasets), ds.TableName, ds.SourceFormat, ds.TargetFormats)
+
+		tableOut := syncOneDataset(ctx, ds, opts.dryRun, opts.timeout, progress)
+		if tableOut.hasFailure() {
+			hasErrors = true
+		}
+		out.Tables = append(out.Tables, tableOut)
+	}
+
+	out.Duration = time.Since(overallStart)
+	out.HasErrors = hasErrors
+
+	_, _ = fmt.Fprintf(progress, "\n✨ Finished all dataset syncs in %v\n", out.Duration)
+
+	if outputJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("failed to encode JSON output: %w", err)
+		}
+	}
+
+	if hasErrors {
+		return fmt.Errorf("one or more table syncs failed")
+	}
+	return nil
+}
+
+// loadDatasetConfig reads a YAML or JSON dataset config file and returns its datasets with the
+// file's top-level sourceFormat and targetFormats propagated into the ones that omitted them.
+func loadDatasetConfig(configPath string) ([]*conversion.DatasetConfig, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file %s: %w", configPath, err)
+	}
+
+	var cfg conversion.Config
+	if strings.HasSuffix(configPath, ".json") {
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON config: %w", err)
+		}
+	} else {
+		if err := yaml.Unmarshal(data, &cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse YAML config: %w", err)
+		}
+	}
+
+	for _, ds := range cfg.Datasets {
+		if ds.SourceFormat == "" && cfg.SourceFormat != "" {
+			ds.SourceFormat = cfg.SourceFormat
+		}
+		if len(ds.TargetFormats) == 0 && len(cfg.TargetFormats) > 0 {
+			ds.TargetFormats = cfg.TargetFormats
+		}
+	}
+	return cfg.Datasets, nil
+}
+
+// discoverCatalogDatasets scans a catalog database for tables marked with their target formats,
+// reporting what it found on the progress stream so an empty scan is not silent.
+func discoverCatalogDatasets(ctx context.Context, catalogType catalog.CatalogType, opts *syncOptions,
+	progress io.Writer) ([]*conversion.DatasetConfig, error) {
+	_, _ = fmt.Fprintf(progress, "🔎 Scanning %s database '%s' for tables marked with %s...\n",
+		catalogType, opts.database, catalog.PropTargetFormats)
+
+	cfg := &catalog.Config{Type: catalogType, DatabaseName: opts.database, CatalogID: opts.catalogID}
+	datasets, err := conversion.DiscoverDatasets(ctx, cfg, opts.newCatalogSource)
+	if err != nil {
+		return nil, fmt.Errorf("failed to discover tables in %s database %s: %w", catalogType, opts.database, err)
+	}
+
+	_, _ = fmt.Fprintf(progress, "🔎 Found %d marked table(s)\n", len(datasets))
+	return datasets, nil
 }
 
 // withDatasetTimeout wraps ctx in a context.WithTimeout when timeout > 0. The caller must always

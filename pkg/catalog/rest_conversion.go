@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"net/url"
 	"strings"
@@ -152,6 +153,16 @@ func (c *IcebergRESTConversionSource) GetSourceTable(ctx context.Context, id Tab
 		Format:     model.TableFormatIceberg,
 		Properties: properties,
 	}, nil
+}
+
+// ListTables is not implemented for the Iceberg REST catalog: discovery is a Glue-only capability
+// today (docs/improvement-plan.md T23). The sequence yields one ErrCatalogNotImplemented so a caller
+// sees a refusal rather than an empty database.
+func (c *IcebergRESTConversionSource) ListTables(_ context.Context, database string, _ TableFilter) iter.Seq2[TableIdentifier, error] {
+	return func(yield func(TableIdentifier, error) bool) {
+		yield(TableIdentifier{}, fmt.Errorf("%w: listing tables in namespace %q of an Iceberg REST catalog is not implemented",
+			ErrCatalogNotImplemented, database))
+	}
 }
 
 // baseFromMetadataLocation derives a table root from a metadata file path of the shape

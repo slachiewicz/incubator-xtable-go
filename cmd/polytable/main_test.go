@@ -397,6 +397,32 @@ func TestSyncOneDataset_NoNewCommitsReportsNoOp(t *testing.T) {
 	assert.Equal(t, "NO_OP", second.Targets[0].Verdict, "a table with no new commits since the last sync must report NO_OP")
 }
 
+// TestRunSync_ConfigFilePath covers the --datasetConfig branch of runSync end to end, including the
+// top-level sourceFormat/targetFormats propagation that used to live inline in RunE.
+func TestRunSync_ConfigFilePath(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	basePath := t.TempDir()
+	buildLocalDeltaSource(t, ctx, basePath, "events")
+
+	configPath := filepath.Join(t.TempDir(), "dataset.yaml")
+	config := "sourceFormat: DELTA\ntargetFormats:\n  - ICEBERG\ndatasets:\n  - tableName: events\n    tableBasePath: " +
+		basePath + "\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(config), 0o600))
+
+	cmd, stdout, _ := newSyncTestCmd(t)
+	require.NoError(t, runSync(cmd, &syncOptions{configPath: configPath, outputStr: "json", modeStr: "full"}))
+
+	var out SyncOutput
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &out))
+	require.Len(t, out.Tables, 1)
+	assert.Equal(t, "events", out.Tables[0].TableName)
+	assert.Equal(t, "DELTA", out.Tables[0].SourceFormat, "the top-level sourceFormat must reach the dataset")
+	require.Len(t, out.Tables[0].Targets, 1, "the top-level targetFormats must reach the dataset")
+	assert.Equal(t, "SUCCESS", out.Tables[0].Targets[0].Verdict)
+}
+
 func TestSyncOneDataset_ModeFullForcesSnapshotSync(t *testing.T) {
 	t.Parallel()
 

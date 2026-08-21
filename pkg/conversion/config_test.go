@@ -20,6 +20,8 @@ package conversion_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"iter"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -176,13 +178,23 @@ func TestDatasetConfig_NilStorage(t *testing.T) {
 	require.Nil(t, config.Storage, "storage field should be nil when not set")
 }
 
-// fakeConversionSource returns a canned catalog lookup.
+// fakeConversionSource returns a canned catalog lookup. For discovery it also serves a canned table
+// listing: listed names, optionally cut short by listErr, resolved against tables by name and
+// falling back to the single table field when tables is nil.
 type fakeConversionSource struct {
 	table    *catalog.SourceTable
 	err      error
 	gotID    catalog.TableIdentifier
 	closed   bool
 	callests int
+
+	listed     []string
+	listErr    error
+	gotFilter  catalog.TableFilter
+	tables     map[string]*catalog.SourceTable
+	tableErrs  map[string]error
+	listCalls  int
+	gotListDBs []string
 }
 
 func (f *fakeConversionSource) CatalogType() catalog.CatalogType { return catalog.CatalogTypeGlue }
@@ -190,7 +202,34 @@ func (f *fakeConversionSource) Close() error                     { f.closed = tr
 func (f *fakeConversionSource) GetSourceTable(_ context.Context, id catalog.TableIdentifier) (*catalog.SourceTable, error) {
 	f.gotID = id
 	f.callests++
+	if err, ok := f.tableErrs[id.Table]; ok {
+		return nil, err
+	}
+	if f.tables != nil {
+		table, ok := f.tables[id.Table]
+		if !ok {
+			return nil, fmt.Errorf("no such table %s", id)
+		}
+		return table, nil
+	}
 	return f.table, f.err
+}
+
+func (f *fakeConversionSource) ListTables(_ context.Context, database string,
+	filter catalog.TableFilter) iter.Seq2[catalog.TableIdentifier, error] {
+	return func(yield func(catalog.TableIdentifier, error) bool) {
+		f.listCalls++
+		f.gotFilter = filter
+		f.gotListDBs = append(f.gotListDBs, database)
+		for _, name := range f.listed {
+			if !yield(catalog.TableIdentifier{Database: database, Table: name}, nil) {
+				return
+			}
+		}
+		if f.listErr != nil {
+			yield(catalog.TableIdentifier{}, f.listErr)
+		}
+	}
 }
 
 func TestResolveSourceCatalog(t *testing.T) {

@@ -219,6 +219,9 @@ type Storage interface {
 
 ### 8.1 CLI Commands (`cmd/polytable`)
 - `polytable sync --datasetConfig <path>`: Runs synchronization across configured datasets.
+- `polytable sync --catalog glue --database <db>`: Discovers every table in the Glue database carrying the
+  `polytable_target_formats` property and converts each to the formats that property names. Mutually
+  exclusive with `--datasetConfig`; unmarked tables are skipped.
 - `polytable inspect --basePath <path> --format <DELTA|ICEBERG|HUDI|PARQUET>`: Pretty-prints schema, partition spec, commit time, and data file count.
 - `polytable version`: Displays binary version and commit hash.
 
