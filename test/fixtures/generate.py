@@ -38,7 +38,8 @@ The Iceberg fixture records absolute locations, which Iceberg's metadata format 
 occurrence of the generation-time warehouse path in a *.metadata.json is rewritten to the
 PATH_PLACEHOLDER token below, and the Go test substitutes the directory it copied the fixture into.
 The paths embedded in the Avro manifests are left as generated: they cannot be rewritten without
-re-encoding the file, and polytable cannot read those manifests at all (see T28).
+re-encoding the file. `relocateAvroManifests` in test/foreign_fixtures_test.go does exactly that
+re-encoding when it loads the fixture, under the file's own schema and header.
 """
 
 import json

@@ -18,7 +18,6 @@
 package iceberg
 
 import (
-	"encoding/base64"
 	"encoding/binary"
 	"math"
 	"strconv"
@@ -45,94 +44,94 @@ const (
 )
 
 // EncodeBound serializes value for the given field schema using Iceberg's single-value binary
-// serialization, base64-encoded so that it fits the string-valued bound maps of a manifest entry.
+// serialization, which is what the `lower_bounds` and `upper_bounds` maps of a manifest entry hold.
 //
 // It reports false when the value carries no usable bound: a nil value, a NaN float — Iceberg
 // forbids NaN bounds and tracks NaN counts separately — or a type this port does not serialize
 // (decimal and the nested types). Callers omit the bound in that case rather than failing.
-func EncodeBound(schema *model.Schema, value any, pos BoundPosition) (string, bool) {
+func EncodeBound(schema *model.Schema, value any, pos BoundPosition) ([]byte, bool) {
 	if schema == nil || value == nil {
-		return "", false
+		return nil, false
 	}
 
 	switch schema.DataType {
 	case model.TypeBoolean:
 		b, ok := coerceBool(value)
 		if !ok {
-			return "", false
+			return nil, false
 		}
 		out := []byte{0}
 		if b {
 			out[0] = 1
 		}
-		return base64.StdEncoding.EncodeToString(out), true
+		return out, true
 
 	case model.TypeInt, model.TypeDate:
 		n, ok := coerceInt64(value)
 		if !ok || n < math.MinInt32 || n > math.MaxInt32 {
-			return "", false
+			return nil, false
 		}
 		buf := make([]byte, 4)
 		binary.LittleEndian.PutUint32(buf, uint32(int32(n))) //nolint:gosec // n is range-checked against int32 above
-		return base64.StdEncoding.EncodeToString(buf), true
+		return buf, true
 
 	case model.TypeLong, model.TypeTimestamp, model.TypeTimestampNTZ:
 		n, ok := coerceInt64(value)
 		if !ok {
-			return "", false
+			return nil, false
 		}
 		buf := make([]byte, 8)
 		binary.LittleEndian.PutUint64(buf, uint64(n)) //nolint:gosec // two's-complement bit pattern, decoded back to int64
-		return base64.StdEncoding.EncodeToString(buf), true
+		return buf, true
 
 	case model.TypeFloat:
 		f, ok := coerceFloat64(value)
 		if !ok || math.IsNaN(f) {
-			return "", false
+			return nil, false
 		}
 		buf := make([]byte, 4)
 		binary.LittleEndian.PutUint32(buf, math.Float32bits(float32(normalizeZeroBound(f, pos))))
-		return base64.StdEncoding.EncodeToString(buf), true
+		return buf, true
 
 	case model.TypeDouble:
 		f, ok := coerceFloat64(value)
 		if !ok || math.IsNaN(f) {
-			return "", false
+			return nil, false
 		}
 		buf := make([]byte, 8)
 		binary.LittleEndian.PutUint64(buf, math.Float64bits(normalizeZeroBound(f, pos)))
-		return base64.StdEncoding.EncodeToString(buf), true
+		return buf, true
 
 	case model.TypeString, model.TypeEnum:
 		s, ok := coerceString(value)
 		if !ok {
-			return "", false
+			return nil, false
 		}
-		return base64.StdEncoding.EncodeToString([]byte(s)), true
+		return []byte(s), true
 
 	case model.TypeUUID:
 		s, ok := coerceString(value)
 		if !ok {
-			return "", false
+			return nil, false
 		}
 		parsed, err := uuid.Parse(s)
 		if err != nil {
-			return "", false
+			return nil, false
 		}
-		return base64.StdEncoding.EncodeToString(parsed[:]), true
+		return parsed[:], true
 
 	case model.TypeBytes, model.TypeFixed:
 		b, ok := coerceBytes(value)
 		if !ok {
-			return "", false
+			return nil, false
 		}
-		return base64.StdEncoding.EncodeToString(b), true
+		return b, true
 
 	default:
 		// DECIMAL needs the minimal big-endian two's-complement encoding of the unscaled value and
 		// the nested types have no single-value form at all. Omitting the bound loses pruning
 		// power; writing it wrong loses rows.
-		return "", false
+		return nil, false
 	}
 }
 
@@ -140,15 +139,11 @@ func EncodeBound(schema *model.Schema, value any, pos BoundPosition) (string, bo
 // int and date, int64 for long and the timestamps, float32/float64 for the floating types, string
 // for string, enum and uuid, []byte for binary and fixed.
 //
-// It reports false for an empty or malformed encoding, for a length that does not match the type,
-// and for a NaN float — a NaN that reaches this point came from a writer that ignored the Iceberg
-// rule, and letting it into the model would break every JSON encoder downstream.
-func DecodeBound(schema *model.Schema, encoded string) (any, bool) {
-	if schema == nil || encoded == "" {
-		return nil, false
-	}
-	raw, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
+// It reports false for an empty bound, for a length that does not match the type, and for a NaN
+// float — a NaN that reaches this point came from a writer that ignored the Iceberg rule, and
+// letting it into the model would break every JSON encoder downstream.
+func DecodeBound(schema *model.Schema, raw []byte) (any, bool) {
+	if schema == nil || len(raw) == 0 {
 		return nil, false
 	}
 
@@ -323,9 +318,9 @@ func putStat(m *map[int]int64, id int, value int64) {
 	(*m)[id] = value
 }
 
-func putBound(m *map[int]string, id int, value string) {
+func putBound(m *map[int][]byte, id int, value []byte) {
 	if *m == nil {
-		*m = make(map[int]string)
+		*m = make(map[int][]byte)
 	}
 	(*m)[id] = value
 }

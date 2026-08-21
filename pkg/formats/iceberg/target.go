@@ -31,6 +31,10 @@ import (
 	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
+// icebergFormatVersion is the table format version this target writes. Version 2 is what the
+// manifest and manifest-list schemas in manifest.go describe.
+const icebergFormatVersion = 2
+
 // Target implements spi.ConversionTarget for Apache Iceberg tables.
 type Target struct {
 	storage     io.Storage
@@ -122,12 +126,40 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 	// 2. Convert Partition Spec
 	var partitionFieldDefs []*PartitionFieldDef
 	for idx, pf := range snapshot.Table.PartitioningFields {
-		sourceID := idx + 1
+		if pf.TransformType != model.PartitionTransformValue {
+			return fmt.Errorf("iceberg target cannot write the %s partition transform on %s: only "+
+				"the identity transform is implemented", pf.TransformType, pf.SourceField.Name)
+		}
+		sourceID := 0
 		for _, f := range tableSchema.Fields {
 			if f.Name == pf.SourceField.Name {
 				sourceID = f.ID
 				break
 			}
+		}
+		if sourceID == 0 {
+			// Iceberg resolves every partition field against a column of the schema, so a source
+			// that reports a partition column its schema does not carry — the Hive-style layouts,
+			// where the column lives in the directory name and not in the data files — needs the
+			// column added here. Nothing is invented by doing so: an identity-partitioned column
+			// need not be stored in the data files at all, because a reader materializes it from
+			// the partition tuple in the manifest.
+			sourceID = lastColID + 1
+			icebergType, nextID, err := convertTypeToIceberg(pf.SourceField.Schema, sourceID+1)
+			if err != nil {
+				return fmt.Errorf("failed to type the partition column %s: %w", pf.SourceField.Name, err)
+			}
+			if _, ok := icebergType.(string); !ok {
+				return fmt.Errorf("partition column %s has a nested type, which cannot be a "+
+					"partition source", pf.SourceField.Name)
+			}
+			lastColID = nextID - 1
+			tableSchema.Fields = append(tableSchema.Fields, &NestedField{
+				ID:       sourceID,
+				Name:     pf.SourceField.Name,
+				Type:     icebergType,
+				Required: false,
+			})
 		}
 		partitionFieldDefs = append(partitionFieldDefs, &PartitionFieldDef{
 			SourceID:  sourceID,
@@ -141,8 +173,9 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 		Fields: partitionFieldDefs,
 	}
 
-	// 3. Write Manifest File
+	// 3. Build the manifest entries
 	var manifestEntries []ManifestEntry
+	var addedRows int64
 	for _, df := range snapshot.AllDataFiles() {
 		partitionVals := make(map[string]any)
 		for _, pv := range df.PartitionValues {
@@ -150,49 +183,68 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 				partitionVals[pv.PartitionField.SourceField.Name] = pv.Range.MinValue
 			}
 		}
+		fileFormat, err := icebergFileFormat(df.FileFormat)
+		if err != nil {
+			return fmt.Errorf("cannot write %s into an iceberg manifest: %w", df.PhysicalPath, err)
+		}
 		manifestDataFile := &ManifestDataFile{
+			Content:         contentData,
 			FilePath:        df.PhysicalPath,
-			FileFormat:      string(df.FileFormat),
+			FileFormat:      fileFormat,
 			Partition:       partitionVals,
 			RecordCount:     df.RecordCount,
 			FileSizeInBytes: df.FileSizeBytes,
 		}
 		columnStatsToManifest(manifestDataFile, df.ColumnStats, tableSchema)
 
+		addedRows += df.RecordCount
 		manifestEntries = append(manifestEntries, ManifestEntry{
-			Status:     1, // ADDED
+			Status:     manifestStatusAdded,
 			SnapshotID: snapshotID,
 			DataFile:   manifestDataFile,
 		})
 	}
 
-	manifestUUID := uuid.New().String()
-	manifestFileName := fmt.Sprintf("%s-m0.json", manifestUUID)
+	seqNumber := int64(1)
+	if prevMeta != nil {
+		seqNumber = prevMeta.LastSequenceNumber + 1
+	}
+	var parentSnapID *int64
+	if prevMeta != nil && prevMeta.CurrentSnapshotID != nil {
+		parentSnapID = prevMeta.CurrentSnapshotID
+	}
+
+	// 4. Write the manifest, then the manifest list that points at it. Both are Avro object
+	// container files: the specification mandates that, and it is the only form an Iceberg engine
+	// can open.
+	manifestFileName := fmt.Sprintf("%s-m0.avro", uuid.New().String())
 	manifestPath := io.JoinPath(t.targetTable.BasePath, "metadata", manifestFileName)
-	manifestBytes, err := json.Marshal(manifestEntries)
+	manifestBytes, err := writeManifest(manifestEntries, tableSchema, partitionSpec, icebergFormatVersion)
 	if err != nil {
-		return fmt.Errorf("failed to marshal manifest entries: %w", err)
+		return fmt.Errorf("failed to encode manifest file %s: %w", manifestPath, err)
 	}
 	if err := t.storage.Write(ctx, manifestPath, manifestBytes); err != nil {
 		return fmt.Errorf("failed to write manifest file %s: %w", manifestPath, err)
 	}
 
-	// 4. Write Manifest List File
-	manifestListEntry := ManifestListEntry{
-		ManifestPath:       manifestPath,
-		ManifestLength:     int64(len(manifestBytes)),
-		PartitionSpecID:    0,
-		AddedSnapshotID:    snapshotID,
-		AddedFilesCount:    len(manifestEntries),
-		ExistingFilesCount: 0,
-		DeletedFilesCount:  0,
-	}
-	manifestList := []ManifestListEntry{manifestListEntry}
-	manifestListFileName := fmt.Sprintf("snap-%d-%s.json", snapshotID, uuid.New().String())
+	manifestList := []ManifestListEntry{{
+		ManifestPath:      manifestPath,
+		ManifestLength:    int64(len(manifestBytes)),
+		PartitionSpecID:   partitionSpec.SpecID,
+		Content:           contentData,
+		SequenceNumber:    seqNumber,
+		MinSequenceNumber: seqNumber,
+		AddedSnapshotID:   snapshotID,
+		AddedFilesCount:   len(manifestEntries),
+		AddedRowsCount:    addedRows,
+	}}
+	// The attempt number between the snapshot id and the uuid is part of the conventional name;
+	// polytable never retries a commit, so it is always zero.
+	manifestListFileName := fmt.Sprintf("snap-%d-0-%s.avro", snapshotID, uuid.New().String())
 	manifestListPath := io.JoinPath(t.targetTable.BasePath, "metadata", manifestListFileName)
-	manifestListBytes, err := json.Marshal(manifestList)
+	manifestListBytes, err := writeManifestList(manifestList, snapshotID, parentSnapID, seqNumber, icebergFormatVersion)
 	if err != nil {
-		return fmt.Errorf("failed to marshal manifest list: %w", err)
+		return fmt.Errorf("failed to encode manifest list %s: %w", manifestListPath, err)
 	}
 	if err := t.storage.Write(ctx, manifestListPath, manifestListBytes); err != nil {
 		return fmt.Errorf("failed to write manifest list %s: %w", manifestListPath, err)
@@ -208,16 +260,15 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 	props[model.KeyLastInstantSynced] = strconv.FormatInt(snapshot.Table.LatestCommitTime, 10)
 	props[model.KeySourceFormat] = string(snapshot.Table.TableFormat)
 
-	// 6. Build Snapshot
-	var parentSnapID *int64
-	if prevMeta != nil && prevMeta.CurrentSnapshotID != nil {
-		parentSnapID = prevMeta.CurrentSnapshotID
+	// The name mapping is written on every commit rather than once, because the schema it mirrors
+	// is rewritten on every commit too.
+	nameMapping, err := NameMappingJSON(tableSchema)
+	if err != nil {
+		return err
 	}
-	seqNumber := int64(1)
-	if prevMeta != nil {
-		seqNumber = prevMeta.LastSequenceNumber + 1
-	}
+	props[NameMappingProperty] = nameMapping
 
+	// 6. Build Snapshot
 	tableSnapshot := &TableSnapshot{
 		SnapshotID:       snapshotID,
 		ParentSnapshotID: parentSnapID,
@@ -244,7 +295,7 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 	}
 
 	metadata := &TableMetadata{
-		FormatVersion:      2,
+		FormatVersion:      icebergFormatVersion,
 		TableUUID:          tableUUID,
 		Location:           t.targetTable.BasePath,
 		LastSequenceNumber: seqNumber,

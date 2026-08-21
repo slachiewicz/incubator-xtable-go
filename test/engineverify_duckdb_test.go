@@ -58,8 +58,8 @@ func duckdbBin(t *testing.T) string {
 }
 
 // duckdbQuery runs one SQL script and decodes the rows of its final result set. It returns the
-// error rather than failing, because a caller sometimes wants to skip on it: DuckDB's iceberg
-// extension cannot read a JSON manifest at all, and that is a known gap rather than a test failure.
+// error rather than failing so that requireExtension can skip on a failed extension install, which
+// is an unusable environment rather than a broken table.
 func duckdbQuery(t *testing.T, bin, sql string) ([]map[string]any, error) {
 	t.Helper()
 
@@ -214,13 +214,7 @@ func TestEngineVerify_DuckDBReadsPolytableOutput(t *testing.T) {
 
 			// (a) the row count the engine sees matches what polytable was given.
 			got, err := duckdbCount(t, bin, fmt.Sprintf(scan, "count(*) AS n", ""))
-			if err != nil {
-				// polytable writes Iceberg manifests and manifest lists as JSON; the Iceberg spec
-				// mandates Avro, so DuckDB rejects them with "Incorrect Avro container file magic
-				// number". Recorded as an open gap under T29 rather than failed here, because no
-				// change to this test can make an Iceberg engine read a JSON manifest.
-				t.Skipf("%s output is not readable by duckdb: %v", tt.target, err)
-			}
+			require.NoError(t, err, "%s output is not readable by duckdb", tt.target)
 			assert.Equal(t, int64(tt.rowCount), got)
 
 			// (b) a predicate outside the written value range returns nothing. Without this, (a)
