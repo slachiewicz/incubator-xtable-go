@@ -145,15 +145,25 @@ func TestUpstream806_SnapshotAcrossSeveralWrites(t *testing.T) {
 			assert.Equal(t, tt.wantRecords, lastRecords)
 			assert.Len(t, snapshot.DataFiles, tt.wantFiles)
 
-			gotPartitions := make([]string, 0, len(snapshot.Table.PartitioningFields))
+			var gotPartitions []string
 			for _, pf := range snapshot.Table.PartitioningFields {
 				gotPartitions = append(gotPartitions, pf.SourceField.Name)
 			}
-			// Compared as a set: PartitioningFields is drained from a map, so its order varies.
-			assert.ElementsMatch(t, tt.wantPartitions, gotPartitions)
+			// Order is the directory nesting, outermost first, and no longer a map's iteration
+			// order.
+			assert.Equal(t, tt.wantPartitions, gotPartitions)
 
+			// The three columns the data files carry, plus one synthesized per partition column:
+			// year and month live in the directory names only, and T33 puts them in the schema the
+			// table is partitioned by.
 			require.NotNil(t, snapshot.Table.ReadSchema)
-			assert.Len(t, snapshot.Table.ReadSchema.Fields, 3)
+			assert.Len(t, snapshot.Table.ReadSchema.Fields, 3+len(tt.wantPartitions))
+			for _, column := range tt.wantPartitions {
+				field := snapshot.Table.ReadSchema.FieldByPath(column)
+				require.NotNil(t, field, "the partition column %s is missing from the schema", column)
+				// year=2026 and month=01 are integers, whatever the directory spelling.
+				assert.Equal(t, model.TypeLong, field.Schema.DataType, "type of %s", column)
+			}
 			assert.Equal(t, model.TableFormatParquet, snapshot.Table.TableFormat)
 		})
 	}

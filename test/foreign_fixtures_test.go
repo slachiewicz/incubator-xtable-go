@@ -619,9 +619,10 @@ func TestForeignFixtures_ConvertDelta(t *testing.T) {
 	expectations := map[model.TableFormat]convertExpectation{
 		model.TableFormatIceberg: {schemaCheck: assertSchemaMatchesManifest},
 		model.TableFormatHudi:    {schemaCheck: assertSchemaMatchesManifest},
-		// The Parquet source rebuilds the schema from a data file footer, which is missing the
-		// Hive partition column entirely.
-		model.TableFormatParquet: {schemaCheck: assertParquetSchemaGaps},
+		// T33 made the Parquet source merge every footer and add the Hive partition column to the
+		// schema, so the table it reads back holds every column the writer declared. Order and
+		// nullability still differ, which is why this is not assertSchemaMatchesManifest.
+		model.TableFormatParquet: {schemaCheck: assertParquetSchemaFromDataFiles},
 		// T32 aligned the Paimon target with the schema/ + snapshot/ layout its source reads, so a
 		// Paimon table polytable wrote is now read back like any other target.
 		model.TableFormatPaimon: {schemaCheck: assertSchemaMatchesManifest},
@@ -716,51 +717,29 @@ func assertSchemaWithoutFieldIDs(t *testing.T, manifest *fixtureManifest, schema
 	assertSchemaMatchesManifest(t, &byName, schema)
 }
 
-// assertParquetSchemaFromFooter pins what the raw-Parquet source recovers from a table whose data
-// files do carry the partition column: every column except the one added mid-history, which is
-// present or absent depending on which file's footer the source happened to read first. That half
-// of F3 is tracked as T33.
-func assertParquetSchemaFromFooter(t *testing.T, manifest *fixtureManifest, schema *model.Schema) {
-	t.Helper()
-
-	require.NotNil(t, schema)
-	for _, field := range manifest.Schema {
-		if field.Name == manifest.SchemaEvolution.AddedColumn {
-			continue
-		}
-		assert.NotNil(t, schema.FieldByPath(field.Name), "column %s was dropped", field.Name)
-	}
-}
-
-// assertParquetSchemaGaps pins what the raw-Parquet source recovers from a Hive-partitioned,
-// schema-evolved table. Two things it does not, both found by this fixture and recorded under T28:
+// assertParquetSchemaFromDataFiles checks what the raw-Parquet source recovers from a
+// Hive-partitioned, schema-evolved table. Both gaps T28 recorded here are closed by T33:
 //
-//   - The partition column lives in the directory name, not in the data files, so it is absent from
-//     the schema even though the source does report it as a partitioning field. The table it hands
-//     back is partitioned by a column its own schema does not have.
-//   - The schema comes from the footer of a single data file, so a column added mid-history is
-//     present or absent depending on which file sorts first. Nothing is asserted about the evolved
-//     column here for exactly that reason — a regenerated fixture mints new file names.
-func assertParquetSchemaGaps(t *testing.T, manifest *fixtureManifest, schema *model.Schema) {
+//   - The partition column lives in the directory name, not in the data files. The source now
+//     synthesizes it, typed from the values it saw, so the table is no longer partitioned by a
+//     column its own schema does not have.
+//   - The schema is the merge of every footer rather than one file's, so the column the writer
+//     added mid-history is present whatever the files are called.
+//
+// Column order and nullability are not asserted: the merge orders columns by the files'
+// modification times, which copying the fixture resets, and it widens a column absent from the
+// older files to nullable whatever the writer declared.
+func assertParquetSchemaFromDataFiles(t *testing.T, manifest *fixtureManifest, schema *model.Schema) {
 	t.Helper()
 
 	require.NotNil(t, schema)
-	partitionColumns := make(map[string]bool, len(manifest.PartitionColumns))
-	for _, column := range manifest.PartitionColumns {
-		partitionColumns[column] = true
-	}
+	require.Len(t, schema.Fields, len(manifest.Schema))
 
-	for _, field := range manifest.Schema {
-		switch {
-		case partitionColumns[field.Name]:
-			assert.Nil(t, schema.FieldByPath(field.Name),
-				"the partition column %s is now recovered; assert it instead of pinning its absence",
-				field.Name)
-		case field.Name == manifest.SchemaEvolution.AddedColumn:
-			continue
-		default:
-			assert.NotNil(t, schema.FieldByPath(field.Name), "column %s was dropped", field.Name)
-		}
+	for _, expected := range manifest.Schema {
+		field := schema.FieldByPath(expected.Name)
+		require.NotNil(t, field, "column %s was dropped", expected.Name)
+		require.NotNil(t, field.Schema, "column %s carries no schema", expected.Name)
+		assert.Equal(t, model.Type(expected.Type), field.Schema.DataType, "type of %s", expected.Name)
 	}
 }
 
@@ -775,9 +754,8 @@ func TestForeignFixtures_ConvertIceberg(t *testing.T) {
 		// Iceberg source reports the location with the scheme the manifest recorded, so the prefix
 		// never matches and the Hudi source joins the whole absolute path onto the base path again.
 		model.TableFormatHudi: {schemaCheck: assertSchemaWithoutFieldIDs, pathsDoubled: true},
-		// F3, tracked as T33: the raw-Parquet source rebuilds the schema from one data file footer,
-		// so a column added mid-history is present or absent depending on which file sorts first.
-		model.TableFormatParquet: {schemaCheck: assertParquetSchemaFromFooter},
+		// F3 closed by T33: the merged footer schema carries every column whatever the file order.
+		model.TableFormatParquet: {schemaCheck: assertParquetSchemaFromDataFiles},
 		// F4, tracked as T35: like Hudi, the Paimon target trims the base path by string prefix,
 		// so the Iceberg source's scheme-qualified locations survive whole and read back doubled.
 		model.TableFormatPaimon: {schemaCheck: assertSchemaMatchesManifest, pathsDoubled: true},
