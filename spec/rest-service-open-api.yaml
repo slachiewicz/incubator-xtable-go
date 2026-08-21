@@ -229,6 +229,9 @@ components:
         durationMs:
           type: integer
           format: int64
+        noOp:
+          type: boolean
+          description: True when an incremental sync found no new commits, so nothing was written. statusCode is still SUCCESS.
         error:
           type: string
 
