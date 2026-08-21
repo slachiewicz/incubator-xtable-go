@@ -55,6 +55,13 @@ stated in the task rather than the status.
    status nobody can trust makes this document worse than no document.
 9. **Run `go test -short -race ./pkg/...` for any change touching `pkg/daemon` or goroutines.**
    `make check` does not enable the race detector; a data race was shipped and later fixed in `3162cf3`.
+10. **A format adapter is not done until a foreign implementation agrees with it.** Self-referential
+    round-trips hide every bug that is symmetrical in this repo's reader and writer — that is how
+    JSON Iceberg manifests, the Delta `omitempty` keys, and the Paimon layout mismatch all shipped
+    (T28/T29/T31/T32 hold the case studies). For any change to a source: it must read a fixture a
+    real engine wrote (`test/testdata/fixtures/`). For any change to a target: a real engine must
+    read its output (the DuckDB suite, pyiceberg, or the T30 job). Where no real-engine oracle
+    exists yet for a format, say so in the task outcome instead of letting the matrix imply one.
 
 ---
 
