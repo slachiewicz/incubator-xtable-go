@@ -990,6 +990,51 @@ the timestamp only for the retention comparison.
 fix; if not, a note in this task saying what was tested and why the current basis is sound, so the
 next reader does not repeat the investigation.
 
+## T27 — Rename the project to `polytable`
+
+**Decided by the maintainer, 2026-08-21.** "XTable" is an ASF podling mark, so publishing
+independently under `xtable-go` is a trademark problem. The new name is **polytable** — cleared
+against the lakehouse space on 2026-08-21 (no project uses it; the only near names are Apache XTable
+itself and its predecessor OneTable, which is Onehouse's mark and equally off-limits).
+
+**This task blocks the first tag.** A Go module tag bakes the module path in immutably (see T19's
+donation table — this row now resolves the other way: independent publication, not donation naming).
+
+Rename surface:
+
+1. Module path `github.com/slachiewicz/xtable-go` → `github.com/slachiewicz/polytable` — every
+   import in the tree, `go.mod`, and the checked-in docs that quote it.
+2. Binaries and dirs: `cmd/xtable` → `cmd/polytable`, `cmd/xtable-service` → `cmd/polytable-service`,
+   `cmd/xtable-wasm` → `cmd/polytable-wasm` (keep the `//go:build js && wasm` tag and the js/wasm vet
+   line in `Makefile`/CI pointed at the new path). Artifact names in `release.yml`,
+   `build-artifacts.yml` and `Makefile` follow.
+3. C binding: `libxtable` → `libpolytable`; exported symbols `xtable_sync_json`/`xtable_inspect_json`
+   → `polytable_*`. Nothing is released, so the FFI break costs nothing today.
+4. Python: `pyxtable` → `polytable` (claim the PyPI name before publishing; T6's packaging work
+   carries over).
+5. REST: `spec/rest-service-open-api.yaml` title/description, then regenerate via `spec/Makefile`.
+6. Docs: `README.md`, `SPEC.md`, `AGENTS.md`, `CLAUDE.md`, `NOTICE`. Keep one nominative-fair-use
+   line — "a Go implementation of the translation model of Apache XTable (incubating)" — as factual
+   attribution; the Apache-2.0 §4(d) attribution in `NOTICE` stays regardless.
+7. GitHub repo rename to `polytable` — maintainer action, outside the tree; do it in the same window
+   as the module-path commit so the path is never published dangling.
+
+**Deliberately NOT renamed:**
+
+- The on-disk metadata keys `xtable_last_instant_synced` / `xtable_source_format`
+  (`pkg/model/metadata.go:36-40`). They are interop with Java-XTable-synced tables, not branding;
+  renaming them silently breaks round-tripping against upstream.
+- The 16-line ASF grant headers (T19). Donation remains possible after a rename — ASF renames
+  incoming podlings anyway — so the T19 decision stands unless the maintainer revisits it.
+- References to `../incubator-xtable` and upstream issue numbers in docs — those *name* the upstream
+  project, which is exactly what nominative use is for.
+
+**Acceptance:** case-insensitive `grep -ri xtable` over the tree returns only the metadata keys and
+their tests, nominative upstream references in docs, and this file's history. `make check` passes.
+The C header, wheel and REST spec all carry the new name. No tag exists yet when this lands.
+
+**Commit:** `refactor: rename the project to polytable`
+
 ---
 
 ## Ordering
@@ -1002,7 +1047,7 @@ next reader does not repeat the investigation.
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T20 (column stats), T21 (Delta backlog reads), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T26 (Delta incremental timestamp basis — investigate first) |
+| 🎯 Open queue | T20 (column stats), T21 (Delta backlog reads), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T26 (Delta incremental timestamp basis — investigate first), T27 (polytable rename — blocks the first tag) |
 
 **Picking up T20–T26.** They are independent; take them in any order. Suggested value order is T21
 (smallest, one file), then T20 (largest correctness win), then T22, T23, T25, T26. T24 is a decision
