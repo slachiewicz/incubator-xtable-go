@@ -1199,6 +1199,56 @@ tasks.
 
 ---
 
+# Integration-test plan — 2026-08-21
+
+Every existing e2e and container suite converts tables polytable wrote and reads them back with
+polytable. A bug symmetrical in our reader and writer passes all of it. T28–T30 attack that blind
+spot, cheapest first. Convention for all three: anything needing Docker, an external binary or the
+network gates on `testing.Short()` (never a build tag — matches the dockertest suites and keeps
+`make check` self-contained), no `t.Parallel()` in container/binary-gated suites.
+
+## T28 — Real-writer fixtures under `test/testdata/fixtures/`
+
+Check in small tables written by real engines and test that polytable reads foreign metadata, not
+just its own. JVM-free generators only: Delta via `delta-rs` (Python `deltalake`), Iceberg via
+`pyiceberg`. Each fixture: ~3 commits, a schema change, partitions, column stats; data files a few
+KB. Spark-written and Hudi fixtures need a JVM — they belong to T30's job, not here; record the gap.
+A committed `test/fixtures/generate.py` documents provenance (run manually, never in CI).
+
+Tests: per-format read tests asserting schema/files/stats extracted from the foreign metadata match
+the generator's manifest (a small JSON the generator writes alongside), plus sync tests converting
+each fixture through the target matrix. Plain `go test -short` — no Docker.
+
+**Acceptance:** fixtures for Delta (delta-rs) and Iceberg (pyiceberg) committed with a provenance
+script and manifest; read + convert tests green; any reader bug they expose fixed in the same
+change or filed as its own task in this file.
+
+## T29 — Engine verification of polytable output with DuckDB
+
+After converting a source through the matrix, read the *output* with DuckDB (`delta_scan`,
+`iceberg_scan`) — a single static binary, no JVM. New `test/engineverify_duckdb_test.go`: gated on
+`testing.Short()` and skipped with a clear message when `duckdb` is not on PATH. Assert row counts
+match and that a stats predicate prunes (proves bounds are real, not just present). CI: install the
+DuckDB binary in `integration.yml`.
+
+**Acceptance:** Delta and Iceberg outputs of at least three matrix pairs each verified by DuckDB
+locally; `integration.yml` runs the suite; the suite skips cleanly where duckdb is absent.
+
+## T30 — Java XTable interop nightly (unscheduled until T28/T29 land)
+
+The sharpest claim: tables move between polytable and Apache XTable without resync (shared
+`xtable_*` keys). A `workflow_dispatch` + nightly job pulls the upstream bundled jar, syncs a
+fixture with Java XTable, continues **incrementally** with polytable, and the reverse — asserting
+the second tool reports incremental, not a snapshot fallback. Never gates PRs (bench.yml
+philosophy: failures prompt investigation, not red builds). This job is also where Spark-written
+and Hudi fixtures for T28 get generated. Needs a maintainer decision on jar version pinning.
+
+Follow-ups noted, not scheduled: a bindings smoke lane (the C ABI and wheel are built but never
+executed in CI; one `polytable.sync()` via ctypes and a node run of `polytable.wasm`), and
+LocalStack-Glue for catalog sync integration.
+
+---
+
 ## Ordering
 
 **Current status**
@@ -1209,7 +1259,7 @@ tasks.
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit) |
+| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T28 (real-writer fixtures), T29 (DuckDB output verification), T30 (Java interop nightly — after T28/T29) |
 
 **Picking up the queue.** The tasks are independent; take them in any order. Suggested value order
 is T23, T25. T24 is a decision
