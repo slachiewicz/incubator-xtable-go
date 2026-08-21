@@ -814,7 +814,7 @@ Two ideas from PR #829 (a Claude Code skill, not a feature, so nothing to port) 
 a per-table SUCCESS/FAILED/NO_OP verdict after sync, and no-op sync detection. Both belong in
 T22.
 
-## T20 — Column statistics for the Iceberg and Parquet sources
+## T20 — Column statistics for the Iceberg and Parquet sources ✅ COMPLETED
 
 **The largest correctness gap in the port.** Only Delta populates `model.DataFile.ColumnStats`.
 
@@ -844,6 +844,29 @@ Scope, in order of value:
 `stats` carry `minValues`/`maxValues`/`nullCount`; a Parquet→Delta sync of a file with row-group
 stats does the same; a round trip Iceberg→Delta→Iceberg preserves bounds within the type's
 precision. Table-driven tests per format, plus one case each for `NaN` and `-0.0`.
+
+### Outcome ✅
+
+All four criteria checked. `pkg/formats/iceberg/stats.go` carries the bound codec — Iceberg's
+single-value binary serialization, base64-encoded because this port's manifests are JSON rather
+than Avro — and maps the manifest's five statistic maps both ways, keyed by field ID so a rename
+keeps its bounds. `pkg/formats/parquet/stats.go` aggregates row-group chunk bounds via
+`FileColumnChunk.Bounds()`, merging with the column's own `parquet.Type.Compare`.
+
+On #798: upstream's `IcebergColumnStatsConverter.toIceberg` still normalizes nothing. The rule
+implemented here widens a zero float bound away from the range (lower → `-0.0`, upper → `0.0`),
+because Iceberg orders bounds the way `Float.compare` does, under which `-0.0 < 0.0`; the opposite
+direction would prune a file that holds the value being searched for. NaN never becomes a bound.
+
+Related defect found and fixed while here: `delta/target.go` marshalled its stats object with the
+error discarded, so one NaN bound emptied a file's *entire* stats string rather than its own range.
+`finiteBound` drops non-finite values before the marshal; `TestE2E_ParquetToDeltaCarriesColumnStats`
+pins it.
+
+Not covered, deliberately: decimal bounds (they need the minimal big-endian unscaled encoding —
+omitted rather than written wrong), nested columns (only top-level field IDs are resolvable from
+an Iceberg schema), `column_sizes` (`model.ColumnStat` has no size field, unlike Java's
+`totalSize`), and the Hudi and Paimon sources, which still emit no column stats.
 
 ## T21 — Stop re-reading Delta commits during incremental sync
 
@@ -998,14 +1021,14 @@ next reader does not repeat the investigation.
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T20 (column stats), T21 (Delta backlog reads), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T26 (Delta incremental timestamp basis — investigate first) |
+| 🎯 Open queue | T21 (Delta backlog reads), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T26 (Delta incremental timestamp basis — investigate first) |
 
-**Picking up T20–T26.** They are independent; take them in any order. Suggested value order is T21
-(smallest, one file), then T20 (largest correctness win), then T22, T23, T25, T26. T24 is a decision
+**Picking up T21–T26.** They are independent; take them in any order. Suggested value order is T21
+(smallest, one file), then T22, T23, T25, T26. T24 is a decision
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.
 

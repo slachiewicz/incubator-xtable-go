@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -276,8 +277,12 @@ func (t *Target) convertDataFileToAddAction(df *model.DataFile, _ *model.Table) 
 	for _, cs := range df.ColumnStats {
 		if cs.Field != nil {
 			if cs.Range != nil {
-				stats.MinValues[cs.Field.Name] = cs.Range.MinValue
-				stats.MaxValues[cs.Field.Name] = cs.Range.MaxValue
+				if v, ok := finiteBound(cs.Range.MinValue); ok {
+					stats.MinValues[cs.Field.Name] = v
+				}
+				if v, ok := finiteBound(cs.Range.MaxValue); ok {
+					stats.MaxValues[cs.Field.Name] = v
+				}
 			}
 			stats.NullCount[cs.Field.Name] = cs.NumNulls
 		}
@@ -305,6 +310,24 @@ func (t *Target) convertDataFileToAddAction(df *model.DataFile, _ *model.Table) 
 		DataChange:       true,
 		Stats:            string(statsBytes),
 		DeletionVector:   dvAction,
+	}
+}
+
+// finiteBound filters out the float values that encoding/json refuses. A single NaN or infinity
+// anywhere in a file's column stats fails the marshal of the whole stats object, which would drop
+// every statistic for that file — and the error is not reported, so the loss is silent. Such a
+// bound prunes nothing anyway, so leaving it out costs no information.
+func finiteBound(v any) (any, bool) {
+	switch x := v.(type) {
+	case nil:
+		return nil, false
+	case float32:
+		f := float64(x)
+		return x, !math.IsNaN(f) && !math.IsInf(f, 0)
+	case float64:
+		return x, !math.IsNaN(x) && !math.IsInf(x, 0)
+	default:
+		return v, true
 	}
 }
 

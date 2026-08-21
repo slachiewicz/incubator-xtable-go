@@ -308,6 +308,10 @@ func (s *Source) convertManifestDataFile(mdf *ManifestDataFile, table *model.Tab
 		RecordCount:   mdf.RecordCount,
 	}
 
+	if table != nil {
+		dataFile.ColumnStats = columnStatsFromManifest(mdf, table.ReadSchema)
+	}
+
 	if table != nil && len(mdf.Partition) > 0 {
 		for _, pf := range table.PartitioningFields {
 			if val, ok := mdf.Partition[pf.SourceField.Name]; ok {
