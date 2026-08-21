@@ -256,29 +256,34 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 		return nil, fmt.Errorf("failed to read iceberg manifest list %s: %w", currSnapshot.ManifestList, err)
 	}
 
-	var manifestList []ManifestListEntry
-	if err := json.Unmarshal(manifestListData, &manifestList); err != nil {
-		// The Iceberg spec stores manifest lists as Avro, and that is what every other writer
-		// emits; polytable reads only the JSON ones its own target writes. Name the limitation
-		// here rather than reporting it as malformed JSON.
-		return nil, fmt.Errorf("failed to parse iceberg manifest list %s: %w "+
-			"(avro manifest lists are not supported yet)", currSnapshot.ManifestList, err)
+	manifestList, err := readManifestList(manifestListData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse iceberg manifest list %s: %w", currSnapshot.ManifestList, err)
 	}
 
 	var dataFiles []*model.DataFile
 	for _, mle := range manifestList {
+		// A manifest of delete files describes rows removed from data files, not files of its own.
+		// Reading its entries as data files would invent files that do not exist.
+		if mle.Content != contentData {
+			continue
+		}
 		manifestData, err := s.storage.Read(ctx, mle.ManifestPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read manifest %s: %w", mle.ManifestPath, err)
 		}
-		var entries []ManifestEntry
-		if err := json.Unmarshal(manifestData, &entries); err != nil {
-			return nil, fmt.Errorf("failed to parse manifest entries: %w", err)
+		entries, err := readManifest(manifestData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse manifest %s: %w", mle.ManifestPath, err)
 		}
 		for _, e := range entries {
-			if e.Status != 2 && e.DataFile != nil { // Not deleted
-				dataFiles = append(dataFiles, s.convertManifestDataFile(e.DataFile, table))
+			if e.Status == manifestStatusDeleted || e.DataFile == nil {
+				continue
 			}
+			if e.DataFile.Content != contentData {
+				continue
+			}
+			dataFiles = append(dataFiles, s.convertManifestDataFile(e.DataFile, table))
 		}
 	}
 
@@ -350,7 +355,7 @@ func (s *Source) Close() error {
 func (s *Source) convertManifestDataFile(mdf *ManifestDataFile, table *model.Table) *model.DataFile {
 	dataFile := &model.DataFile{
 		PhysicalPath:  mdf.FilePath,
-		FileFormat:    model.FileFormatParquet,
+		FileFormat:    modelFileFormat(mdf.FileFormat),
 		FileSizeBytes: mdf.FileSizeInBytes,
 		RecordCount:   mdf.RecordCount,
 	}

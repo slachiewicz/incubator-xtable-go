@@ -239,24 +239,28 @@ func TestIceberg_DecodeBoundRejectsMalformedInput(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		schema  *model.Schema
-		encoded string
+		name   string
+		schema *model.Schema
+		raw    []byte
 	}{
-		{name: "empty", schema: model.NewPrimitiveSchema(model.TypeLong, true), encoded: ""},
-		{name: "not base64", schema: model.NewPrimitiveSchema(model.TypeLong, true), encoded: "!!!"},
-		{name: "wrong length for long", schema: model.NewPrimitiveSchema(model.TypeLong, true), encoded: "AQI="},
-		{name: "wrong length for uuid", schema: model.NewPrimitiveSchema(model.TypeUUID, true), encoded: "AQI="},
+		{name: "empty", schema: model.NewPrimitiveSchema(model.TypeLong, true), raw: nil},
+		{name: "wrong length for long", schema: model.NewPrimitiveSchema(model.TypeLong, true), raw: []byte{1, 2}},
+		{name: "wrong length for int", schema: model.NewPrimitiveSchema(model.TypeInt, true), raw: []byte{1, 2}},
+		{name: "wrong length for uuid", schema: model.NewPrimitiveSchema(model.TypeUUID, true), raw: []byte{1, 2}},
 		// Eight bytes of a quiet NaN, little-endian: what a writer that ignores the Iceberg rule
 		// would emit. Decoding must refuse it rather than let a NaN into the model.
-		{name: "nan payload for double", schema: model.NewPrimitiveSchema(model.TypeDouble, true), encoded: "AAAAAAAA+H8="},
+		{
+			name:   "nan payload for double",
+			schema: model.NewPrimitiveSchema(model.TypeDouble, true),
+			raw:    []byte{0, 0, 0, 0, 0, 0, 0xf8, 0x7f},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			decoded, ok := iceberg.DecodeBound(tt.schema, tt.encoded)
+			decoded, ok := iceberg.DecodeBound(tt.schema, tt.raw)
 			assert.False(t, ok)
 			assert.Nil(t, decoded)
 		})
@@ -337,54 +341,41 @@ func TestIceberg_ColumnStatsKeyedByFieldID(t *testing.T) {
 
 	storage := io.NewMemoryStorage()
 	basePath := "mem://lake/iceberg_rename"
-	amountSchema := model.NewPrimitiveSchema(model.TypeLong, true)
 
-	lower, ok := iceberg.EncodeBound(amountSchema, int64(5), iceberg.LowerBound)
-	require.True(t, ok)
-	upper, ok := iceberg.EncodeBound(amountSchema, int64(500), iceberg.UpperBound)
-	require.True(t, ok)
+	amountField := &model.Field{Name: "amount", Schema: model.NewPrimitiveSchema(model.TypeLong, true)}
+	table := &model.Table{
+		Name:             "orders",
+		TableFormat:      model.TableFormatIceberg,
+		ReadSchema:       model.NewRecordSchema("orders", []*model.Field{amountField}, false),
+		BasePath:         basePath,
+		LatestCommitTime: time.Now().UnixMilli(),
+	}
 
-	manifestPath := io.JoinPath(basePath, "metadata", "abc-m0.json")
-	manifestListPath := io.JoinPath(basePath, "metadata", "snap-1.json")
-
-	writeJSON(t, storage, manifestPath, []iceberg.ManifestEntry{{
-		Status:     1,
-		SnapshotID: 1,
-		DataFile: &iceberg.ManifestDataFile{
-			FilePath:        io.JoinPath(basePath, "data", "part-0.parquet"),
-			FileFormat:      string(model.FileFormatParquet),
-			RecordCount:     7,
-			FileSizeInBytes: 512,
-			ValueCounts:     map[int]int64{1: 7},
-			NullValueCounts: map[int]int64{1: 1},
-			LowerBounds:     map[int]string{1: lower},
-			UpperBounds:     map[int]string{1: upper},
-		},
-	}})
-	writeJSON(t, storage, manifestListPath, []iceberg.ManifestListEntry{{
-		ManifestPath:    manifestPath,
-		ManifestLength:  1,
-		AddedSnapshotID: 1,
-		AddedFilesCount: 1,
-	}})
-
-	snapshotID := int64(1)
-	// The column was called "amount" when the manifest was written; the current schema calls the
-	// same field ID "amount_eur".
-	writeJSON(t, storage, io.JoinPath(basePath, "metadata", "v1.metadata.json"), &iceberg.TableMetadata{
-		FormatVersion:     2,
-		TableUUID:         "11111111-1111-1111-1111-111111111111",
-		Location:          basePath,
-		LastUpdatedMs:     time.Now().UnixMilli(),
-		LastColumnID:      1,
-		CurrentSchemaID:   0,
-		Schemas:           []*iceberg.TableSchema{{Type: "struct", SchemaID: 0, Fields: []*iceberg.NestedField{{ID: 1, Name: "amount_eur", Type: "long"}}}},
-		CurrentSnapshotID: &snapshotID,
-		Snapshots: []*iceberg.TableSnapshot{{
-			SnapshotID:   snapshotID,
-			ManifestList: manifestListPath,
+	target := iceberg.NewTarget(storage)
+	require.NoError(t, target.Init(ctx, table))
+	require.NoError(t, target.CommitSnapshot(ctx, &model.Snapshot{
+		Table: table,
+		DataFiles: []*model.DataFile{{
+			PhysicalPath:  io.JoinPath(basePath, "data", "part-0.parquet"),
+			FileFormat:    model.FileFormatParquet,
+			FileSizeBytes: 512,
+			RecordCount:   7,
+			ColumnStats: []*model.ColumnStat{
+				{Field: amountField, Range: model.NewRange(int64(5), int64(500)), TotalValues: 7, NumNulls: 1},
+			},
 		}},
-	})
+		SourceIdentifier: "snap-1",
+	}))
+
+	// The column was called "amount" when the manifest was written. Renaming it in a later metadata
+	// version leaves the manifest untouched, which is the situation the field ID exists for: the
+	// bounds have to follow the ID, not the name.
+	committed := readMetadata(t, storage, io.JoinPath(basePath, "metadata", "v1.metadata.json"))
+	require.Len(t, committed.Schemas, 1)
+	require.Len(t, committed.Schemas[0].Fields, 1)
+	require.Equal(t, "amount", committed.Schemas[0].Fields[0].Name)
+	committed.Schemas[0].Fields[0].Name = "amount_eur"
+	writeJSON(t, storage, io.JoinPath(basePath, "metadata", "v2.metadata.json"), committed)
 
 	source := iceberg.NewSource(storage, basePath)
 	snapshot, err := source.GetCurrentSnapshot(ctx)
@@ -416,4 +407,14 @@ func writeJSON(t *testing.T, storage io.Storage, path string, value any) {
 	data, err := json.Marshal(value)
 	require.NoError(t, err)
 	require.NoError(t, storage.Write(context.Background(), path, data))
+}
+
+// readMetadata parses a metadata.json the target wrote. Unlike a manifest, it really is JSON.
+func readMetadata(t *testing.T, storage io.Storage, path string) *iceberg.TableMetadata {
+	t.Helper()
+	data, err := storage.Read(context.Background(), path)
+	require.NoError(t, err)
+	var meta iceberg.TableMetadata
+	require.NoError(t, json.Unmarshal(data, &meta))
+	return &meta
 }

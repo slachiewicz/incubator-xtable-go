@@ -18,6 +18,7 @@
 package iceberg
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -66,6 +67,83 @@ func SchemaToIceberg(schema *model.Schema, schemaID int) (*TableSchema, int, err
 		SchemaID: schemaID,
 		Fields:   nestedFields,
 	}, lastColumnID, nil
+}
+
+// NameMappingProperty is the table property under which Iceberg records the fallback mapping from
+// column name to field id.
+//
+// Every reader resolves a Parquet column by the field id stored in the file's own schema, and falls
+// back to this mapping when the file carries none. Polytable never writes data files — it describes
+// files another engine wrote — so the files it points at rarely carry ids, and without the mapping
+// an engine reads the table as the right number of rows of nothing but nulls. That is what DuckDB
+// did before this was written.
+const NameMappingProperty = "schema.name-mapping.default"
+
+// nameMappingEntry is one node of the name mapping, which mirrors the shape of the schema.
+type nameMappingEntry struct {
+	FieldID *int               `json:"field-id,omitempty"`
+	Names   []string           `json:"names"`
+	Fields  []nameMappingEntry `json:"fields,omitempty"`
+}
+
+// NameMappingJSON renders the fallback name mapping of an Iceberg schema.
+func NameMappingJSON(schema *TableSchema) (string, error) {
+	if schema == nil {
+		return "", fmt.Errorf("iceberg schema cannot be nil")
+	}
+	encoded, err := json.Marshal(nameMappingForFields(schema.Fields))
+	if err != nil {
+		return "", fmt.Errorf("failed to encode the iceberg name mapping: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func nameMappingForFields(fields []*NestedField) []nameMappingEntry {
+	entries := make([]nameMappingEntry, 0, len(fields))
+	for _, f := range fields {
+		id := f.ID
+		entries = append(entries, nameMappingEntry{
+			FieldID: &id,
+			Names:   []string{f.Name},
+			Fields:  nameMappingForType(f.Type),
+		})
+	}
+	return entries
+}
+
+// nameMappingForType descends into the nested types. The names of the anonymous nodes — a list's
+// element, a map's key and value — are fixed by the specification.
+func nameMappingForType(raw any) []nameMappingEntry {
+	typed, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	switch typed["type"] {
+	case "struct":
+		fields, ok := typed["fields"].([]*NestedField)
+		if !ok {
+			return nil
+		}
+		return nameMappingForFields(fields)
+	case "list":
+		return []nameMappingEntry{nameMappingNode(typed["element-id"], "element", typed["element"])}
+	case "map":
+		return []nameMappingEntry{
+			nameMappingNode(typed["key-id"], "key", typed["key"]),
+			nameMappingNode(typed["value-id"], "value", typed["value"]),
+		}
+	default:
+		return nil
+	}
+}
+
+func nameMappingNode(rawID any, name string, elementType any) nameMappingEntry {
+	entry := nameMappingEntry{Names: []string{name}, Fields: nameMappingForType(elementType)}
+	if id, ok := rawID.(int); ok {
+		entry.FieldID = &id
+	}
+	return entry
 }
 
 func convertTypeToIceberg(s *model.Schema, nextID int) (any, int, error) {

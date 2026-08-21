@@ -90,35 +90,52 @@ type TableMetadata struct {
 	Snapshots          []*TableSnapshot  `json:"snapshots,omitempty"`
 }
 
+// The manifest types below carry no struct tags: manifests are Avro, not JSON, and their field
+// names, ids and encoding live in manifest.go with the schemas the specification fixes.
+
 // ManifestEntry represents a data file entry inside an Iceberg manifest.
 type ManifestEntry struct {
-	Status     int               `json:"status"` // 0: EXISTING, 1: ADDED, 2: DELETED
-	SnapshotID int64             `json:"snapshot_id"`
-	DataFile   *ManifestDataFile `json:"data_file"`
+	Status     int // 0: EXISTING, 1: ADDED, 2: DELETED
+	SnapshotID int64
+	// SequenceNumber and FileSequenceNumber are null on an added entry, which is how the
+	// specification says a reader must inherit them from the snapshot that added the file.
+	SequenceNumber     *int64
+	FileSequenceNumber *int64
+	DataFile           *ManifestDataFile
 }
 
 // ManifestDataFile represents the metadata of a data file inside a manifest.
 type ManifestDataFile struct {
-	FilePath        string         `json:"file_path"`
-	FileFormat      string         `json:"file_format"`
-	Partition       map[string]any `json:"partition"`
-	RecordCount     int64          `json:"record_count"`
-	FileSizeInBytes int64          `json:"file_size_in_bytes"`
-	ColumnSizes     map[int]int64  `json:"column_sizes,omitempty"`
-	ValueCounts     map[int]int64  `json:"value_counts,omitempty"`
-	NullValueCounts map[int]int64  `json:"null_value_counts,omitempty"`
-	NanValueCounts  map[int]int64  `json:"nan_value_counts,omitempty"`
-	LowerBounds     map[int]string `json:"lower_bounds,omitempty"`
-	UpperBounds     map[int]string `json:"upper_bounds,omitempty"`
+	// Content is 0 for a data file; the delete-file contents are not written by this port.
+	Content         int
+	FilePath        string
+	FileFormat      string
+	Partition       map[string]any
+	RecordCount     int64
+	FileSizeInBytes int64
+	ColumnSizes     map[int]int64
+	ValueCounts     map[int]int64
+	NullValueCounts map[int]int64
+	NanValueCounts  map[int]int64
+	// LowerBounds and UpperBounds hold the specification's single-value binary serialization,
+	// keyed by field id.
+	LowerBounds map[int][]byte
+	UpperBounds map[int][]byte
 }
 
 // ManifestListEntry represents an entry inside a manifest list file.
 type ManifestListEntry struct {
-	ManifestPath       string `json:"manifest_path"`
-	ManifestLength     int64  `json:"manifest_length"`
-	PartitionSpecID    int    `json:"partition_spec_id"`
-	AddedSnapshotID    int64  `json:"added_snapshot_id"`
-	AddedFilesCount    int    `json:"added_data_files_count"`
-	ExistingFilesCount int    `json:"existing_data_files_count"`
-	DeletedFilesCount  int    `json:"deleted_data_files_count"`
+	ManifestPath       string
+	ManifestLength     int64
+	PartitionSpecID    int
+	Content            int
+	SequenceNumber     int64
+	MinSequenceNumber  int64
+	AddedSnapshotID    int64
+	AddedFilesCount    int
+	ExistingFilesCount int
+	DeletedFilesCount  int
+	AddedRowsCount     int64
+	ExistingRowsCount  int64
+	DeletedRowsCount   int64
 }

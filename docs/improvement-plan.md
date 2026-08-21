@@ -1291,7 +1291,7 @@ tasks.
 
 # Integration-test plan — 2026-08-21
 
-## T28 — Real-writer fixtures ⚠️ PARTIAL (Delta proven, Iceberg blocked on Avro)
+## T28 — Real-writer fixtures ✅ (Iceberg half unblocked by T31)
 
 Every suite in the tree reads metadata polytable itself wrote, so a reader that agrees with
 polytable's writer passes even where the pair disagrees with the format. Check in small tables
@@ -1314,7 +1314,7 @@ assumed away.
 
 **Commit:** `test: read fixtures written by delta-rs and pyiceberg`
 
-### Outcome ⚠️ — the fixtures landed and found three reader gaps
+### Outcome ✅ — the fixtures landed and found four reader gaps, one of them fixed here
 
 Fixtures: `test/testdata/fixtures/delta-rs/sales` (delta-rs 1.6.2, 3 commits, 6 data files, 14 rows)
 and `test/testdata/fixtures/pyiceberg/events` (pyiceberg 0.11.1, 3 snapshots, 5 metadata versions,
@@ -1335,19 +1335,24 @@ foreign writer.
   `iceberg.MetadataFileVersion` now accepts both and `listMetadataFiles` carries the path rather than
   rebuilding it from the version, since the UUID cannot be reconstructed. With that, the schema,
   field IDs, partition spec and commit instant of the pyiceberg table all read correctly.
-- *Recorded, not fixed:* the file list still cannot be read. See F1.
+- *Recorded, then fixed by T31:* the file list could not be read at all. See F1.
+
+Since T31 the pyiceberg fixture reads and converts like the delta-rs one:
+`TestForeignFixtures_ReadIcebergSnapshot` checks the file list, row counts and partition tuples
+against `manifest.json`, and `TestForeignFixtures_ConvertIceberg` runs it through every other
+target. F2, F3 and F4 remain recorded rather than fixed, each with a pinned assertion.
 
 ### Watch list
 
-- **F1 — Iceberg manifests are Avro, and polytable parses them as JSON.** `iceberg.Source`
-  `json.Unmarshal`s both the manifest list and the manifests, a format only polytable's own target
-  produces. The spec mandates Avro OCF and every other writer emits it, so **no foreign Iceberg
-  table can be a conversion source**: `GetCurrentSnapshot` fails and the controller fails with it.
-  Fixing this needs an Avro decoder and therefore a dependency decision — `go.mod` has none —
-  which is why it is a task of its own rather than part of T28. Pinned by
-  `TestForeignFixtures_ReadIcebergSnapshotIsUnsupported` and
-  `TestForeignFixtures_ConvertIcebergIsUnsupported`; the error names the limitation instead of
-  reporting malformed JSON.
+- ~~**F1 — Iceberg manifests are Avro, and polytable parses them as JSON.**~~ **Fixed by T31.** The
+  pyiceberg fixture now reads and converts; `TestForeignFixtures_ReadIcebergSnapshot` and
+  `TestForeignFixtures_ConvertIceberg` assert the file list instead of the failure.
+- **F4 — the Hudi target mangles a data file path that carries a URI scheme.** It trims the table's
+  base path off `PhysicalPath` with a plain string prefix match. The Iceberg source reports the
+  location the manifest recorded, scheme and all (`file:///…`), so the prefix never matches, the
+  whole absolute path is stored as if it were relative, and the Hudi source joins it onto the base
+  path a second time — `…/events/file:/…/events/data/…`. Found by T31 when a foreign Iceberg table
+  first became a conversion source. Pinned by `pathsDoubled` in `TestForeignFixtures_ConvertIceberg`.
 - **F2 — the Paimon target and the Paimon source disagree on the table layout.** The target writes
   `metadata/schema-<epoch>.json` and `metadata/manifest.json`; the source reads `schema/schema-*`
   and `snapshot/`, which is the real Paimon layout. Nothing polytable writes as Paimon can be read
@@ -1370,7 +1375,7 @@ share is invisible to that: the writer emits it, the reader accepts it, the test
 the table is unreadable to the engines the project exists to serve. These tasks put independent
 readers on the output.
 
-## T29 — Engine verification of polytable output with DuckDB ⚠️ PARTIAL
+## T29 — Engine verification of polytable output with DuckDB ✅ (Iceberg pairs unblocked by T31)
 
 DuckDB reads Delta through `delta_scan` (delta-kernel-rs) and Iceberg through `iceberg_scan`, is a
 single static binary and needs no JVM, which makes it the cheapest independent judge available.
@@ -1386,19 +1391,20 @@ pinned duckdb before the test step.
 
 **Commit:** `test: verify Delta and Iceberg outputs with DuckDB`
 
-### Outcome ⚠️
+### Outcome ✅
 
 Verified with **duckdb v1.5.5 (Variegata)** on macOS arm64, core `delta` extension `45c4087` and
-core `iceberg` extension `45163a28`.
+core `iceberg` extension `45163a28`. The Iceberg rows below were re-run after T31 landed; before it
+they were skipped.
 
 | Pair | Result |
 |---|---|
 | Parquet → Delta | ✅ read by `delta_scan` |
 | Iceberg → Delta | ✅ read by `delta_scan` |
 | Hudi → Delta | ✅ read by `delta_scan` |
-| Parquet → Iceberg | ⚠️ `iceberg_scan` cannot read it |
-| Delta → Iceberg | ⚠️ `iceberg_scan` cannot read it |
-| Hudi → Iceberg | ⚠️ `iceberg_scan` cannot read it |
+| Parquet → Iceberg | ✅ read by `iceberg_scan` — after T31 |
+| Delta → Iceberg | ✅ read by `iceberg_scan` — after T31 |
+| Hudi → Iceberg | ✅ read by `iceberg_scan` — after T31 |
 
 **The Delta writer was broken for every non-polytable reader, and this is the headline finding.**
 Two keys were emitted with `omitempty`, so a table with no format options and no field metadata —
@@ -1414,13 +1420,14 @@ JSON: a round trip through polytable's own Delta source passes either way, becau
 ignores both keys — which is exactly how this survived until an outside reader looked at it. The
 same defect would have hit delta-rs, Spark's Delta reader and anything else built on the kernel.
 
-**Iceberg output is not readable by any Iceberg engine.** `pkg/formats/iceberg/target.go` writes
+**Iceberg output was not readable by any Iceberg engine.** `pkg/formats/iceberg/target.go` wrote
 manifest files and manifest lists as JSON (`*-m0.json`, `snap-*.json`); the Iceberg spec mandates
-Avro, and DuckDB rejects them with `Incorrect Avro container file magic number`. This is a feature
-gap, not a bug to fix in a test commit — it needs an Avro writer, and `go.mod` has no Avro
-dependency. The three Iceberg subtests sync, assert the sync succeeded, then `t.Skip` with the
-DuckDB error attached; they will start asserting on their own once the manifests are Avro, because
-the skip is conditional on the scan failing rather than hard-coded. Tracked as T31.
+Avro, and DuckDB rejected them with `Incorrect Avro container file magic number`. That was a
+feature gap rather than a bug to fix in a test commit — it needed an Avro writer, and `go.mod` had
+no Avro dependency — so the three Iceberg subtests synced, asserted the sync succeeded, then
+`t.Skip`ped with the DuckDB error attached. **T31 closed it**: the skip is gone, all six pairs
+assert, and the run above is the result. T31's outcome records the two further defects the Iceberg
+half exposed once DuckDB could open the metadata at all.
 
 **Not verified:** pruning. `EXPLAIN`/`EXPLAIN ANALYZE` output is not a stable contract across DuckDB
 releases, so the suite proves correctness under a predicate rather than that files were skipped.
@@ -1443,7 +1450,7 @@ Follow-ups noted, not scheduled: a bindings smoke lane (the C ABI and wheel are 
 executed in CI; one `polytable.sync()` via ctypes and a node run of `polytable.wasm`), and
 LocalStack-Glue for catalog sync integration.
 
-## T31 — Iceberg manifests must be Avro, not JSON
+## T31 — Iceberg manifests must be Avro, not JSON ✅
 
 **The largest interop defect in the port**, found 2026-08-21 while planning engine verification.
 The Iceberg spec requires Avro manifest lists and manifest files. This adapter uses JSON on both
@@ -1480,6 +1487,67 @@ T29 suite — that is the regression test); Iceberg→Delta→Iceberg round trip
 
 **Commit:** `fix: write and read Iceberg manifests as Avro per the spec`
 
+### Outcome ✅
+
+**Library: `github.com/hamba/avro/v2`, with a manifest codec of our own.** `apache/iceberg-go` was
+rejected on its dependency graph rather than on its code: the manifest layer lives in the root
+package, and that module's `go.mod` requires arrow-go, gocloud, the Azure and GCP SDKs, substrait,
+docker/compose and testcontainers. Go's minimal version selection resolves those for the whole
+module whether or not the catalog packages are imported, and several of them — aws-sdk-go-v2 above
+all — would move pins this repo sets deliberately. hamba brings six pure-Go dependencies, none
+already in the graph beyond `klauspost/compress`, and compiles for `js/wasm`. The codec is
+`pkg/formats/iceberg/manifest.go`: the v2 `manifest_entry` and `manifest_file` schemas as literal
+JSON with the specification's field ids, and records carried as `map[string]any` in both directions.
+That shape is not a shortcut. Writing needs it because the `partition` column's Avro type is derived
+per table from the partition spec; reading needs it because the schema is whichever one the writing
+engine chose, and hamba decodes against the schema embedded in the file.
+
+The schema is written through `ocf.WithSchemaMarshaler` returning the literal JSON, because a round
+trip through the parser is not guaranteed to preserve `field-id` properties — and a manifest without
+them is one no engine can resolve columns against. `TestIceberg_ManifestCarriesFieldIDsAndHeader`
+asserts on the header bytes rather than on a read-back.
+
+**Two further defects surfaced once DuckDB could open the metadata at all.** Both are exactly the
+kind a round trip through polytable's own reader cannot see, which is the T29 lesson repeating:
+
+- *`file_format` was written as the canonical name.* `APACHE_PARQUET` reached the manifest verbatim;
+  the specification admits `PARQUET`, `ORC` and `AVRO` only, and DuckDB answers `File format
+  'APACHE_PARQUET' not supported`. Now mapped both ways.
+- *No name mapping, so every column read as null.* An Iceberg reader binds a Parquet column by the
+  field id in the file's own schema. Polytable never writes data files, so the files it describes
+  carry no ids, and DuckDB returned the right number of rows with every data column NULL — only the
+  partition column, which comes from the manifest's partition tuple, had a value. The fallback
+  `schema.name-mapping.default` table property fixes it, and it is what the specification prescribes
+  for exactly this case. `TestIceberg_MetadataCarriesNameMapping` guards it on the raw JSON.
+
+**Partitions.** Only the identity transform on `boolean`, `int`, `long`, `float`, `double` and
+`string` is written; anything else fails the commit with the transform or type named. Date and the
+timestamps are excluded deliberately — their Avro form carries a logical type whose unit this port
+does not normalize on either side, and a guessed unit files data under the wrong partition as surely
+as a wrong type would. A partition column the source reports but its schema does not contain (the
+Hive layouts, F3) is added to the written schema: Iceberg resolves every partition field against a
+schema column, and an identity-partitioned column need not be stored in the data files because a
+reader materializes it from the partition tuple.
+
+**Bounds** moved from T20's base64-of-binary to native Avro `bytes` in the `k126_v127`/`k129_v130`
+entry maps. The single-value binary serialization and the -0.0 widening are unchanged;
+`EncodeBound`/`DecodeBound` now take and return `[]byte`.
+
+**Verified.** DuckDB v1.5.5 `iceberg_scan` reads all three →Iceberg pairs of the T29 suite — row
+count, a predicate above every written id, a partition predicate, and `SELECT *` decoding every
+data page. pyiceberg 0.11.1 scans a polytable-written table through `StaticTable.from_metadata`
+(`test/fixtures/verify_pyiceberg.py`, a manual check): every value of every column, from a Delta
+source and from a raw-Parquet one, and on a Hive-partitioned directory whose files omit the
+partition column it materializes the synthesized column from the partition tuple. The T28 pyiceberg
+fixture reads and converts into Delta, Hudi and raw Parquet. Iceberg→Delta→Iceberg still preserves
+bounds.
+
+**Fixture relocation.** A fixture's Avro manifests hold absolute paths from the machine that
+generated them, and generate.py's placeholder substitution cannot reach inside a compressed
+container file. `relocateAvroManifests` in `test/foreign_fixtures_test.go` decodes the records,
+replaces the location and encodes them again under the file's own schema and header, so what the
+Iceberg source reads is still pyiceberg's shape.
+
 ## T32 — Paimon round-trip is broken: target and source disagree on layout
 
 T28's F2. The Paimon target writes `metadata/schema-<epoch>.json`; the Paimon source reads
@@ -1511,6 +1579,22 @@ type; the T28 pinning assertions flip to green.
 
 **Commit:** `fix: merge Parquet footers and surface the Hive partition column`
 
+## T34 — The Hudi target drops a data file path that carries a URI scheme
+
+T31's F4. `pkg/formats/hudi/target.go` computes each file's path relative to the table with
+`strings.TrimPrefix(df.PhysicalPath, t.targetTable.BasePath)`. An Iceberg source reports the
+location its manifest recorded, scheme included, so the prefix never matches, the absolute path is
+stored as if it were relative, and `pkg/formats/hudi/source.go` joins it onto the base path again:
+`…/events/file:/…/events/data/…`. Nothing caught it before a foreign Iceberg table could be a
+conversion source. Decide whether the fix belongs in the Hudi adapter or in `pkg/io` — every target
+that trims a base path by string prefix has the same exposure, so check Delta and Paimon before
+choosing.
+
+**Acceptance:** an Iceberg→Hudi conversion reports each data file once, under the table's base path;
+the `pathsDoubled` pin in `TestForeignFixtures_ConvertIceberg` is deleted rather than adjusted.
+
+**Commit:** `fix: trim the base path from a data file location scheme and all`
+
 ---
 
 ## Ordering
@@ -1519,17 +1603,18 @@ type; the T28 pinning assertions flip to green.
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27 |
-| ⚠️ Superseded / partial | T2 → T16 · T8 → T18 · T28 (fixtures + Delta half proven; Iceberg convert blocked on T31, F2/F3 → T32/T33) · T29 (Delta output verified by DuckDB; Iceberg pairs skipped until T31) |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31 |
+| ⚠️ Superseded / partial | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T32 (Paimon round-trip layout), T33 (Parquet schema merge + partition column) |
+| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T32 (Paimon round-trip layout), T33 (Parquet schema merge + partition column), T34 (Hudi drops a scheme-qualified path — F4) |
 
-**Picking up the queue.** Suggested value order is T31 first — until it lands, polytable's
-Iceberg output is metadata no Iceberg engine can open, and the T28/T29 suites hold skipped
-assertions waiting on it — then T32, T33. T24 is a decision
-before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
-translator until the INV-1 question in the task is answered.
+**Picking up the queue.** T31 has landed, so both directions of the Iceberg adapter now agree with
+the specification and with DuckDB. Suggested value order from here is T32, then T33 and T34 —
+T33 and T34 are both defects a foreign source exposed, and each has a pinned assertion in
+`test/foreign_fixtures_test.go` waiting to flip. T24 is a decision before it is code — read
+`SPEC.md:335` first and do not start writing an Iceberg deletion-vector translator until the INV-1
+question in the task is answered.
 
 Gate at review time: `make check` green, `go test -short -race ./pkg/...` clean, 28 commits unpushed
 (`d34ed36..3162cf3`), working tree clean. Pushing is safe; **tagging is not until T17 is proven**.
