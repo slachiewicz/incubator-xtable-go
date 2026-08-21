@@ -87,8 +87,7 @@ func (s *SourceCatalogConfig) Validate() error {
 // storage backend is chosen from the resolved base path.
 //
 // newSource is injectable for tests; pass nil to use catalog.NewConversionSource.
-func ResolveSourceCatalog(ctx context.Context, cfg *DatasetConfig,
-	newSource func(context.Context, *catalog.Config) (catalog.ConversionSource, error)) error {
+func ResolveSourceCatalog(ctx context.Context, cfg *DatasetConfig, newSource CatalogSourceFactory) error {
 	if cfg == nil || cfg.SourceCatalog == nil {
 		return nil
 	}

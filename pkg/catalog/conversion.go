@@ -20,6 +20,7 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"iter"
 	"strings"
 
 	"github.com/slachiewicz/polytable/pkg/model"
@@ -39,7 +40,29 @@ const (
 	PropWriteDataLocation          = "write.data.path"
 	PropWriteFolderStorageLocation = "write.folder-storage.path"
 	PropObjectStorePath            = "write.object-storage.path"
+	// PropTargetFormats lists the formats a discovered table should be converted to, as a
+	// comma-separated list of model.TableFormat values (e.g. "ICEBERG,DELTA"). This key is
+	// polytable's own convention: Java XTable has no target-format property at all, and the AWS
+	// Lambda reference architecture's xtable_target_formats is that solution's private convention,
+	// deliberately not adopted here. The polytable_ prefix matches the polytable_synced_time
+	// parameter GlueCatalogSyncClient already writes.
+	PropTargetFormats = "polytable_target_formats"
 )
+
+// TableFilter selects which catalog tables a listing yields. Its zero value selects every table.
+type TableFilter struct {
+	// RequireConversionMarkers keeps only tables carrying a non-blank PropTargetFormats, i.e. the
+	// tables whose owner opted them into conversion.
+	RequireConversionMarkers bool
+}
+
+// Matches reports whether a table with these properties passes the filter.
+func (f TableFilter) Matches(properties map[string]string) bool {
+	if f.RequireConversionMarkers && strings.TrimSpace(properties[PropTargetFormats]) == "" {
+		return false
+	}
+	return true
+}
 
 // TableIdentifier addresses a table inside an external catalog. It is the catalog-side equivalent of
 // a base path: the whole point of a ConversionSource is to accept one of these instead.
@@ -91,6 +114,11 @@ type ConversionSource interface {
 	// GetSourceTable resolves a catalog entry into a SourceTable.
 	GetSourceTable(ctx context.Context, id TableIdentifier) (*SourceTable, error)
 
+	// ListTables walks every table in a catalog database that passes filter. The sequence yields a
+	// zero identifier with a non-nil error when the catalog call fails, and stops there rather than
+	// truncating silently; a caller that stops early stops the paging with it.
+	ListTables(ctx context.Context, database string, filter TableFilter) iter.Seq2[TableIdentifier, error]
+
 	// Close releases any network connections.
 	Close() error
 }
@@ -107,6 +135,35 @@ func TableFormatFromProperties(properties map[string]string) (model.TableFormat,
 			PropTableType, PropSparkSQLSourcesProvider)
 	}
 	return model.ParseTableFormat(strings.ToUpper(raw))
+}
+
+// TargetFormatsFromProperties resolves the formats a table is marked for conversion to, from the
+// PropTargetFormats property. A table carrying no marker returns (nil, nil): it is not opted in, so
+// discovery skips it rather than failing it. A marker naming a format this build does not know is
+// an error, since that is a typo the operator wants to hear about.
+func TargetFormatsFromProperties(properties map[string]string) ([]model.TableFormat, error) {
+	raw := strings.TrimSpace(properties[PropTargetFormats])
+	if raw == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(raw, ",")
+	formats := make([]model.TableFormat, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		format, err := model.ParseTableFormat(part)
+		if err != nil {
+			return nil, fmt.Errorf("property %q: %w", PropTargetFormats, err)
+		}
+		formats = append(formats, format)
+	}
+	if len(formats) == 0 {
+		return nil, nil
+	}
+	return formats, nil
 }
 
 // DataLocationForFormat resolves where a table's data files live. Delta and Hudi keep data under the

@@ -22,6 +22,8 @@ package catalog
 import (
 	"context"
 	"fmt"
+	"iter"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -29,9 +31,11 @@ import (
 )
 
 // glueTableReader is the slice of the Glue API this conversion source needs. Declaring it here keeps
-// the source testable without reaching AWS; *glue.Client satisfies it.
+// the source testable without reaching AWS; *glue.Client satisfies it. The GetTables signature is
+// glue.GetTablesAPIClient's, so an implementation can be handed straight to the SDK's paginator.
 type glueTableReader interface {
 	GetTable(ctx context.Context, params *glue.GetTableInput, optFns ...func(*glue.Options)) (*glue.GetTableOutput, error)
+	GetTables(ctx context.Context, params *glue.GetTablesInput, optFns ...func(*glue.Options)) (*glue.GetTablesOutput, error)
 }
 
 // GlueConversionSource resolves tables registered in the AWS Glue Data Catalog.
@@ -123,6 +127,41 @@ func (g *GlueConversionSource) GetSourceTable(ctx context.Context, id TableIdent
 		Format:     format,
 		Properties: properties,
 	}, nil
+}
+
+// ListTables pages through a Glue database with the SDK's GetTables paginator, yielding every table
+// that passes filter. A failing page yields the error and ends the sequence, so a caller that only
+// checks identifiers cannot mistake a truncated listing for a complete one.
+func (g *GlueConversionSource) ListTables(ctx context.Context, database string, filter TableFilter) iter.Seq2[TableIdentifier, error] {
+	return func(yield func(TableIdentifier, error) bool) {
+		database = strings.TrimSpace(database)
+		if database == "" {
+			yield(TableIdentifier{}, fmt.Errorf("catalog table listing requires a database"))
+			return
+		}
+
+		paginator := glue.NewGetTablesPaginator(g.client, &glue.GetTablesInput{
+			CatalogId:    g.catalogID,
+			DatabaseName: aws.String(database),
+		})
+
+		for paginator.HasMorePages() {
+			page, err := paginator.NextPage(ctx)
+			if err != nil {
+				yield(TableIdentifier{}, fmt.Errorf("failed to list tables in glue database %s: %w", database, err))
+				return
+			}
+			for _, table := range page.TableList {
+				name := aws.ToString(table.Name)
+				if name == "" || !filter.Matches(table.Parameters) {
+					continue
+				}
+				if !yield(TableIdentifier{Database: database, Table: name}, nil) {
+					return
+				}
+			}
+		}
+	}
 }
 
 // Close releases resources. The Glue SDK client needs no explicit teardown.

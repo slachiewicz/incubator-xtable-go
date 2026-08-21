@@ -127,6 +127,15 @@ Run synchronization:
 ./bin/polytable sync --config dataset.yaml
 ```
 
+Or let the AWS Glue Data Catalog name the tables instead of a config file. A table opts in by
+carrying a `polytable_target_formats` table property listing its targets (comma-separated, for
+example `ICEBERG,HUDI`); tables without it are skipped, and each table's location comes from the
+catalog:
+
+```bash
+./bin/polytable sync --catalog glue --database analytics
+```
+
 ### 4. CLI Table Inspection (`polytable inspect`)
 
 ```bash
