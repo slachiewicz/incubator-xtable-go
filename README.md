@@ -36,7 +36,16 @@
 
 ---
 
-## 🌟 Why a Go port?
+## 🌟 Why an independent Go port?
+
+[Apache XTable (incubating)](https://github.com/apache/incubator-xtable) is a JVM project: it ships
+as a bundled jar and brings Spark and Hadoop machinery with it. That is a reasonable shape inside a
+data platform, but metadata translation itself is a small job — read one format's metadata, write
+another's, never touch the data files — and running it in a Lambda function, a Kubernetes sidecar,
+a CI step or a laptop means paying JVM cold starts and container-image weight for milliseconds of
+actual work. AWS's own reference architecture for running XTable in Lambda needs a Maven build
+inside the Dockerfile and a Python-to-Java bridge to make it fit. A native reimplementation removes
+that tax entirely, and makes embeddings the JVM cannot offer (C ABI, WASM) possible at all:
 
 - ⚡ **Instant Execution**: Native static binary (13.9 MiB stripped) with **zero JVM boot latency** — 6.6 ms start to exit, measured; see `SPEC.md` section 9.2.
 - 🛡️ **Pure Go & Zero-JVM**: No Spark, Hadoop XML, Java, or Scala runtime dependencies required.
@@ -50,6 +59,19 @@
   - **C-Shared Dynamic Library** (`libxtable.so` / `libxtable.dylib`)
   - **WebAssembly Engine** (`xtable.wasm`) — ⚠️ **experimental**, see [WebAssembly status](#webassembly-status)
 - ☁️ **Cloud Native Storage & Catalogs**: Native AWS S3 (`aws-sdk-go-v2`), AWS Glue Data Catalog, and Iceberg REST Catalog (Polaris, Unity, Nessie, Tabular).
+
+---
+
+## 🤝 Relationship to Apache XTable
+
+This project is **not affiliated with the Apache Software Foundation in any way**. It is an
+independent reimplementation of the translation model published by
+[apache/incubator-xtable](https://github.com/apache/incubator-xtable): the canonical pivot types
+mirror upstream's `Internal*` model, and parity with upstream is tracked task-by-task in
+[`docs/improvement-plan.md`](docs/improvement-plan.md). Tables synced by either tool interoperate —
+both embed the same sync-continuity properties (`xtable_last_instant_synced`,
+`xtable_source_format`), so a table can move between them without a resync. If you want the
+official JVM implementation, use the upstream project.
 
 ---
 
