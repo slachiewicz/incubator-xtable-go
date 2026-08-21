@@ -1528,6 +1528,24 @@ Verified: `make check` green; `go test -short -race ./pkg/...` clean;
 list, row count and schema assertions the other targets get; `TestE2E_PaimonDeltaRoundTrip` covers
 Delta → Paimon → Delta.
 
+## T34 — Paimon against the real spec: Avro manifests and engine verification
+
+T32 aligned the on-disk layout with Paimon 1.3.1's own writers (evidence in its outcome), but two
+gaps separate "matches the layout" from "follows the spec":
+
+1. **Manifests are JSON; Paimon's `CoreOptions.MANIFEST_FORMAT` defaults to Avro.** The records
+   mirror `ManifestEntry`/`ManifestFileMeta`/`DataFileMeta` field for field, but a real Paimon
+   engine cannot open them. Same shape of work as T31 — once T31 settles the Avro codec choice,
+   reuse it here.
+2. **No engine-level verification.** No fixture written by real Paimon exists (T28 covers Delta
+   and Iceberg only) and no real reader checks polytable's Paimon output. Check whether `pypaimon`
+   (the Python SDK) is mature enough to generate a fixture and/or read our output JVM-free; if
+   not, both belong in T30's JVM job alongside the Spark/Hudi fixtures.
+
+**Acceptance:** a real-Paimon-written fixture reads and converts; polytable's Paimon output opens
+in a real Paimon reader (pypaimon or the T30 job); manifests are Avro where the spec defaults to
+Avro. Until then, the format matrix must not claim Paimon interop beyond polytable↔polytable.
+
 ## T33 — Parquet source schema: merge footers, include the partition column
 
 T28's F3, two related defects in `pkg/formats/parquet/source.go`:
@@ -1557,7 +1575,7 @@ type; the T28 pinning assertions flip to green.
 | ⚠️ Superseded / partial | T2 → T16 · T8 → T18 · T28 (fixtures + Delta half proven; Iceberg convert blocked on T31, F2/F3 → T32/T33) · T29 (Delta output verified by DuckDB; Iceberg pairs skipped until T31) |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T33 (Parquet schema merge + partition column) |
+| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T33 (Parquet schema merge + partition column), T34 (Paimon real-spec: Avro manifests + engine verification) |
 
 **Picking up the queue.** Suggested value order is T31 first — until it lands, polytable's
 Iceberg output is metadata no Iceberg engine can open, and the T28/T29 suites hold skipped
