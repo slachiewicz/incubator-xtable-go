@@ -52,34 +52,68 @@ func (s *Source) Format() model.TableFormat {
 	return model.TableFormatIceberg
 }
 
-// listMetadataFiles finds all metadata.json files and extracts their version numbers.
-func (s *Source) listMetadataFiles(ctx context.Context) ([]int, error) {
+// MetadataFileVersion extracts the version number from an Iceberg metadata file name, reporting
+// false for a name that is not one.
+//
+// Two conventions are in use and both must be read. Polytable's own target writes `v<N>.metadata.json`,
+// the form the Hadoop table layout uses. Every catalog-backed writer — the Java library, pyiceberg,
+// Spark — writes `<%05d version>-<uuid>.metadata.json`, keeping the version zero-padded and the UUID
+// to make the name unique without a catalog round trip. Matching only the first form made every table
+// written by a real engine look like it had no metadata at all.
+func MetadataFileVersion(fileName string) (int, bool) {
+	stem, ok := strings.CutSuffix(fileName, ".metadata.json")
+	if !ok || stem == "" {
+		return 0, false
+	}
+
+	if digits, ok := strings.CutPrefix(stem, "v"); ok {
+		if v, err := strconv.Atoi(digits); err == nil && v >= 0 {
+			return v, true
+		}
+		return 0, false
+	}
+
+	digits, _, _ := strings.Cut(stem, "-")
+	if v, err := strconv.Atoi(digits); err == nil && v >= 0 {
+		return v, true
+	}
+	return 0, false
+}
+
+// listMetadataFiles finds all metadata.json files and maps their version numbers to their paths.
+// The path is carried rather than rebuilt from the version because the catalog-backed naming
+// convention embeds a UUID that cannot be reconstructed.
+func (s *Source) listMetadataFiles(ctx context.Context) ([]int, map[int]string, error) {
 	metaDir := io.JoinPath(s.basePath, "metadata")
 	files, err := s.storage.List(ctx, metaDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list iceberg metadata directory %s: %w", metaDir, err)
+		return nil, nil, fmt.Errorf("failed to list iceberg metadata directory %s: %w", metaDir, err)
 	}
 
 	var versions []int
+	paths := make(map[int]string)
 	for _, f := range files {
-		base := filepath.Base(f.Path)
-		if strings.HasPrefix(base, "v") && strings.HasSuffix(base, ".metadata.json") {
-			verStr := strings.TrimPrefix(base, "v")
-			verStr = strings.TrimSuffix(verStr, ".metadata.json")
-			if v, err := strconv.Atoi(verStr); err == nil {
-				versions = append(versions, v)
-			}
+		v, ok := MetadataFileVersion(filepath.Base(f.Path))
+		if !ok {
+			continue
 		}
+		// A rewritten metadata file keeps its version and gets a new UUID, so the same version can
+		// appear twice; the lexically last name is the newer one.
+		if existing, seen := paths[v]; seen {
+			if f.Path <= existing {
+				continue
+			}
+		} else {
+			versions = append(versions, v)
+		}
+		paths[v] = f.Path
 	}
 	sort.Ints(versions)
-	return versions, nil
+	return versions, paths, nil
 }
 
-// readMetadata reads and parses a specific version of Iceberg TableMetadata.
-func (s *Source) readMetadata(ctx context.Context, version int) (*TableMetadata, error) {
-	fileName := fmt.Sprintf("v%d.metadata.json", version)
-	filePath := io.JoinPath(s.basePath, "metadata", fileName)
-
+// readMetadata reads and parses the Iceberg TableMetadata at the given file path.
+func (s *Source) readMetadata(ctx context.Context, filePath string) (*TableMetadata, error) {
 	data, err := s.storage.Read(ctx, filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read iceberg metadata %s: %w", filePath, err)
@@ -94,7 +128,7 @@ func (s *Source) readMetadata(ctx context.Context, version int) (*TableMetadata,
 
 // GetCurrentTable returns the Table descriptor at the latest Iceberg metadata version.
 func (s *Source) GetCurrentTable(ctx context.Context) (*model.Table, error) {
-	versions, err := s.listMetadataFiles(ctx)
+	versions, _, err := s.listMetadataFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +146,16 @@ func (s *Source) GetTable(ctx context.Context, commitID string) (*model.Table, e
 		return nil, fmt.Errorf("invalid iceberg metadata version %s: %w", commitID, err)
 	}
 
-	meta, err := s.readMetadata(ctx, ver)
+	_, paths, err := s.listMetadataFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	path, ok := paths[ver]
+	if !ok {
+		return nil, fmt.Errorf("no iceberg metadata file for version %d in %s", ver, s.basePath)
+	}
+
+	meta, err := s.readMetadata(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +214,7 @@ func (s *Source) GetTable(ctx context.Context, commitID string) (*model.Table, e
 
 // GetCurrentSnapshot constructs the complete Snapshot from Iceberg manifests.
 func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error) {
-	versions, err := s.listMetadataFiles(ctx)
+	versions, paths, err := s.listMetadataFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +222,7 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 		return nil, fmt.Errorf("no iceberg metadata files found in %s", s.basePath)
 	}
 	latestVer := versions[len(versions)-1]
-	meta, err := s.readMetadata(ctx, latestVer)
+	meta, err := s.readMetadata(ctx, paths[latestVer])
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +258,11 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 
 	var manifestList []ManifestListEntry
 	if err := json.Unmarshal(manifestListData, &manifestList); err != nil {
-		return nil, fmt.Errorf("failed to parse manifest list JSON: %w", err)
+		// The Iceberg spec stores manifest lists as Avro, and that is what every other writer
+		// emits; polytable reads only the JSON ones its own target writes. Name the limitation
+		// here rather than reporting it as malformed JSON.
+		return nil, fmt.Errorf("failed to parse iceberg manifest list %s: %w "+
+			"(avro manifest lists are not supported yet)", currSnapshot.ManifestList, err)
 	}
 
 	var dataFiles []*model.DataFile
@@ -284,11 +331,11 @@ func (s *Source) GetChangesSince(ctx context.Context, fromInstant int64) (*model
 
 // IsIncrementalSyncSafeFrom checks if snapshot history is available.
 func (s *Source) IsIncrementalSyncSafeFrom(ctx context.Context, earliestInstant int64) (bool, error) {
-	versions, err := s.listMetadataFiles(ctx)
+	versions, paths, err := s.listMetadataFiles(ctx)
 	if err != nil || len(versions) == 0 {
 		return false, err
 	}
-	firstMeta, err := s.readMetadata(ctx, versions[0])
+	firstMeta, err := s.readMetadata(ctx, paths[versions[0]])
 	if err != nil {
 		return false, err
 	}

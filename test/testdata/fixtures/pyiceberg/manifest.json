@@ -1,0 +1,116 @@
+{
+  "current_snapshot_id": "3437744713108340459",
+  "data_file_count": 6,
+  "data_files": [
+    {
+      "partition_values": {
+        "category": "alpha"
+      },
+      "path": "data/category=alpha/00000-0-69afd794-8813-400c-bfc9-2ed4c6efce1c.parquet",
+      "record_count": 2,
+      "size_bytes": 1664
+    },
+    {
+      "partition_values": {
+        "category": "alpha"
+      },
+      "path": "data/category=alpha/00000-0-afb0fc22-78a6-447c-a203-e7eda7280ab4.parquet",
+      "record_count": 2,
+      "size_bytes": 1332
+    },
+    {
+      "partition_values": {
+        "category": "alpha"
+      },
+      "path": "data/category=alpha/00000-0-c6a87c09-e282-4bc8-902d-d98248324602.parquet",
+      "record_count": 2,
+      "size_bytes": 1332
+    },
+    {
+      "partition_values": {
+        "category": "beta"
+      },
+      "path": "data/category=beta/00000-1-69afd794-8813-400c-bfc9-2ed4c6efce1c.parquet",
+      "record_count": 2,
+      "size_bytes": 1674
+    },
+    {
+      "partition_values": {
+        "category": "beta"
+      },
+      "path": "data/category=beta/00000-1-afb0fc22-78a6-447c-a203-e7eda7280ab4.parquet",
+      "record_count": 2,
+      "size_bytes": 1327
+    },
+    {
+      "partition_values": {
+        "category": "beta"
+      },
+      "path": "data/category=beta/00000-1-c6a87c09-e282-4bc8-902d-d98248324602.parquet",
+      "record_count": 2,
+      "size_bytes": 1327
+    }
+  ],
+  "format": "ICEBERG",
+  "format_version": 2,
+  "latest_metadata_version": 4,
+  "manifest_encoding": "avro",
+  "metadata_versions": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "notes": [
+    "Written by pyiceberg; polytable has never touched this directory.",
+    "manifest-list and manifest files are Avro OCF, which is what the Iceberg spec mandates and what every real writer emits.",
+    "File paths inside the Avro manifests are the generation-time absolute paths and are not relocatable."
+  ],
+  "partition_columns": [
+    "category"
+  ],
+  "partition_values": [
+    "alpha",
+    "beta"
+  ],
+  "path_placeholder": "file:///__POLYTABLE_FIXTURE_ROOT__",
+  "schema": [
+    {
+      "field_id": 1,
+      "name": "id",
+      "nullable": false,
+      "type": "LONG"
+    },
+    {
+      "field_id": 2,
+      "name": "category",
+      "nullable": false,
+      "type": "STRING"
+    },
+    {
+      "field_id": 3,
+      "name": "value",
+      "nullable": true,
+      "type": "DOUBLE"
+    },
+    {
+      "field_id": 4,
+      "name": "label",
+      "nullable": true,
+      "type": "STRING"
+    }
+  ],
+  "schema_evolution": {
+    "added_before_snapshot": "3437744713108340459",
+    "added_column": "label"
+  },
+  "snapshot_count": 3,
+  "table_dir": "events",
+  "table_name": "events",
+  "total_rows": 12,
+  "writer": {
+    "library": "pyiceberg",
+    "version": "0.11.1"
+  }
+}

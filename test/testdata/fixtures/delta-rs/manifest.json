@@ -1,0 +1,110 @@
+{
+  "column_bounds": {
+    "amount": {
+      "max": 140.0,
+      "min": 10.5
+    },
+    "id": {
+      "max": 14,
+      "min": 1
+    }
+  },
+  "commit_count": 3,
+  "data_file_count": 6,
+  "data_files": [
+    {
+      "partition_values": {
+        "region": "east"
+      },
+      "path": "region=east/part-00000-1719306f-fe12-41c0-a157-929f2ea4a7a5-c000.snappy.parquet",
+      "record_count": 2,
+      "size_bytes": 1143
+    },
+    {
+      "partition_values": {
+        "region": "east"
+      },
+      "path": "region=east/part-00000-c7329d08-a461-4075-8a88-c744c3b67053-c000.snappy.parquet",
+      "record_count": 3,
+      "size_bytes": 826
+    },
+    {
+      "partition_values": {
+        "region": "east"
+      },
+      "path": "region=east/part-00000-dc28209b-418a-4357-a1d9-a85c25d41212-c000.snappy.parquet",
+      "record_count": 2,
+      "size_bytes": 812
+    },
+    {
+      "partition_values": {
+        "region": "west"
+      },
+      "path": "region=west/part-00000-195d315e-d468-4779-ae31-7815b0b6e89a-c000.snappy.parquet",
+      "record_count": 2,
+      "size_bytes": 812
+    },
+    {
+      "partition_values": {
+        "region": "west"
+      },
+      "path": "region=west/part-00000-2a500a97-bdea-405f-9b74-ca9b57edc9de-c000.snappy.parquet",
+      "record_count": 3,
+      "size_bytes": 828
+    },
+    {
+      "partition_values": {
+        "region": "west"
+      },
+      "path": "region=west/part-00000-df351ac1-3b64-40a3-87a1-d2613f43f1e6-c000.snappy.parquet",
+      "record_count": 2,
+      "size_bytes": 1143
+    }
+  ],
+  "format": "DELTA",
+  "latest_commit_id": "2",
+  "notes": [
+    "Written by delta-rs; polytable has never touched this directory.",
+    "Commit 2 adds the 'discount' column, so the files of commits 0 and 1 predate it."
+  ],
+  "partition_columns": [
+    "region"
+  ],
+  "partition_values": [
+    "east",
+    "west"
+  ],
+  "schema": [
+    {
+      "name": "id",
+      "nullable": false,
+      "type": "LONG"
+    },
+    {
+      "name": "amount",
+      "nullable": true,
+      "type": "DOUBLE"
+    },
+    {
+      "name": "region",
+      "nullable": false,
+      "type": "STRING"
+    },
+    {
+      "name": "discount",
+      "nullable": true,
+      "type": "DOUBLE"
+    }
+  ],
+  "schema_evolution": {
+    "added_at_commit": "2",
+    "added_column": "discount"
+  },
+  "table_dir": "sales",
+  "table_name": "sales",
+  "total_rows": 14,
+  "writer": {
+    "library": "deltalake",
+    "version": "1.6.2"
+  }
+}
