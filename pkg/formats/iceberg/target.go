@@ -150,16 +150,19 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 				partitionVals[pv.PartitionField.SourceField.Name] = pv.Range.MinValue
 			}
 		}
+		manifestDataFile := &ManifestDataFile{
+			FilePath:        df.PhysicalPath,
+			FileFormat:      string(df.FileFormat),
+			Partition:       partitionVals,
+			RecordCount:     df.RecordCount,
+			FileSizeInBytes: df.FileSizeBytes,
+		}
+		columnStatsToManifest(manifestDataFile, df.ColumnStats, tableSchema)
+
 		manifestEntries = append(manifestEntries, ManifestEntry{
 			Status:     1, // ADDED
 			SnapshotID: snapshotID,
-			DataFile: &ManifestDataFile{
-				FilePath:        df.PhysicalPath,
-				FileFormat:      string(df.FileFormat),
-				Partition:       partitionVals,
-				RecordCount:     df.RecordCount,
-				FileSizeInBytes: df.FileSizeBytes,
-			},
+			DataFile:   manifestDataFile,
 		})
 	}
 

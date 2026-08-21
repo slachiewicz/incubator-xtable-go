@@ -133,6 +133,7 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 			FileSizeBytes:   pf.Size,
 			RecordCount:     numRows,
 			PartitionValues: partValues,
+			ColumnStats:     ColumnStatsFromFooter(pfObj, tableSchema),
 			LastModified:    modTimeMs,
 		})
 	}
