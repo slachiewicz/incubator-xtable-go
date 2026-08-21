@@ -75,6 +75,28 @@ official JVM implementation, use the upstream project.
 
 ---
 
+## 🧭 Design principles
+
+- **Metadata only, never data.** polytable translates and generates table metadata; it never
+  rewrites, moves, or decodes physical data files. Deletion vectors travel as descriptors with the
+  bitmap payload untouched. This is invariant INV-1 in `SPEC.md` and it bounds what the tool can
+  ever cost you: a bad sync is a bad metadata directory, not a damaged table.
+- **Depend on codecs, own the table semantics.** Serialization libraries are welcome
+  (`parquet-go` for footers, Avro for Iceberg manifests); table-format *implementations* are not.
+  Manifest structures, log actions, and timeline semantics are implemented natively against each
+  format's spec — so behavior tracks the spec, not another implementation's release cadence, and
+  every byte written can be audited in this repository.
+- **Verified against real engines, not just itself.** A converter that only round-trips its own
+  output will hide any bug that is symmetrical in its reader and writer. The test suite reads
+  tables written by real engines (delta-rs, pyiceberg — checked-in fixtures under
+  `test/testdata/fixtures/`) and has real engines read polytable's output (DuckDB in CI). Both
+  directions have already caught bugs no self-referential test could see.
+- **Honest capability claims.** Where a feature is partial or absent, the docs say so plainly —
+  the format matrix above marks gaps with `—`, and `docs/improvement-plan.md` records what was
+  found, fixed, declined, and why.
+
+---
+
 ## 📊 Format Support Matrix
 
 | Format | Source (Reader) | Target (Writer) | Schema Evolution | Partitioning | Column Statistics | Deletion Vectors |
