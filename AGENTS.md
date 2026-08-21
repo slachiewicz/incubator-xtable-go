@@ -150,7 +150,29 @@ go test -v ./test/...
 
 ---
 
-## 5. Skills & Context Integration
+## 5. Where the work is: `docs/improvement-plan.md`
+
+`docs/improvement-plan.md` is the task register, and it is the **first file to read before starting
+any non-trivial change**. Every task carries its own evidence (file paths and line numbers read out
+of the tree), scope, and acceptance criteria, so a task can be picked up cold without re-deriving the
+problem.
+
+- **Starting work?** Take a task from the open queue in the Ordering section — currently T20–T26 —
+  rather than inventing scope. `## Ground rules for every task` at the top of that file is binding:
+  the `make check` gate, one commit per task, the ASF header on new files, and the test conventions.
+- **Finishing work?** Update the task's status in the same commit. `✅` means every acceptance
+  criterion was checked and passed, not that the code landed. If some are outstanding, mark it `⚠️`
+  and say which — ground rule 8 exists because that rule was broken three times.
+- **Found something new?** Add it as a task there, with the evidence, instead of leaving it in a
+  commit message or a chat log. `## Non-goals` records what was deliberately declined and why; check
+  it before proposing work.
+- **Parity questions** are settled against the Java tree at `../incubator-xtable`, not from memory.
+  The `## Upstream parity backlog` section records the last survey — what upstream merged, what does
+  not apply to a Go port, and what is on the watch list.
+
+---
+
+## 6. Skills & Context Integration
 
 Agents working in this codebase should activate and leverage the following Go skills available in `~/.gemini/config/skills/`:
 - `golang-testing`: Writing robust table-driven unit and integration tests.
@@ -162,7 +184,7 @@ Agents working in this codebase should activate and leverage the following Go sk
 
 ---
 
-## 6. Persistent Memory (ICM) Rules
+## 7. Persistent Memory (ICM) Rules
 
 When working on this repository, agents MUST invoke `icm store`:
 1. When resolving a difficult bug or test failure (`-t errors-resolved`).

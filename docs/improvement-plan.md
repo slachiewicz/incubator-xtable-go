@@ -19,10 +19,12 @@
 
 # Improvement plan
 
-Fifteen tasks. **T1–T9** were the original structural plan, written against commit `ec2fd7e`.
-**T10–T12** were added from the review of commits `d34ed36..ddd157a` — T10 is a release blocker.
-**T13–T15** are parity gaps against Java XTable: unscheduled, and each needs a maintainer decision
-before it becomes work.
+**T1–T9** were the original structural plan, written against commit `ec2fd7e`. **T10–T12** were
+added from the review of commits `d34ed36..ddd157a` — T10 was a release blocker. **T13–T15** are
+parity gaps against Java XTable: unscheduled, and each needs a maintainer decision before it becomes
+work. **T16–T19** came out of later reviews and are all resolved. **T20–T26** come from the
+2026-08-21 upstream survey and are the current work queue — each one is written to be picked up cold
+by an agent, with the evidence, the scope and the acceptance criteria in the task itself.
 
 Every file path, line number, signature and command output below was read out of the tree or run
 against it, not recalled. Where a task is marked ✅ but its acceptance criteria were not met, that is
@@ -784,6 +786,212 @@ Iceberg/Delta targets, whose partition data lives in their own metadata rather t
 
 ---
 
+## Upstream parity backlog — 2026-08-21 cut
+
+Surveyed `../incubator-xtable` at `origin/main` (#882, 2026-08-20) against this tree. The port's
+first commit is `09b26ef`, 2026-08-12, so the "merged upstream since we started" window is nine days
+and holds exactly one code change — #861, now T21. Everything else in that window (#882, #881, #884,
+#857, #859, #850, #877, #856, #873, #867, #851) is JVM packaging, ASF licensing or the Docusaurus
+site.
+
+**Deliberately not tracked**, because a Go port does not have the problem: Delta Kernel source and
+target (#801, #713, #886), the Spark runtime bundle (#836, PRs #838/#839), bundled-jar size and
+licensing (#896, #701), and the `jol-core` classpath bug (#736).
+
+**Watch list** — upstream work with a counterpart gap here, not yet worth a task:
+
+| Upstream | What | Where it would land |
+| :--- | :--- | :--- |
+| #804, #803 | Variant and geospatial Parquet logical types | `pkg/model/schema.go` — neither type exists |
+| #758 | All Paimon `PartitionTransformType` values | `pkg/formats/paimon/` |
+| #711, PR #712 | Column rename mishandled in Iceberg schema sync | Check our field-ID path for the same bug |
+| #642 | Delta generated columns in schema extraction | `pkg/formats/delta/schema.go` |
+| #590, #810, PR #802 | Multi-catalog sync; OneLake; Unity | `pkg/catalog` — we have Glue and Iceberg REST |
+| #726 | DuckLake as source/target | New format; parity first |
+| #657 | Warn and continue when a target cannot express deletes | Needed once T24 decides the DV story |
+
+Two ideas from PR #829 (a Claude Code skill, not a feature, so nothing to port) are worth keeping:
+a per-table SUCCESS/FAILED/NO_OP verdict after sync, and no-op sync detection. Both belong in
+T22.
+
+## T20 — Column statistics for the Iceberg and Parquet sources
+
+**The largest correctness gap in the port.** Only Delta populates `model.DataFile.ColumnStats`.
+
+- `pkg/formats/iceberg/source.go:304` builds its `DataFile` with `PhysicalPath`, `FileFormat`,
+  `FileSizeBytes` and `RecordCount` only — while `pkg/formats/iceberg/metadata.go:107` already
+  parses `column_sizes`, `lower_bounds`, `upper_bounds`, `value_counts` and
+  `null_value_counts` off the manifest entry and then drops them.
+- `pkg/formats/parquet/source.go:130` reads footers for the row count and extracts no statistics.
+- `pkg/formats/hudi/source.go` reads `PartitionToWriteStats` for file listing, not column stats.
+
+Consequence: Iceberg→Delta and Parquet→Delta lose file-pruning metadata, and the Iceberg target
+writes manifests with no bounds, so engines cannot skip files on a converted table.
+
+Upstream did this in three passes worth reading: #805 (expand Parquet column stats, fix schema
+conversion bugs), #818 (fall back to Parquet footers when the metadata table has no column stats),
+and open PRs #760 and #811. #798 is a trap to avoid — Iceberg requires float and double bounds
+normalized before encoding (`-0.0`, `NaN`).
+
+Scope, in order of value:
+1. Iceberg source: map the already-parsed manifest bounds into `model.ColumnStat`, keyed by field ID
+   through the schema so the names survive a rename.
+2. Iceberg target: write bounds back out, with the #798 float normalization.
+3. Parquet source: read row-group statistics from the footer (`parquet-go` exposes them) and
+   aggregate per column.
+
+**Acceptance:** an Iceberg→Delta sync of a table with bounds produces Delta `add` actions whose
+`stats` carry `minValues`/`maxValues`/`nullCount`; a Parquet→Delta sync of a file with row-group
+stats does the same; a round trip Iceberg→Delta→Iceberg preserves bounds within the type's
+precision. Table-driven tests per format, plus one case each for `NaN` and `-0.0`.
+
+## T21 — Stop re-reading Delta commits during incremental sync
+
+Upstream #861, merged 2026-08-12 — the only upstream code change since the port began, and it
+applies verbatim.
+
+`pkg/formats/delta/source.go:289` (`GetChangesSince`) lists commit files, reads each one to test its
+timestamp, then calls `GetTableChangeForCommit`, which at `:255` reads **the same file again** and at
+`:260` calls `GetTable(commitID)` to rebuild the table. An N-commit backlog costs 2N object reads and
+N schema rebuilds.
+
+Fix: read each commit once, pass the parsed commit into the change builder, and reuse one table
+snapshot across the backlog instead of rebuilding per commit. Watch for the case the rebuild exists
+to serve — a schema change mid-backlog — and carry the schema forward rather than dropping it.
+
+**Acceptance:** a benchmark over a 100-commit Delta backlog shows the object-read count halved (count
+reads through a counting `io.Storage` wrapper in the test, do not assert on wall-clock); existing
+Delta incremental tests stay green; add a case with a schema change in the middle of the backlog.
+
+## T22 — Agent-legible CLI: sync mode, dry run, JSON output, timeout
+
+Upstream issue #889 is open and unresolved, so this is a place the port can lead rather than follow.
+Related upstream: #821 and PR #823 (per-table timeout), PR #794 (fail on sync error), #594
+(continuous sync).
+
+`cmd/xtable/main.go` exposes three flags — `--datasetConfig`, `--basePath`, `--format` — and prints
+emoji-decorated prose to stdout (`:119`, `:124`, `:153`). Exit codes are already correct: `:164`
+aggregates `hasErrors` and returns an error, so a failed sync exits non-zero. What is missing:
+
+- `--output json` on `sync` and `inspect`, emitting one machine-readable document — per-table target
+  results, durations, `lastInstantSynced`, and errors as strings. Keep the human output as the
+  default; send JSON to stdout and progress chatter to stderr.
+- `--mode full|incremental` to override `DatasetConfig.SyncMode` from the command line. The field
+  exists (`pkg/conversion/config.go:54`) and is only reachable from the config file.
+- `--dry-run`, which resolves the source, computes the changes and reports what would be written
+  without committing. Needs a no-commit path through `Controller.Sync`, not a flag checked in `main`.
+- `--timeout` per table, applied as a `context.WithTimeout` around each dataset.
+- A per-table verdict in the JSON: `SUCCESS`, `FAILED`, or `NO_OP` when the incremental path found no
+  new commits (`pkg/conversion/controller.go:205` already returns success with an unchanged instant —
+  that is the no-op case, and it is currently indistinguishable from real work).
+
+**Acceptance:** `xtable sync --output json` output parses with `encoding/json` and round-trips into a
+struct in `cmd/xtable`; `--mode full` forces a snapshot sync on a table that would otherwise go
+incremental; `--dry-run` leaves the target's metadata directory byte-identical; a table whose source
+has no new commits reports `NO_OP`. Golden-file tests for the JSON shape.
+
+## T23 — Catalog table discovery (list and scan)
+
+Extends T14, and blocked on nothing.
+
+`pkg/catalog` resolves exactly one table at a time: `ConversionSource.GetSourceTable`
+(`pkg/catalog/conversion.go:92`). There is no list, scan or pagination anywhere — `grep -rn
+"GetTables\|ListTables" pkg/` returns nothing.
+
+The AWS Lambda reference architecture builds its whole design on the operation we lack: page through
+the Glue Data Catalog, select tables carrying conversion markers, and convert each. It uses its own
+property convention — `xtable_table_type` and `xtable_target_formats` — which appears nowhere in the
+Java tree, so we are free to choose ours. Note that
+`catalog.TableFormatFromProperties` (`pkg/catalog/conversion.go:100`) already resolves the *source*
+format from `table_type` and `spark.sql.sources.provider`, matching Java's `TableFormatUtils`;
+nothing resolves a *target* format list.
+
+Scope:
+1. Add `ListTables(ctx, database string, filter TableFilter) iter.Seq2[TableIdentifier, error]` to
+   `ConversionSource`, implemented with the Glue paginator.
+2. Add target-format resolution from table properties, alongside the existing source resolution.
+3. Expose it as `xtable sync --catalog glue --database <db>`, converting every marked table.
+
+**Acceptance:** a fake Glue client returning three pages yields every table exactly once and
+surfaces a mid-pagination error rather than truncating silently; a table with no target-format
+property is skipped, not failed; the CLI path is covered by a test against the fake.
+
+## T24 — Deletion vectors beyond Delta: implement or narrow the claim
+
+Deletion-vector code exists only in `pkg/formats/delta/{source,target}.go` and `pkg/model/datafile.go`.
+`pkg/formats/iceberg` and `pkg/formats/hudi` contain none.
+
+The README overclaimed this — the format matrix marked Iceberg "✅ (Equality/Positional)" and Hudi
+"✅" — and was corrected on 2026-08-21 to `—` for both, in the same spirit as T9. `SPEC.md:178` was
+already accurate, scoping the claim to the Delta adapter.
+
+That correction makes the docs honest; it does not close the gap. Upstream tracks the real work as
+#345 and #346 (read Delta and Iceberg deletion vectors into the internal representation), #347 and
+#348 (write them to the Delta and Iceberg targets), #640 (the snapshot case) and open PR #661.
+
+The decision to make first: `SPEC.md:335` records INV-1 — deletion vectors are translated as
+descriptors, never decoded, because decoding would mean reading data files. Iceberg positional
+deletes are a *separate Parquet file of row positions*, not a bitmap descriptor, so
+Delta↔Iceberg deletion-vector translation may not be expressible without violating INV-1. Resolve
+that before writing code. If it is not expressible, the outcome of this task is #657's flag — warn
+and continue when the target cannot represent the source's deletes — plus a line in `SPEC.md`
+saying so.
+
+## T25 — Audit upstream bug fixes merged before the port started
+
+Out of scope for the 2026-08-21 survey, which only covered the nine days since `09b26ef`. The port
+was written against a checkout that already contained these fixes, but whether each survived the
+rewrite into Go is **unverified** — a Go reimplementation can reintroduce a bug the Java tree fixed
+years earlier, and nothing in this repo has checked.
+
+Highest-value candidates, each with a Java test to port:
+
+| Upstream | Fix | Go file to check |
+| :--- | :--- | :--- |
+| #826 | Map key path handling in Delta schema extractors | `pkg/formats/delta/schema.go` |
+| #795 | NPE for binary type inside map/array schemas | `pkg/formats/delta/schema.go` |
+| #828 | Null partition value for composite generated-column partitions | `pkg/formats/delta/source.go` |
+| #816 | Batch `INSERT_OVERWRITE` replacecommits dropping adds | `pkg/formats/hudi/timeline.go` |
+| #732 | Empty `EarliestCommitToRetain` | `pkg/formats/hudi/source.go` |
+| #797 | Iceberg nested comments with a qualified name | `pkg/formats/iceberg/schema.go` |
+| #806 | Parquet snapshot sync over multiple partitioned commits | `pkg/formats/parquet/source.go` |
+
+**Acceptance:** one table-driven test per row, written from the Java test case, each either passing
+against current Go or accompanied by the fix. Report the tally — a row that already passes is a
+result worth recording, not a wasted test.
+
+## T26 — Investigate the timestamp basis of Delta incremental sync
+
+**Investigate before writing code.** Upstream #779 ("handle log truncation in Delta to Iceberg
+incremental sync") is still open, so there is no Java fix to mirror, and the obvious reading of the
+title does not match our code.
+
+What the code actually does: `pkg/formats/delta/source.go:322` (`IsIncrementalSyncSafeFrom`) returns
+safe when `versions[0].CommitTime <= earliestInstant`. Log cleanup removes a contiguous *prefix* of
+commits, so after truncation `versions[0]` is a **later** commit with a **later** timestamp, the
+comparison fails, and `pkg/conversion/controller.go:184` already falls back to a snapshot sync. A
+fixture that deletes commits below a checkpoint will therefore pass against current code — do not
+write one, see it green, and mark this task done.
+
+The exposure worth chasing is that both halves of incremental sync key on the **commit timestamp**
+rather than the version number: the safety check compares `CommitTime`, and `GetChangesSince`
+(`:289`) selects commits with `CommitTime > fromInstant`. Two consequences to test:
+
+- Two commits written inside the same millisecond share a `CommitTime`. Sync after the first, and
+  the second is `> fromInstant` false — silently never synced, with the sync still reporting success.
+- A commit whose `commitInfo` timestamp is not greater than its predecessor's (clock skew, or a
+  writer that does not enforce monotonicity) is dropped the same way.
+
+Establish whether either reproduces before choosing a fix. If they do, the fix is likely to key
+incremental selection on the Delta **version number**, which is monotonic by construction, and keep
+the timestamp only for the retention comparison.
+
+**Acceptance:** a written finding either way. If reproduced, a table-driven test per case plus the
+fix; if not, a note in this task saying what was tested and why the current basis is sound, so the
+next reader does not repeat the investigation.
+
+---
+
 ## Ordering
 
 **Current status**
@@ -794,6 +1002,12 @@ Iceberg/Delta targets, whose partition data lives in their own metadata rather t
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
+| 🎯 Open queue | T20 (column stats), T21 (Delta backlog reads), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T26 (Delta incremental timestamp basis — investigate first) |
+
+**Picking up T20–T26.** They are independent; take them in any order. Suggested value order is T21
+(smallest, one file), then T20 (largest correctness win), then T22, T23, T25, T26. T24 is a decision
+before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
+translator until the INV-1 question in the task is answered.
 
 Gate at review time: `make check` green, `go test -short -race ./pkg/...` clean, 28 commits unpushed
 (`d34ed36..3162cf3`), working tree clean. Pushing is safe; **tagging is not until T17 is proven**.

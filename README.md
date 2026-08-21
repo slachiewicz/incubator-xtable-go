@@ -41,7 +41,7 @@
 - ⚡ **Instant Execution**: Native static binary (13.9 MiB stripped) with **zero JVM boot latency** — 6.6 ms start to exit, measured; see `SPEC.md` section 9.2.
 - 🛡️ **Pure Go & Zero-JVM**: No Spark, Hadoop XML, Java, or Scala runtime dependencies required.
 - 🔄 **Omni-Directional Sync**: Any format $\longleftrightarrow$ Any format (e.g., Delta $\to$ Iceberg & Hudi; Parquet $\to$ Delta $\to$ Iceberg; Hudi $\to$ Delta).
-- 📦 **Deletion Vectors**: Full translation of deletion vector descriptors across modern lakehouse formats, preserving roaring bitmap payloads untouched.
+- 📦 **Deletion Vectors**: Delta deletion-vector descriptors are translated as descriptors, leaving the roaring bitmap payload untouched. Iceberg and Hudi are not covered yet.
 - 🌐 **Ubiquitous Embeddability**:
   - **CLI Tool** (`xtable`)
   - **Continuous REST Daemon & Sidecar** (`xtable-service` with OpenAPI 3.0.3)
@@ -57,10 +57,10 @@
 | Format | Source (Reader) | Target (Writer) | Schema Evolution | Partitioning | Deletion Vectors |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Delta Lake** | ✅ | ✅ | ✅ (Field IDs) | ✅ | ✅ (Roaring Bitmap Descriptor) |
-| **Apache Iceberg** (v2/v3) | ✅ | ✅ | ✅ (Field IDs) | ✅ (Transforms) | ✅ (Equality/Positional) |
-| **Apache Hudi** | ✅ | ✅ | ✅ (Avro Schema) | ✅ | ✅ |
+| **Apache Iceberg** (v2/v3) | ✅ | ✅ | ✅ (Field IDs) | ✅ (Transforms) | — |
+| **Apache Hudi** | ✅ | ✅ | ✅ (Avro Schema) | ✅ | — |
 | **Raw Parquet** | ✅ | — | ✅ (Schema Crawler) | ✅ (Hive Style) | — |
-| **Apache Paimon** | ✅ | Planned | ✅ (Type Mapping) | ✅ | — |
+| **Apache Paimon** | ✅ | ✅ | ✅ (Type Mapping) | ✅ | — |
 
 ---
 

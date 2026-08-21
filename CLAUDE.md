@@ -31,6 +31,13 @@ exporting `xtable_sync_json` / `xtable_inspect_json`), `bindings/python`, and `p
 Parity order: `pkg/model` → storage layer → Delta + Iceberg full-snapshot sync → incremental sync + CLI →
 Hudi + catalog sync (Glue, HMS, Iceberg REST) → deletion vectors, REST service, Paimon.
 
+## The task register
+
+`docs/improvement-plan.md` holds the work queue and the ground rules for doing it. Read it before
+starting any non-trivial change, take a task from the open queue (T20–T26) instead of inventing
+scope, and update the task's status in the same commit. `✅` means the acceptance criteria were
+checked, not that the code landed. Its `## Non-goals` section records what was declined and why.
+
 ## Verification gate
 
 `make check` runs the whole gate. Do not report work as done without it passing. It is:
