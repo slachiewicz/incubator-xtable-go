@@ -54,6 +54,33 @@ type SyncResult struct {
 	LastInstantSynced int64 `json:"lastInstantSynced"`
 	// Duration is the total time spent executing the sync.
 	Duration time.Duration `json:"duration"`
+	// NoOp reports whether an incremental sync found no new commits since the last synced
+	// instant, so nothing was written. StatusCode is still SUCCESS in that case; NoOp is what
+	// lets a caller distinguish "nothing to do" from "did real work" without inspecting timings.
+	NoOp bool `json:"noOp,omitempty"`
+}
+
+// SyncVerdict is a coarse, agent-legible outcome for a single target sync: exactly one of
+// SUCCESS, FAILED, or NO_OP.
+type SyncVerdict string
+
+// The three verdicts a target sync can report.
+const (
+	SyncVerdictSuccess SyncVerdict = "SUCCESS"
+	SyncVerdictFailed  SyncVerdict = "FAILED"
+	SyncVerdictNoOp    SyncVerdict = "NO_OP"
+)
+
+// Verdict collapses StatusCode and NoOp into the three-way outcome callers (in particular the CLI's
+// JSON output) want to report: FAILED beats NO_OP beats SUCCESS.
+func (r *SyncResult) Verdict() SyncVerdict {
+	if r == nil || r.StatusCode == SyncStatusError {
+		return SyncVerdictFailed
+	}
+	if r.NoOp {
+		return SyncVerdictNoOp
+	}
+	return SyncVerdictSuccess
 }
 
 // NewSuccessSyncResult creates a success sync result.
