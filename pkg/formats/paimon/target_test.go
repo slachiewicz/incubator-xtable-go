@@ -56,9 +56,12 @@ func TestPaimon_TargetCommitSnapshot(t *testing.T) {
 	err = target.CommitSnapshot(ctx, snapshot)
 	require.NoError(t, err)
 
+	// A full snapshot embeds the sync metadata too, so an interrupted incremental sync can pick up
+	// from a table that has only ever been fully synced.
 	syncMetadata, err := target.GetTableMetadata(ctx)
 	require.NoError(t, err)
-	require.Nil(t, syncMetadata)
+	require.NotNil(t, syncMetadata)
+	assert.Equal(t, model.TableFormatPaimon, syncMetadata.TargetFormat)
 
 	err = target.Close()
 	require.NoError(t, err)
@@ -91,6 +94,9 @@ func TestPaimon_TargetCommitChanges(t *testing.T) {
 					Name:        "test_table",
 					TableFormat: model.TableFormatPaimon,
 					BasePath:    "mem://test",
+					ReadSchema: model.NewRecordSchema("test_table", []*model.Field{
+						{Name: "id", Schema: model.NewPrimitiveSchema(model.TypeLong, false)},
+					}, false),
 				},
 			},
 		},

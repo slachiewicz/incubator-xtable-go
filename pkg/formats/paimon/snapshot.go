@@ -19,18 +19,23 @@ package paimon
 
 import "encoding/json"
 
-// Snapshot represents an Apache Paimon snapshot JSON file (snapshot/snapshot-N).
+// Snapshot represents an Apache Paimon snapshot JSON file (snapshot/snapshot-N). The field names
+// are org.apache.paimon.Snapshot's FIELD_* constants (paimon-bundle 1.3.1).
 type Snapshot struct {
-	Version              int              `json:"version"`
-	ID                   int64            `json:"id"`
-	SchemaID             int64            `json:"schemaId"`
-	BaseManifestList     string           `json:"baseManifestList,omitempty"`
-	DeltaManifestList    string           `json:"deltaManifestList,omitempty"`
-	TimeMillis           int64            `json:"timeMillis"`
-	TotalRecordCount     *int64           `json:"totalRecordCount,omitempty"`
-	DeltaRecordCount     *int64           `json:"deltaRecordCount,omitempty"`
-	ChangelogRecordCount *int64           `json:"changelogRecordCount,omitempty"`
-	LogOffset            map[string]int64 `json:"logOffset,omitempty"`
+	Version              int               `json:"version"`
+	ID                   int64             `json:"id"`
+	SchemaID             int64             `json:"schemaId"`
+	BaseManifestList     string            `json:"baseManifestList,omitempty"`
+	DeltaManifestList    string            `json:"deltaManifestList,omitempty"`
+	CommitUser           string            `json:"commitUser,omitempty"`
+	CommitIdentifier     int64             `json:"commitIdentifier,omitempty"`
+	CommitKind           string            `json:"commitKind,omitempty"`
+	TimeMillis           int64             `json:"timeMillis"`
+	TotalRecordCount     *int64            `json:"totalRecordCount,omitempty"`
+	DeltaRecordCount     *int64            `json:"deltaRecordCount,omitempty"`
+	ChangelogRecordCount *int64            `json:"changelogRecordCount,omitempty"`
+	LogOffset            map[string]int64  `json:"logOffset,omitempty"`
+	Properties           map[string]string `json:"properties,omitempty"`
 }
 
 // ParseSnapshotJSON parses Apache Paimon snapshot JSON content.

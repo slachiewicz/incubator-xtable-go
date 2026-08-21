@@ -1353,6 +1353,7 @@ foreign writer.
   and `snapshot/`, which is the real Paimon layout. Nothing polytable writes as Paimon can be read
   back as Paimon, in either direction of the mismatch. No existing test caught it because the e2e
   matrix round-trips only Delta, Iceberg and Hudi. Pinned in `TestForeignFixtures_ConvertDelta`.
+  **Fixed by T32**: the target now writes the source's layout and the pin asserts the round trip.
 - **F3 — the raw-Parquet source rebuilds the schema from one data file.** It reads the footer of
   whichever file sorts first, so on a schema-evolved table the result depends on file names, and the
   Hive partition column — which lives in the directory name, not in the file — is missing from the
@@ -1480,7 +1481,7 @@ T29 suite — that is the regression test); Iceberg→Delta→Iceberg round trip
 
 **Commit:** `fix: write and read Iceberg manifests as Avro per the spec`
 
-## T32 — Paimon round-trip is broken: target and source disagree on layout
+## T32 — Paimon round-trip is broken: target and source disagree on layout ✅
 
 T28's F2. The Paimon target writes `metadata/schema-<epoch>.json`; the Paimon source reads
 `schema/schema-*` and `snapshot/`. Nothing polytable writes as Paimon can be read back as Paimon —
@@ -1493,6 +1494,39 @@ round-trip matrix, and pin it with the T28-style assertion already in place.
 includes Paimon↔Delta both ways; the T28 pinning assertion flips from "expected broken" to green.
 
 **Commit:** `fix: align the Paimon target with the source's on-disk layout`
+
+### Outcome ✅ — the source's layout was the spec-correct one
+
+Established from the Paimon sources themselves (`paimon-bundle` 1.3.1, the version
+`../incubator-xtable`'s `pom.xml` pins, sources jar in the local Maven repository), because the Java
+module reads through Paimon's own `FileStoreTable`/`SnapshotManager` and so records no layout of its
+own:
+
+- `SchemaManager.toSchemaPath` → `<table>/schema/schema-<id>`, `SCHEMA_PREFIX = "schema-"`.
+- `SnapshotManager.snapshotPath` → `<table>/snapshot/snapshot-<id>`, `SNAPSHOT_PREFIX = "snapshot-"`.
+- `HintFileUtils` → `snapshot/LATEST` and `snapshot/EARLIEST`, each holding a bare snapshot id.
+- `FileStorePathFactory` → `manifest/manifest-<uuid>-<n>` and `manifest/manifest-list-<uuid>-<n>`.
+
+The ids are counters, not epochs, and none of the files carries a `.json` extension — so the
+target's `metadata/schema-<epoch>.json` was wrong on the directory, the name and the suffix.
+
+The target now writes that layout, with `Snapshot`'s own `FIELD_*` names in the snapshot JSON, and
+carries the sync metadata in the snapshot's `properties` map (Paimon ≥ 1.2), which keeps INV-4 while
+leaving schema files immutable the way Paimon treats them. `CommitChanges` writes one snapshot per
+change whose base manifest is the previous state, so the newest snapshot always describes the whole
+table. The source resolves the newest snapshot through the `LATEST` hint, falling back to a numeric
+scan — the old lexicographic sort put `snapshot-10` before `snapshot-9`.
+
+**One deviation remains, and it is the same defect as T31's:** manifests and manifest lists are
+JSON, where Paimon writes Avro (`CoreOptions.MANIFEST_FORMAT` defaults to `avro`). The records mirror
+`ManifestEntry`, `ManifestFileMeta` and `DataFileMeta` field for field, but a Paimon engine still
+cannot open the result. Closing that needs the Avro writer T31 is adding for Iceberg; nothing else
+in the layout blocks it.
+
+Verified: `make check` green; `go test -short -race ./pkg/...` clean;
+`TestForeignFixtures_ConvertDelta/paimon` flipped from the "expected broken" pin to the same file
+list, row count and schema assertions the other targets get; `TestE2E_PaimonDeltaRoundTrip` covers
+Delta → Paimon → Delta.
 
 ## T33 — Parquet source schema: merge footers, include the partition column
 
@@ -1519,15 +1553,16 @@ type; the T28 pinning assertions flip to green.
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T32 |
 | ⚠️ Superseded / partial | T2 → T16 · T8 → T18 · T28 (fixtures + Delta half proven; Iceberg convert blocked on T31, F2/F3 → T32/T33) · T29 (Delta output verified by DuckDB; Iceberg pairs skipped until T31) |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T32 (Paimon round-trip layout), T33 (Parquet schema merge + partition column) |
+| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T33 (Parquet schema merge + partition column) |
 
 **Picking up the queue.** Suggested value order is T31 first — until it lands, polytable's
 Iceberg output is metadata no Iceberg engine can open, and the T28/T29 suites hold skipped
-assertions waiting on it — then T32, T33. T24 is a decision
+assertions waiting on it — then T33; T32 is done, and its Paimon manifests are waiting on T31's Avro
+writer for the last step. T24 is a decision
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.
 
