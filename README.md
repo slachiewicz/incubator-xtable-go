@@ -42,6 +42,7 @@
 - 🛡️ **Pure Go & Zero-JVM**: No Spark, Hadoop XML, Java, or Scala runtime dependencies required.
 - 🔄 **Omni-Directional Sync**: Any format $\longleftrightarrow$ Any format (e.g., Delta $\to$ Iceberg & Hudi; Parquet $\to$ Delta $\to$ Iceberg; Hudi $\to$ Delta).
 - 📦 **Deletion Vectors**: Delta deletion-vector descriptors are translated as descriptors, leaving the roaring bitmap payload untouched. Iceberg and Hudi are not covered yet.
+- 📈 **Column Statistics**: min/max bounds and null counts survive conversion between Delta, Iceberg and Parquet, so engines can keep pruning files on the converted table.
 - 🌐 **Ubiquitous Embeddability**:
   - **CLI Tool** (`xtable`)
   - **Continuous REST Daemon & Sidecar** (`xtable-service` with OpenAPI 3.0.3)
@@ -54,13 +55,13 @@
 
 ## 📊 Format Support Matrix
 
-| Format | Source (Reader) | Target (Writer) | Schema Evolution | Partitioning | Deletion Vectors |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Delta Lake** | ✅ | ✅ | ✅ (Field IDs) | ✅ | ✅ (Roaring Bitmap Descriptor) |
-| **Apache Iceberg** (v2/v3) | ✅ | ✅ | ✅ (Field IDs) | ✅ (Transforms) | — |
-| **Apache Hudi** | ✅ | ✅ | ✅ (Avro Schema) | ✅ | — |
-| **Raw Parquet** | ✅ | — | ✅ (Schema Crawler) | ✅ (Hive Style) | — |
-| **Apache Paimon** | ✅ | ✅ | ✅ (Type Mapping) | ✅ | — |
+| Format | Source (Reader) | Target (Writer) | Schema Evolution | Partitioning | Column Statistics | Deletion Vectors |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Delta Lake** | ✅ | ✅ | ✅ (Field IDs) | ✅ | ✅ (read + write) | ✅ (Roaring Bitmap Descriptor) |
+| **Apache Iceberg** (v2/v3) | ✅ | ✅ | ✅ (Field IDs) | ✅ (Transforms) | ✅ (read + write) | — |
+| **Apache Hudi** | ✅ | ✅ | ✅ (Avro Schema) | ✅ | — | — |
+| **Raw Parquet** | ✅ | ✅ | ✅ (Schema Crawler) | ✅ (Hive Style) | ✅ (source) | — |
+| **Apache Paimon** | ✅ | ✅ | ✅ (Type Mapping) | ✅ | — | — |
 
 ---
 

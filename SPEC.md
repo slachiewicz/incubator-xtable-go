@@ -176,12 +176,15 @@ type Storage interface {
 - **Schema Translation**: Bidirectional conversion between `model.Schema` and Spark StructType JSON.
 - **Actions**: Protocol, MetaData, AddFile, RemoveFile, CommitInfo.
 - **Deletion Vectors**: Reads and writes Roaring Bitmap descriptors (`storageType: "u"`).
+- **Column Statistics**: Reads `add.stats` into `model.ColumnStat`; writes `minValues`/`maxValues`/`nullCount` back out, dropping non-finite bounds (NaN, ±Inf) per column instead of discarding the file's whole stats string.
+- **Incremental Sync**: Single-pass log walk (one read per commit, schema rebuilt only on `metaData` actions). Sync instants are derived from version order — strictly increasing even for same-millisecond commits, backwards clock skew, or commits without a `commitInfo` action — so `instant > fromInstant` selects exactly the versions after the last synced one.
 
 ### 6.2 Apache Iceberg Adapter (`pkg/formats/iceberg`)
 - **Metadata Specification**: Iceberg Table Metadata v2/v3 (`metadata/v{N}.metadata.json`).
 - **Manifests**: Manifest list files (`snap-<snapshot_id>-<uuid>.json`) and manifest files (`<uuid>-m0.json`).
 - **Version Hinting**: Atomic `metadata/version-hint.text` updates.
 - **Schema Mapping**: Deterministic assignment and preservation of Iceberg field IDs.
+- **Column Statistics**: Manifest `lower_bounds`/`upper_bounds`/`value_counts`/`null_value_counts` map to and from `model.ColumnStat`, keyed by field ID so names survive renames. Bounds are base64 of Iceberg's single-value binary serialization; float/double zero bounds are widened (`-0.0` lower, `0.0` upper) to respect Iceberg's total ordering. Decimal and nested-column bounds are omitted rather than encoded wrong.
 
 ### 6.3 Apache Hudi Adapter (`pkg/formats/hudi`)
 - **Table Properties**: Reader and serializer for `.hoodie/hoodie.properties` (`COPY_ON_WRITE` / `MERGE_ON_READ`).
@@ -191,7 +194,7 @@ type Storage interface {
 ### 6.4 Raw Parquet Crawler (`pkg/formats/parquet`)
 - **Directory Crawler**: Discovers unmanaged Parquet files across nested folder structures.
 - **Hive Partition Extractor**: Parses `key=value` directory segments into partition fields and values.
-- **Footer Reader**: Extracts table schema, row counts, and column chunk statistics directly from Parquet footers.
+- **Footer Reader**: Extracts table schema, row counts, and column chunk statistics directly from Parquet footers, aggregating row-group min/max/null-count statistics per column into `model.ColumnStat`.
 
 ---
 
