@@ -863,6 +863,32 @@ to serve — a schema change mid-backlog — and carry the schema forward rather
 reads through a counting `io.Storage` wrapper in the test, do not assert on wall-clock); existing
 Delta incremental tests stay green; add a case with a schema change in the middle of the backlog.
 
+### Outcome — done, and the saving is larger than 2× ✅
+
+Measured through a counting `io.Storage` wrapper in
+`pkg/formats/delta/incremental_test.go`, a 100-commit backlog cost **5350 object reads** before and
+costs **100** after — one read per commit file, nothing else.
+
+The 2N in the task description understated it. `GetTableChangeForCommit` called `GetTable`, which
+walks the log prefix from version 0, so the backlog was quadratic: N reads to test instants, N to
+convert, and N(N+1)/2 to rebuild the table once per commit, plus a final `GetCurrentTable` prefix
+walk (100 + 100 + 5050 + 100).
+
+`GetChangesSince` now walks the log once. `tableFromMetadata` — the schema-parsing half of
+`GetTable` — runs only where a commit carries a metaData action; commits in between reuse that table
+through `tableAsOf`, a shallow copy that moves the instant and shares the schema. The current table
+comes out of the same walk rather than a second one. `changeFromCommit` takes the parsed commit, so
+`GetTableChangeForCommit` (still an `spi` method, still a single-commit read plus `GetTable`) and the
+backlog walk share one converter.
+
+Two cases guard the schema handling: a metaData action in the middle of the backlog (versions before
+it keep one column, versions after it see two), and one in a commit *older* than `fromInstant`, which
+is walked but never emitted — the case the per-commit rebuild existed to serve.
+
+`GetCurrentSnapshot` still has the older 2N shape it does not share with this path (a `GetTable`
+prefix walk followed by a second walk over every commit). Left alone deliberately; it is a separate
+change.
+
 ## T22 — Agent-legible CLI: sync mode, dry run, JSON output, timeout
 
 Upstream issue #889 is open and unresolved, so this is a place the port can lead rather than follow.
@@ -990,6 +1016,42 @@ the timestamp only for the retention comparison.
 fix; if not, a note in this task saying what was tested and why the current basis is sound, so the
 next reader does not repeat the investigation.
 
+### Outcome — reproduced, three ways, and fixed ✅
+
+Both suspected cases reproduce, and a third one does. Fixtures are hand-written log files in
+`pkg/formats/delta/incremental_test.go` (the Delta target cannot produce these timestamps); each
+case is three commits with the last one anomalous, `GetChangesSince(2000)` against them, and the
+expectation that version 2 comes back:
+
+| Case | Before | After |
+| :--- | :--- | :--- |
+| Two commits sharing a millisecond | version 2 dropped, sync reports success | synced |
+| Timestamp goes backwards (clock skew) | version 2 dropped | synced |
+| Commit with no `commitInfo` action | dropped for **every** `fromInstant`, since its `CommitTime` is 0 | synced |
+
+The third is the widest: `commitInfo` is optional in the Delta protocol, and a commit without it
+was invisible to incremental sync regardless of clock behaviour.
+
+The fix keeps the instant an `int64` — target state is a bare timestamp
+(`model.KeyLastInstantSynced`), so a version number has nowhere to live — but derives it from
+version order rather than trusting the log: `advanceCommitTime(previous, raw)` returns `raw` when it
+exceeds the preceding commit's instant and `previous + 1` otherwise. The result increases strictly
+with the version, which makes it an injective proxy for the version number, so
+`instant > fromInstant` selects exactly the versions after the one `fromInstant` names. A
+well-behaved log is unaffected: instants pass through as the raw timestamps. Java resolves the same
+ambiguity by mapping the sync instant to a version once and keying the backlog on versions
+(`DeltaConversionSource#getCommitsBacklog`, `:204`).
+
+The derived instant is what `GetTable`, `GetTableChangeForCommit` and `GetChangesSince` report,
+because the controller persists the last one and feeds it back as the next `fromInstant`; reporting
+a raw timestamp while selecting on a derived one would replay the boundary commit forever.
+Retention (`IsIncrementalSyncSafeFrom`) still compares raw timestamps — it asks when the earliest
+retained commit happened, not which version an instant names — and now returns false when that
+commit has no timestamp at all, rather than reading 0 as "old enough".
+
+One migration edge, no code: a target synced before this change whose stored instant sits at an
+anomaly can see one commit re-emitted on the next sync. That is at-least-once, not loss.
+
 ## T27 — Rename the project to `polytable`
 
 **Decided by the maintainer, 2026-08-21.** "XTable" is an ASF podling mark, so publishing
@@ -1043,14 +1105,14 @@ The C header, wheel and REST spec all carry the new name. No tag exists yet when
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T21, T26 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T20 (column stats), T21 (Delta backlog reads), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T26 (Delta incremental timestamp basis — investigate first), T27 (polytable rename — blocks the first tag) |
+| 🎯 Open queue | T20 (column stats), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T27 (polytable rename — blocks the first tag) |
 
-**Picking up T20–T26.** They are independent; take them in any order. Suggested value order is T21
-(smallest, one file), then T20 (largest correctness win), then T22, T23, T25, T26. T24 is a decision
+**Picking up T20–T25.** They are independent; take them in any order. Suggested value order is T20
+(largest correctness win), then T22, T23, T25. T24 is a decision
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.
 
