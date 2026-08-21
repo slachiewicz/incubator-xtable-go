@@ -123,6 +123,27 @@ func (s *Source) readCommit(ctx context.Context, version int64) (*DeltaCommit, e
 	}, nil
 }
 
+// advanceCommitTime folds a raw commitInfo timestamp into a strictly increasing instant, given the
+// instant already derived for the preceding version (0 before the first commit).
+//
+// The Delta protocol makes commitInfo optional and puts no monotonicity guarantee on its timestamp,
+// so the raw value is unusable as a sync cursor: two commits inside the same millisecond share it, a
+// skewed writer clock can move it backwards, and a commit without commitInfo reports 0. Every one of
+// those made the "changes strictly after fromInstant" selection drop commits while reporting success.
+// Deriving the instant from version order instead keeps it a faithful, injective proxy for the
+// version, which is monotonic by construction. Java resolves the same ambiguity by mapping the sync
+// instant to a version once and then keying the backlog on versions
+// (DeltaConversionSource#getCommitsBacklog).
+//
+// Instants only differ from the raw timestamp where the log is anomalous; a well-behaved log passes
+// through unchanged.
+func advanceCommitTime(previous, raw int64) int64 {
+	if raw > previous {
+		return raw
+	}
+	return previous + 1
+}
+
 // GetCurrentTable returns the latest table state.
 func (s *Source) GetCurrentTable(ctx context.Context) (*model.Table, error) {
 	versions, err := s.listCommitFiles(ctx)
@@ -159,9 +180,7 @@ func (s *Source) GetTable(ctx context.Context, commitID string) (*model.Table, e
 		if err != nil {
 			return nil, err
 		}
-		if commit.CommitTime > 0 {
-			latestCommitTime = commit.CommitTime
-		}
+		latestCommitTime = advanceCommitTime(latestCommitTime, commit.CommitTime)
 		for _, a := range commit.Actions {
 			if a.MetaData != nil {
 				latestMeta = a.MetaData
@@ -281,7 +300,9 @@ func (s *Source) GetTableChangeForCommit(ctx context.Context, commitID string) (
 		FilesDiff:        model.NewFilesDiff(added, removed),
 		TableAsOfChange:  table,
 		SourceIdentifier: commitID,
-		CommitTime:       commit.CommitTime,
+		// The instant reported here is the derived one, not commitInfo's raw timestamp: the
+		// controller persists it and hands it back as the next sync's fromInstant.
+		CommitTime: table.LatestCommitTime,
 	}, nil
 }
 
@@ -293,12 +314,16 @@ func (s *Source) GetChangesSince(ctx context.Context, fromInstant int64) (*model
 	}
 
 	var changes []*model.TableChange
+	var commitTime int64
 	for _, v := range versions {
 		commit, err := s.readCommit(ctx, v)
 		if err != nil {
 			return nil, err
 		}
-		if commit.CommitTime > fromInstant {
+		// Derived instants increase strictly with the version, so "instant greater than
+		// fromInstant" selects exactly the versions after the one that instant identifies.
+		commitTime = advanceCommitTime(commitTime, commit.CommitTime)
+		if commitTime > fromInstant {
 			change, err := s.GetTableChangeForCommit(ctx, strconv.FormatInt(v, 10))
 			if err != nil {
 				return nil, err
@@ -330,6 +355,13 @@ func (s *Source) IsIncrementalSyncSafeFrom(ctx context.Context, earliestInstant 
 	firstCommit, err := s.readCommit(ctx, versions[0])
 	if err != nil {
 		return false, err
+	}
+	// Retention is the one comparison that stays on the raw timestamp, because it asks when the
+	// earliest retained commit happened rather than which version an instant identifies. Without a
+	// commitInfo timestamp there is nothing to compare, so fall back to a snapshot sync rather than
+	// read "0" as "old enough".
+	if firstCommit.CommitTime <= 0 {
+		return false, nil
 	}
 	return firstCommit.CommitTime <= earliestInstant, nil
 }
