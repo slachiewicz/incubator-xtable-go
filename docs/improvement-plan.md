@@ -1638,12 +1638,16 @@ T31's F4. `pkg/formats/hudi/target.go` computes each file's path relative to the
 location its manifest recorded, scheme included, so the prefix never matches, the absolute path is
 stored as if it were relative, and `pkg/formats/hudi/source.go` joins it onto the base path again:
 `…/events/file:/…/events/data/…`. Nothing caught it before a foreign Iceberg table could be a
-conversion source. Decide whether the fix belongs in the Hudi adapter or in `pkg/io` — every target
-that trims a base path by string prefix has the same exposure, so check Delta and Paimon before
-choosing.
+conversion source. **Paimon is confirmed to share the exposure**: after T31 and T32 composed, an
+Iceberg→Paimon conversion reads back doubled the same way, pinned by `pathsDoubled` on the Paimon
+row of `TestForeignFixtures_ConvertIceberg` (Delta→Paimon is clean — the exposure needs a
+scheme-qualified source path). Decide whether the fix belongs in each adapter or in `pkg/io` —
+every target that trims a base path by string prefix has the same exposure, so check Delta too
+before choosing.
 
-**Acceptance:** an Iceberg→Hudi conversion reports each data file once, under the table's base path;
-the `pathsDoubled` pin in `TestForeignFixtures_ConvertIceberg` is deleted rather than adjusted.
+**Acceptance:** Iceberg→Hudi and Iceberg→Paimon conversions report each data file once, under the
+table's base path; both `pathsDoubled` pins in `TestForeignFixtures_ConvertIceberg` are deleted
+rather than adjusted.
 
 **Commit:** `fix: trim the base path from a data file location scheme and all`
 

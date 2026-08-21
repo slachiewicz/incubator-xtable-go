@@ -778,7 +778,9 @@ func TestForeignFixtures_ConvertIceberg(t *testing.T) {
 		// F3, tracked as T33: the raw-Parquet source rebuilds the schema from one data file footer,
 		// so a column added mid-history is present or absent depending on which file sorts first.
 		model.TableFormatParquet: {schemaCheck: assertParquetSchemaFromFooter},
-		model.TableFormatPaimon:  {schemaCheck: assertSchemaMatchesManifest},
+		// F4, tracked as T35: like Hudi, the Paimon target trims the base path by string prefix,
+		// so the Iceberg source's scheme-qualified locations survive whole and read back doubled.
+		model.TableFormatPaimon: {schemaCheck: assertSchemaMatchesManifest, pathsDoubled: true},
 	}
 
 	for _, target := range formats.SupportedTargets() {
