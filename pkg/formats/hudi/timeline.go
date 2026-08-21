@@ -19,6 +19,8 @@ package hudi
 
 import (
 	"fmt"
+	"path"
+	"strings"
 	"time"
 )
 
@@ -57,11 +59,29 @@ type HoodieWriteStat struct {
 	NullCount       map[string]int64 `json:"nullCount,omitempty"`
 }
 
-// HoodieCommitMetadata represents the JSON body of a .commit or .deltacommit timeline file.
+// HoodieCommitMetadata represents the JSON body of a .commit, .deltacommit or .replacecommit
+// timeline file.
 type HoodieCommitMetadata struct {
 	PartitionToWriteStats map[string][]HoodieWriteStat `json:"partitionToWriteStats"`
-	ExtraMetadata         map[string]string            `json:"extraMetadata,omitempty"`
-	OperationType         string                       `json:"operationType"`
+	// PartitionToReplaceFileIds lists, per partition, the file groups this instant supersedes. Only
+	// a .replacecommit (INSERT_OVERWRITE, DELETE_PARTITION, clustering) carries it.
+	PartitionToReplaceFileIds map[string][]string `json:"partitionToReplaceFileIds,omitempty"`
+	ExtraMetadata             map[string]string   `json:"extraMetadata,omitempty"`
+	OperationType             string              `json:"operationType"`
+}
+
+// FileGroupID returns the Hudi file group a write stat belongs to, falling back to the file name's
+// leading component when the stat omits fileId. Hudi base file names are
+// <fileId>_<writeToken>_<instantTime>.parquet, so the prefix identifies the group.
+func (ws HoodieWriteStat) FileGroupID() string {
+	if ws.FileID != "" {
+		return ws.FileID
+	}
+	base := path.Base(ws.Path)
+	if idx := strings.Index(base, "_"); idx > 0 {
+		return base[:idx]
+	}
+	return base
 }
 
 // InstantAction represents the lifecycle state of an action in the Hudi timeline.

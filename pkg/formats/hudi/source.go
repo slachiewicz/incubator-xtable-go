@@ -174,6 +174,38 @@ func (s *Source) GetTable(ctx context.Context, commitID string) (*model.Table, e
 	}, nil
 }
 
+// activeFile pairs a data file with the partition and file group it was written into. The snapshot
+// walk is keyed by path, but a replacecommit names the groups it supersedes by file group ID, so
+// the group has to be carried alongside to resolve one against the other.
+type activeFile struct {
+	file      *model.DataFile
+	partition string
+	fileGroup string
+}
+
+// applyReplacedFileGroups drops every active file belonging to a superseded file group. Without it
+// an INSERT_OVERWRITE leaves the overwritten files in the snapshot next to their replacements, so
+// the table reads back with both generations of every row.
+func applyReplacedFileGroups(activeFiles map[string]*activeFile, partitionToReplaceFileIDs map[string][]string) {
+	for partitionPath, fileIDs := range partitionToReplaceFileIDs {
+		if len(fileIDs) == 0 {
+			continue
+		}
+		replaced := make(map[string]struct{}, len(fileIDs))
+		for _, id := range fileIDs {
+			replaced[id] = struct{}{}
+		}
+		for key, af := range activeFiles {
+			if af.partition != partitionPath {
+				continue
+			}
+			if _, ok := replaced[af.fileGroup]; ok {
+				delete(activeFiles, key)
+			}
+		}
+	}
+}
+
 // GetCurrentSnapshot builds the Snapshot of active data files by reading Hudi commit metadata.
 func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error) {
 	commits, err := s.ListCompletedCommits(ctx)
@@ -191,7 +223,7 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 	}
 
 	// Traverse commit timeline and build active file map
-	activeFiles := make(map[string]*model.DataFile)
+	activeFiles := make(map[string]*activeFile)
 
 	for _, c := range commits {
 		commitFilePath := io.JoinPath(s.basePath, ".hoodie", c.FileName)
@@ -208,6 +240,12 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 		commitTime, _ := TimeFromInstant(c.InstantTime)
 		commitTimeMs := commitTime.UnixMilli()
 
+		// A replacecommit supersedes whole file groups written by earlier instants. Apply the
+		// replacements before this instant's own writes: the two sets are disjoint in Hudi (a
+		// replacement always lands in a new file group), and dropping first keeps a group that an
+		// instant both replaces and rewrites from being removed again.
+		applyReplacedFileGroups(activeFiles, meta.PartitionToReplaceFileIds)
+
 		for partitionPath, writeStats := range meta.PartitionToWriteStats {
 			for _, ws := range writeStats {
 				fullDataPath := io.JoinPath(s.basePath, ws.Path)
@@ -219,21 +257,25 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 					})
 				}
 
-				activeFiles[ws.Path] = &model.DataFile{
-					PhysicalPath:    fullDataPath,
-					FileFormat:      model.FileFormatParquet,
-					FileSizeBytes:   ws.FileSizeInBytes,
-					RecordCount:     ws.NumWrites,
-					PartitionValues: partValues,
-					LastModified:    commitTimeMs,
+				activeFiles[ws.Path] = &activeFile{
+					partition: partitionPath,
+					fileGroup: ws.FileGroupID(),
+					file: &model.DataFile{
+						PhysicalPath:    fullDataPath,
+						FileFormat:      model.FileFormatParquet,
+						FileSizeBytes:   ws.FileSizeInBytes,
+						RecordCount:     ws.NumWrites,
+						PartitionValues: partValues,
+						LastModified:    commitTimeMs,
+					},
 				}
 			}
 		}
 	}
 
-	var dataFiles []*model.DataFile
-	for _, df := range activeFiles {
-		dataFiles = append(dataFiles, df)
+	dataFiles := make([]*model.DataFile, 0, len(activeFiles))
+	for _, af := range activeFiles {
+		dataFiles = append(dataFiles, af.file)
 	}
 
 	return &model.Snapshot{
