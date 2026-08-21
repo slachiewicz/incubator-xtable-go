@@ -1358,7 +1358,8 @@ foreign writer.
   whichever file sorts first, so on a schema-evolved table the result depends on file names, and the
   Hive partition column — which lives in the directory name, not in the file — is missing from the
   schema even though the same source reports it as a partitioning field. The table it returns is
-  partitioned by a column its own schema does not contain.
+  partitioned by a column its own schema does not contain. **Fixed by T33**: the schema is the merge
+  of every footer, the partition column is synthesized into it, and the pin asserts both.
 
 ### Out of scope
 
@@ -1563,6 +1564,50 @@ type; the T28 pinning assertions flip to green.
 
 **Commit:** `fix: merge Parquet footers and surface the Hive partition column`
 
+### Outcome ✅ — both fixes are deliberate divergences from Java
+
+**What Java does**, read from `xtable-core`'s `org.apache.xtable.parquet`:
+
+- *Schema:* `ParquetConversionSource.createInternalTableFromFile` takes one footer — the file with
+  the greatest modification time (`getMostRecentParquetFile`). No merge, so a column an older
+  generation carries and the newest does not is simply gone. Picking the newest file is better than
+  picking the first, and it is where "newest wins" below comes from, but it is still one file.
+- *Partition column:* Java never infers partitioning from directory names. The spec comes from
+  configuration (`xtable.parquet.source.partition_field_spec_config`, `path:type[:format]`) and
+  `ParquetPartitionSpecExtractor.spec` resolves each path against the footer schema with
+  `SchemaFieldFinder`, so Java assumes the partition column is physically in the files; a
+  Hive-partitioned table where it is not yields a partition field with a null source field. There
+  is nothing to port, so the synthesis here is new.
+
+**What this port does instead.** `MergeFooterSchemas` folds every footer into one schema: newest
+file first, columns only older files carry appended after, and a column absent from any file
+nullable, since its rows have no value. Types must be *identical* — an INT and a LONG column of the
+same name conflict rather than widening, because a widened schema is a guess about the writer's
+intent — and a conflict is an error naming the column, both types and both files. Files sharing a
+modification time fall back to path order; only column order can move that way, never the set or the
+types. Each file is still read once: `footerAggregates` collects the row-group statistics before the
+merge and `columnStatsForSchema` resolves them against the merged schema afterwards, so a column a
+file does not carry contributes no statistics for it rather than zeros.
+
+`partitionSpec` then puts the Hive partition columns in that schema, appended after the physical
+ones, typed from the observed directory values: LONG when every value is an integer, DOUBLE when
+every value is numeric, DATE when every value is an ISO date, STRING otherwise, and STRING for
+anything ambiguous, including Hive's `__HIVE_DEFAULT_PARTITION__` null marker. Synthesized columns
+are nullable. A physical column of the same name wins — resolved through `FieldByPath`, so
+`Region=eu` over a `region` column is one column and not two — and the directory values then have to
+be readable as its type, or the crawl fails rather than describing the table wrongly. Partition
+values stay the raw directory strings, which is what every target formats today. Partitioning fields
+now come out in directory-nesting order rather than a map's iteration order.
+
+`ExtractHivePartitions` is gone, replaced by `HivePartitionsForFile` and `PartitionColumnSchema`;
+nothing outside the package used it.
+
+Verified: `make check` green; `go test -short -race ./pkg/...` clean;
+`TestForeignFixtures_ConvertDelta/parquet` flipped from pinning the missing partition column to
+asserting every column of the delta-rs manifest, `region` included, with its type — the same fixture
+also exercises the merge, since `discount` exists only in the third commit's files.
+`TestParquet_SourceMergesFooterSchemas` pins the merge under both file namings.
+
 ---
 
 ## Ordering
@@ -1571,15 +1616,15 @@ type; the T28 pinning assertions flip to green.
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T32 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T32, T33 |
 | ⚠️ Superseded / partial | T2 → T16 · T8 → T18 · T28 (fixtures + Delta half proven; Iceberg convert blocked on T31, F2/F3 → T32/T33) · T29 (Delta output verified by DuckDB; Iceberg pairs skipped until T31) |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T33 (Parquet schema merge + partition column), T34 (Paimon real-spec: Avro manifests + engine verification) |
+| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T31 (Avro manifests — largest interop defect), T34 (Paimon real-spec: Avro manifests + engine verification) |
 
 **Picking up the queue.** Suggested value order is T31 first — until it lands, polytable's
 Iceberg output is metadata no Iceberg engine can open, and the T28/T29 suites hold skipped
-assertions waiting on it — then T33; T32 is done, and its Paimon manifests are waiting on T31's Avro
+assertions waiting on it. T32 and T33 are done, and T32's Paimon manifests are waiting on T31's Avro
 writer for the last step. T24 is a decision
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.

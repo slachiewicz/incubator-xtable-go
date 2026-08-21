@@ -82,11 +82,14 @@ func TestParquet_SourceSnapshotDiscovery(t *testing.T) {
 
 	// Check table metadata
 	assert.Equal(t, model.TableFormatParquet, snapshot.Table.TableFormat)
-	require.Len(t, snapshot.Table.ReadSchema.Fields, 3) // id, name, score
+	require.Len(t, snapshot.Table.ReadSchema.Fields, 4) // id, name, score, and country from the path
 
 	// Check partition fields
 	require.Len(t, snapshot.Table.PartitioningFields, 1)
 	assert.Equal(t, "country", snapshot.Table.PartitioningFields[0].SourceField.Name)
+	// The partition column is the schema's, not a second description of the same thing.
+	assert.Same(t, snapshot.Table.ReadSchema.FieldByPath("country"),
+		snapshot.Table.PartitioningFields[0].SourceField)
 
 	// Check data files
 	require.Len(t, snapshot.DataFiles, 2)

@@ -193,8 +193,9 @@ type Storage interface {
 
 ### 6.4 Raw Parquet Crawler (`pkg/formats/parquet`)
 - **Directory Crawler**: Discovers unmanaged Parquet files across nested folder structures.
-- **Hive Partition Extractor**: Parses `key=value` directory segments into partition fields and values.
+- **Hive Partition Extractor**: Parses `key=value` directory segments into partition fields and values, and adds each partition column to the read schema — typed from the observed values (LONG, DOUBLE, DATE, else STRING) — unless the data files already carry a column of that name, which wins.
 - **Footer Reader**: Extracts table schema, row counts, and column chunk statistics directly from Parquet footers, aggregating row-group min/max/null-count statistics per column into `model.ColumnStat`.
+- **Schema Merge**: The read schema is the union of every file's footer, newest file first, with a column absent from some files nullable and a column two files type differently an error naming both files.
 
 ---
 

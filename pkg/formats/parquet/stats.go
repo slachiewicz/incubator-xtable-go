@@ -28,6 +28,7 @@ import (
 
 // columnAggregate accumulates one leaf column's statistics across the row groups of a file.
 type columnAggregate struct {
+	path       string
 	columnType parquet.Type
 	numValues  int64
 	numNulls   int64
@@ -41,10 +42,23 @@ type columnAggregate struct {
 // the minimum of the per-row-group minima and the maximum of their maxima.
 //
 // Columns whose path does not resolve against the schema are skipped rather than treated as an
-// error, because the schema is taken from the first file of the dataset and a later file may not
-// match it. NumNaNs stays zero: a Parquet footer does not record a NaN count.
+// error, because the schema describes the whole dataset and one file need not match it. The
+// converse holds too, and is what keeps a merged schema honest: a column this file does not carry
+// has no chunk here, so it contributes no statistics at all rather than a zero-valued entry.
+// NumNaNs stays zero: a Parquet footer does not record a NaN count.
 func ColumnStatsFromFooter(file *parquet.File, schema *model.Schema) []*model.ColumnStat {
 	if file == nil || schema == nil {
+		return nil
+	}
+	return columnStatsForSchema(footerAggregates(file), schema)
+}
+
+// footerAggregates folds the row-group statistics of a footer into one aggregate per leaf column,
+// in the file's own column order. It is kept apart from the schema resolution so that a caller
+// crawling a directory can read each file once, then resolve every file's statistics against the
+// schema merged from all of them.
+func footerAggregates(file *parquet.File) []*columnAggregate {
+	if file == nil {
 		return nil
 	}
 
@@ -63,7 +77,7 @@ func ColumnStatsFromFooter(file *parquet.File, schema *model.Schema) []*model.Co
 			}
 			agg := aggregates[idx]
 			if agg == nil {
-				agg = &columnAggregate{columnType: chunk.Type()}
+				agg = &columnAggregate{path: strings.Join(paths[idx], "."), columnType: chunk.Type()}
 				aggregates[idx] = agg
 			}
 			agg.numValues += fileChunk.NumValues()
@@ -77,12 +91,25 @@ func ColumnStatsFromFooter(file *parquet.File, schema *model.Schema) []*model.Co
 		}
 	}
 
-	var stats []*model.ColumnStat
-	for idx, agg := range aggregates {
-		if agg == nil {
-			continue
+	present := make([]*columnAggregate, 0, len(aggregates))
+	for _, agg := range aggregates {
+		if agg != nil {
+			present = append(present, agg)
 		}
-		field := schema.FieldByPath(strings.Join(paths[idx], "."))
+	}
+	return present
+}
+
+// columnStatsForSchema types each aggregate after the schema's field, dropping the columns the
+// schema does not describe.
+func columnStatsForSchema(aggregates []*columnAggregate, schema *model.Schema) []*model.ColumnStat {
+	if schema == nil {
+		return nil
+	}
+
+	var stats []*model.ColumnStat
+	for _, agg := range aggregates {
+		field := schema.FieldByPath(agg.path)
 		if field == nil {
 			continue
 		}
