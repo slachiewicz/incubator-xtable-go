@@ -1278,6 +1278,43 @@ Follow-ups noted, not scheduled: a bindings smoke lane (the C ABI and wheel are 
 executed in CI; one `polytable.sync()` via ctypes and a node run of `polytable.wasm`), and
 LocalStack-Glue for catalog sync integration.
 
+## T31 — Iceberg manifests must be Avro, not JSON
+
+**The largest interop defect in the port**, found 2026-08-21 while planning engine verification.
+The Iceberg spec requires Avro manifest lists and manifest files. This adapter uses JSON on both
+sides: the source parses manifests with `json.Unmarshal`
+(`pkg/formats/iceberg/source.go:217,228`), and the target writes `snap-<id>-<uuid>.json` and
+`<uuid>-m0.json` (`pkg/formats/iceberg/target.go:170,191`). Consequences, both directions:
+
+- No real engine (Spark, Trino, DuckDB `iceberg_scan`, pyiceberg) can read a polytable-written
+  Iceberg table. T29 is expected to confirm this; do not let a JSON-reading shortcut in that suite
+  mask it.
+- The polytable source cannot read a real Iceberg table — T28's pyiceberg fixture will hit this on
+  the manifest read. Only tables polytable itself wrote round-trip.
+
+Library decision first: `hamba/avro/v2` (maintained, pure Go, schema-first) for a manifest codec
+of our own, versus adopting `apache/iceberg-go`'s manifest read/write. Prefer **hamba/avro** unless
+inspection shows iceberg-go's manifest layer can be used without dragging in its catalog/table
+stack — this repo's value is the thin native implementation, and a second table library blurs it.
+
+Scope:
+1. Manifest-list and manifest-entry Avro schemas per the Iceberg v2 spec (field-ids in the Avro
+   schema metadata matter — engines read them).
+2. Target: write Avro; drop the JSON writer entirely. Nothing is released, so there is no
+   migration path to preserve — delete, don't fallback. T20's base64-of-binary bounds encoding was
+   explicitly "the JSON accommodation"; in Avro the bounds become native `bytes`, so revisit
+   `pkg/formats/iceberg/stats.go` in the same change.
+3. Source: read Avro manifests. Keep the JSON read path only as long as existing test fixtures
+   need it, then delete those too — foreign fixtures (T28) become the read-side truth.
+4. `metadata.json` itself stays JSON — that part is spec-correct today.
+
+**Acceptance:** the T28 pyiceberg fixture is read successfully (schema, files, stats); a
+polytable-written Iceberg table is read back by pyiceberg and by DuckDB `iceberg_scan` (extend the
+T29 suite — that is the regression test); Iceberg→Delta→Iceberg round trip still preserves bounds;
+`grep -rn '\.json' pkg/formats/iceberg/target.go` shows only `metadata.json` writes.
+
+**Commit:** `fix: write and read Iceberg manifests as Avro per the spec`
+
 ---
 
 ## Ordering
@@ -1290,7 +1327,7 @@ LocalStack-Glue for catalog sync integration.
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T28 (real-writer fixtures), T29 (DuckDB output verification), T30 (Java interop nightly — after T28/T29) |
+| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T28 (real-writer fixtures), T29 (DuckDB output verification), T30 (Java interop nightly — after T28/T29), T31 (Avro manifests — largest interop defect; blocks credible Iceberg output) |
 
 **Picking up the queue.** The tasks are independent; take them in any order. Suggested value order
 is T23 first. T24 is a decision
