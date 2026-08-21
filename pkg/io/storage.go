@@ -20,6 +20,8 @@ package io
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -31,7 +33,12 @@ var (
 	ErrAlreadyExists    = errors.New("file already exists")
 	ErrInvalidPath      = errors.New("invalid storage path")
 	ErrPermissionDenied = errors.New("permission denied")
+	ErrPathNotUnderBase = errors.New("path is not under the base path")
 )
+
+// uriSchemes are the URI prefixes the storage layer recognizes. JoinPath, RelativizePath and
+// NewStorageForPathWithOptions all key off this list.
+var uriSchemes = []string{"s3://", "s3a://", "gs://", "mem://", "file://"}
 
 // FileInfo represents metadata for an object or file in storage.
 type FileInfo struct {
@@ -64,8 +71,7 @@ type Storage interface {
 
 // JoinPath safely joins path elements while preserving URI schemes (e.g. s3://, mem://, file://).
 func JoinPath(base string, elem ...string) string {
-	schemes := []string{"s3://", "s3a://", "gs://", "mem://", "file://"}
-	for _, scheme := range schemes {
+	for _, scheme := range uriSchemes {
 		if strings.HasPrefix(base, scheme) {
 			trimmed := strings.TrimPrefix(base, scheme)
 			parts := append([]string{trimmed}, elem...)
@@ -74,11 +80,77 @@ func JoinPath(base string, elem ...string) string {
 			for strings.Contains(joined, "//") {
 				joined = strings.ReplaceAll(joined, "//", "/")
 			}
+			// file:// carries an absolute path after the scheme, and dropping its leading
+			// separator would turn file:///data/events into the relative file://data/events.
+			if strings.HasPrefix(trimmed, "/") {
+				return scheme + joined
+			}
 			return scheme + strings.TrimPrefix(joined, "/")
 		}
 	}
 	parts := append([]string{base}, elem...)
 	return filepath.Join(parts...)
+}
+
+// TrimScheme removes a recognized URI scheme from a path, returning the scheme and the remainder.
+// An unrecognized or absent scheme yields an empty scheme and the path unchanged.
+func TrimScheme(p string) (scheme, rest string) {
+	for _, s := range uriSchemes {
+		if strings.HasPrefix(p, s) {
+			return s, strings.TrimPrefix(p, s)
+		}
+	}
+	return "", p
+}
+
+// RelativizePath returns physicalPath expressed relative to basePath, which is what every target
+// stores in its metadata so that a table survives being copied or moved.
+//
+// The comparison is scheme-aware: a scheme is stripped from either side before comparing, because
+// formats disagree about whether to record one. An Iceberg manifest reports
+// file:///data/events/f.parquet for a table whose base path is /data/events, and a plain string
+// prefix does not match — the bug this exists to prevent. Stripping the scheme from both sides also
+// makes s3:// and s3a:// equivalent, which is right: they name the same object store.
+//
+// A path that is already relative comes back unchanged. A path outside the base path is an error
+// wrapping ErrPathNotUnderBase, never a silently returned absolute path: every caller has to decide
+// what such a file means for its format.
+func RelativizePath(physicalPath, basePath string) (string, error) {
+	_, base := TrimScheme(basePath)
+	scheme, file := TrimScheme(physicalPath)
+
+	if base == "" {
+		return "", fmt.Errorf("%w: base path %q has no path component", ErrInvalidPath, basePath)
+	}
+	if file == "" {
+		return "", fmt.Errorf("%w: file path %q has no path component", ErrInvalidPath, physicalPath)
+	}
+
+	// Clean collapses duplicate separators, drops a trailing one and resolves "..", so that a base
+	// path written with or without a trailing slash compares the same.
+	base = path.Clean(base)
+	file = path.Clean(file)
+
+	// model.DataFile documents PhysicalPath as a fully qualified URI or a relative path. Carrying no
+	// scheme and not starting at the root is what makes it the second kind, and such a path is
+	// already relative to the table — with the exception of one that climbs out of it.
+	if scheme == "" && !strings.HasPrefix(file, "/") {
+		if file == ".." || strings.HasPrefix(file, "../") {
+			return "", fmt.Errorf("%w: %q climbs out of %q", ErrPathNotUnderBase, physicalPath, basePath)
+		}
+		return file, nil
+	}
+
+	if file == base {
+		return "", fmt.Errorf("%w: %q is the base path itself", ErrPathNotUnderBase, physicalPath)
+	}
+	rest, found := strings.CutPrefix(file, base)
+	// The match has to end on a separator, or /data/events would claim /data/events2/f.parquet.
+	// A base path of "/" is the one case that already ends in one.
+	if !found || (!strings.HasPrefix(rest, "/") && !strings.HasSuffix(base, "/")) {
+		return "", fmt.Errorf("%w: %q is not under %q", ErrPathNotUnderBase, physicalPath, basePath)
+	}
+	return strings.TrimPrefix(rest, "/"), nil
 }
 
 // NewStorageForPath automatically resolves and instantiates the appropriate Storage implementation for a path URI.

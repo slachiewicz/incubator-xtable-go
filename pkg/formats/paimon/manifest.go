@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/slachiewicz/polytable/pkg/io"
 	"github.com/slachiewicz/polytable/pkg/model"
@@ -111,15 +110,15 @@ func ParseManifestListJSON(data []byte) (*ManifestList, error) {
 	return &ml, nil
 }
 
-// relativeFilePath returns path relative to basePath, so that a table stays readable after it has
-// been copied or moved.
-func relativeFilePath(basePath, filePath string) string {
-	trimmed := strings.TrimPrefix(filePath, basePath)
-	return strings.TrimPrefix(trimmed, "/")
-}
+// entryForDataFile converts a canonical data file into a manifest entry of the given kind. A
+// manifest entry names a file relative to the table directory, which dataFileForEntry joins back
+// onto the base path, so a file outside the table fails the commit rather than being recorded.
+func entryForDataFile(basePath string, file *model.DataFile, kind int, schemaID int64) (ManifestEntry, error) {
+	fileName, err := io.RelativizePath(file.PhysicalPath, basePath)
+	if err != nil {
+		return ManifestEntry{}, fmt.Errorf("failed to place data file under %s: %w", basePath, err)
+	}
 
-// entryForDataFile converts a canonical data file into a manifest entry of the given kind.
-func entryForDataFile(basePath string, file *model.DataFile, kind int, schemaID int64) ManifestEntry {
 	partition := partitionMap(file)
 	return ManifestEntry{
 		Kind:         kind,
@@ -127,7 +126,7 @@ func entryForDataFile(basePath string, file *model.DataFile, kind int, schemaID 
 		Bucket:       0,
 		TotalBuckets: 1,
 		File: FileMeta{
-			FileName:     relativeFilePath(basePath, file.PhysicalPath),
+			FileName:     fileName,
 			FileSize:     file.FileSizeBytes,
 			RowCount:     file.RecordCount,
 			SchemaID:     schemaID,
@@ -136,7 +135,7 @@ func entryForDataFile(basePath string, file *model.DataFile, kind int, schemaID 
 			FileFormat:   string(file.FileFormat),
 			Partition:    partition,
 		},
-	}
+	}, nil
 }
 
 // dataFileForEntry rebuilds a canonical data file from a manifest entry, resolving the recorded

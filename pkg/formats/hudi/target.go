@@ -108,8 +108,12 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 			partPath = fmt.Sprintf("%v", df.PartitionValues[0].Range.MinValue)
 		}
 
-		relPath := strings.TrimPrefix(df.PhysicalPath, t.targetTable.BasePath)
-		relPath = strings.TrimPrefix(relPath, "/")
+		// A write stat's path is relative to the base path, and the Hudi source joins it back onto
+		// one. A file outside the table is not representable here, so it fails the commit.
+		relPath, err := io.RelativizePath(df.PhysicalPath, t.targetTable.BasePath)
+		if err != nil {
+			return fmt.Errorf("failed to place data file under %s: %w", t.targetTable.BasePath, err)
+		}
 
 		ws := HoodieWriteStat{
 			FileID:          uuid.New().String(),
