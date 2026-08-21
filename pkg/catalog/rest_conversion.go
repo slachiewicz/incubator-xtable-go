@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // IcebergRESTConversionSource resolves tables registered in an Iceberg REST Catalog

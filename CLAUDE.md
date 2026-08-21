@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Go-native port of [Apache XTable (incubating)](https://github.com/apache/incubator-xtable) — omni-directional
 metadata translation between Delta Lake, Iceberg, Hudi, Paimon and raw Parquet. Module path is
-`github.com/slachiewicz/xtable-go`.
+`github.com/slachiewicz/polytable`.
 
 Layout: `pkg/model` (canonical pivot types), `pkg/spi` (source/target/sync interfaces), `pkg/io` (storage
 abstraction), `pkg/formats/<format>` (per-format readers and writers), `pkg/conversion` (the controller),
-`pkg/catalog` (Glue, Iceberg REST), `pkg/daemon`, `cmd/xtable` (CLI), `cmd/xtable-service` (REST
-daemon), `cmd/xtable-wasm`, `bindings/{c,python}`, `test/` (e2e), `spec/` (OpenAPI).
+`pkg/catalog` (Glue, Iceberg REST), `pkg/daemon`, `cmd/polytable` (CLI), `cmd/polytable-service` (REST
+daemon), `cmd/polytable-wasm`, `bindings/{c,python}`, `test/` (e2e), `spec/` (OpenAPI).
 
 The Java original is checked out at `../incubator-xtable`. `pkg/model` mirrors `xtable-api`'s `Internal*`
 types (`InternalTable`, `InternalSchema`, `InternalField`, `InternalDataFile`, `InternalSnapshot`,
@@ -24,9 +24,9 @@ supported Go version — this file wins.
 
 Feature parity with Java XTable comes first — prefer closing a parity gap over extending a Go-native
 addition. Those additions are no longer hypothetical; they landed in `7c36ab4` and are live code:
-`cmd/xtable-wasm` (`//go:build js && wasm`, the repo's only build tag), `bindings/c` (`import "C"`,
-exporting `xtable_sync_json` / `xtable_inspect_json`), `bindings/python`, and `pkg/daemon` +
-`cmd/xtable-service` behind `spec/rest-service-open-api.yaml`.
+`cmd/polytable-wasm` (`//go:build js && wasm`, the repo's only build tag), `bindings/c` (`import "C"`,
+exporting `polytable_sync_json` / `polytable_inspect_json`), `bindings/python`, and `pkg/daemon` +
+`cmd/polytable-service` behind `spec/rest-service-open-api.yaml`.
 
 Parity order: `pkg/model` → storage layer → Delta + Iceberg full-snapshot sync → incremental sync + CLI →
 Hudi + catalog sync (Glue, HMS, Iceberg REST) → deletion vectors, REST service, Paimon.
@@ -45,7 +45,7 @@ checked, not that the code landed. Its `## Non-goals` section records what was d
 ```sh
 gofmt -l .                                 # must print nothing
 go vet ./...
-GOOS=js GOARCH=wasm go vet ./cmd/xtable-wasm
+GOOS=js GOARCH=wasm go vet ./cmd/polytable-wasm
 go test -short ./...                       # see below: without -short this starts Docker containers
 golangci-lint run ./...
 ```
@@ -56,7 +56,7 @@ typically a minor behind; reinstall it with `go install github.com/golangci/gola
 under the toolchain you are using. `lint.yml` does exactly this, for the reason recorded under
 "Go version" below.
 
-The `js/wasm` vet is not redundant. `cmd/xtable-wasm` is behind `//go:build js && wasm`, so a plain
+The `js/wasm` vet is not redundant. `cmd/polytable-wasm` is behind `//go:build js && wasm`, so a plain
 `go build`/`go vet` never compiles it — a break there is invisible locally without that line.
 
 `-short` is not optional shorthand. `test/dockertest_minio_matrix_test.go` and
@@ -102,7 +102,7 @@ as a prompt to investigate locally.
 Apache Software Foundation. `DISCLAIMER-WIP` was removed because it claimed incubation this repo does
 not have, and `NOTICE` now disclaims affiliation while preserving the upstream attribution that
 Apache-2.0 §4(d) requires for derived work. Do not reintroduce ASF branding: the project is
-`xtable-go`, not "Apache XTable (Go)".
+`polytable`, not "Apache XTable (Go)".
 
 Every `.go` file carries the identical 16-line ASF grant header, and **new files must too** — copy it
 verbatim from any existing file in `pkg/model/`. This is deliberate: donation to the ASF is planned,

@@ -1,6 +1,6 @@
 ---
 name: verify-go
-description: Run the full xtable-go verification gate - gofmt, go vet, js/wasm vet, go test, golangci-lint - and report exactly which stage failed. Use before reporting any code change as done.
+description: Run the full polytable verification gate - gofmt, go vet, js/wasm vet, go test, golangci-lint - and report exactly which stage failed. Use before reporting any code change as done.
 ---
 
 Run `make check` from the repo root. It runs all five stages below and stops at the first failure, so when
@@ -10,7 +10,7 @@ first.
 ```sh
 gofmt -l .
 go vet ./...
-GOOS=js GOARCH=wasm go vet ./cmd/xtable-wasm
+GOOS=js GOARCH=wasm go vet ./cmd/polytable-wasm
 go test -short ./...
 golangci-lint run ./...
 ```
@@ -21,7 +21,7 @@ Interpreting the results:
   golangci-lint: `.golangci.yml` configures no formatter, so lint can pass on an unformatted tree. Fix
   with `gofmt -w <file>`.
 - `go vet ./...` — silence is success.
-- `GOOS=js GOARCH=wasm go vet ./cmd/xtable-wasm` — that file is behind `//go:build js && wasm`, so no
+- `GOOS=js GOARCH=wasm go vet ./cmd/polytable-wasm` — that file is behind `//go:build js && wasm`, so no
   other stage compiles it. Skipping this is how a WASM break reaches `main` unnoticed.
 - `go test -short ./...` — **`-short` is required.** `test/dockertest_minio_matrix_test.go` and
   `test/dockertest_iceberg_rest_test.go` gate on `testing.Short()` rather than a build tag, so the

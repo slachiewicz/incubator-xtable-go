@@ -65,7 +65,7 @@ func (f *Field) Path() string {
 	return f.ParentPath + "." + f.Name
 }
 
-// Schema represents a type definition in XTable's internal schema model.
+// Schema represents a type definition in polytable's internal schema model.
 type Schema struct {
 	// Name of this schema definition (optional for anonymous types).
 	Name string `json:"name,omitempty"`

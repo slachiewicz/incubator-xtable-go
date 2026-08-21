@@ -35,8 +35,8 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/daemon"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/daemon"
 )
 
 var (
@@ -52,10 +52,10 @@ func main() {
 	)
 
 	rootCmd := &cobra.Command{
-		Use:     "xtable-service",
+		Use:     "polytable-service",
 		Version: version,
-		Short:   "Apache XTable REST Service & Continuous Synchronization Daemon",
-		Long:    `Runs the Apache XTable REST API server and continuous background synchronization daemon.`,
+		Short:   "polytable REST service and continuous synchronization daemon",
+		Long:    `Runs the polytable REST API server and continuous background synchronization daemon.`,
 		// A failure to bind or read a config is not a usage error; printing the flag list on top of
 		// the real message only buries it.
 		SilenceUsage: true,
@@ -82,7 +82,7 @@ func main() {
 			}
 
 			// The banner goes to stdout deliberately. slog writes to stderr, so a plain
-			// `xtable-service > log.txt` used to look like the process had produced nothing at all.
+			// `polytable-service > log.txt` used to look like the process had produced nothing at all.
 			printStartupBanner(cmd.OutOrStdout(), port, configPath, enableDaemon, interval)
 
 			serverErr := make(chan error, 1)
@@ -130,7 +130,7 @@ func main() {
 				return fmt.Errorf("HTTP server failed: %w", err)
 			}
 
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down XTable service...")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "\nShutting down polytable service...")
 
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
@@ -155,7 +155,7 @@ func main() {
 // printStartupBanner tells the operator what is actually running: where to reach it, which endpoints
 // exist, whether background sync is on, and how to stop it.
 func printStartupBanner(w io.Writer, port int, configPath string, daemonEnabled bool, interval time.Duration) {
-	_, _ = fmt.Fprintf(w, "xtable-go service %s\n", version)
+	_, _ = fmt.Fprintf(w, "polytable service %s\n", version)
 	_, _ = fmt.Fprintf(w, "  Listening      http://localhost:%d\n", port)
 	_, _ = fmt.Fprintf(w, "  Endpoints      GET  /v1/health\n")
 	_, _ = fmt.Fprintf(w, "                 POST /v1/conversion/table\n")

@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // CatalogType represents supported external metastores / data catalogs.

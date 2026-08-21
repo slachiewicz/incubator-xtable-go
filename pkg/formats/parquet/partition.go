@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // ExtractHivePartitions parses directory segments between basePath and filePath for Hive-style key=value pairs.

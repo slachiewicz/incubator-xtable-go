@@ -21,7 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // AvroField represents a field in an Avro record schema.

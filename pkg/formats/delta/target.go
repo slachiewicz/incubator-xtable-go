@@ -29,9 +29,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 // Target implements spi.ConversionTarget for Delta Lake tables.
@@ -156,8 +156,8 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 	actions = append(actions, SingleAction{
 		CommitInfo: &CommitInfoAction{
 			Timestamp:  now,
-			Operation:  "XTABLE_SYNC_SNAPSHOT",
-			EngineInfo: "xtable-go",
+			Operation:  "POLYTABLE_SYNC_SNAPSHOT",
+			EngineInfo: "polytable",
 		},
 	})
 
@@ -226,8 +226,8 @@ func (t *Target) CommitChanges(ctx context.Context, changes *model.IncrementalTa
 		actions = append(actions, SingleAction{
 			CommitInfo: &CommitInfoAction{
 				Timestamp:  now,
-				Operation:  "XTABLE_SYNC_INCREMENTAL",
-				EngineInfo: "xtable-go",
+				Operation:  "POLYTABLE_SYNC_INCREMENTAL",
+				EngineInfo: "polytable",
 			},
 		})
 

@@ -27,9 +27,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pqformat "github.com/slachiewicz/xtable-go/pkg/formats/parquet"
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	pqformat "github.com/slachiewicz/polytable/pkg/formats/parquet"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // StatsRecord carries an optional column so that the null counts in the footer are non-zero.

@@ -17,20 +17,20 @@
   under the License.
 -->
 
-# xtable-go Technical Specification
+# polytable Technical Specification
 
-> **Not an Apache Software Foundation project.** `xtable-go` is an independent, unofficial Go port
+> **Not an Apache Software Foundation project.** `polytable` is an independent, unofficial Go port
 > of Apache XTable (incubating), not affiliated with or endorsed by the ASF.
 
 **Version:** 0.1.0-SNAPSHOT  
 **Status:** Active Draft / Implementation  
-**Module:** `github.com/slachiewicz/xtable-go`
+**Module:** `github.com/slachiewicz/polytable`
 
 ---
 
 ## 1. Executive Summary & Mission
 
-**xtable-go** is a pure Go, omni-directional, zero-copy metadata translation engine and synchronization daemon for open lakehouse table formats. It enables seamless interoperability across **Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and unmanaged **Parquet** datasets, as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is a declared
+**polytable** is a pure Go, omni-directional, zero-copy metadata translation engine and synchronization daemon for open lakehouse table formats. It enables seamless interoperability across **Apache Iceberg**, **Delta Lake**, **Apache Hudi**, **Apache Paimon**, and unmanaged **Parquet** datasets, as well as catalog synchronization (**AWS Glue**, **Iceberg REST**). Hive Metastore is a declared
 parity target but is **not implemented**; `CatalogTypeHMS` exists as a constant only.
 
 ### Primary Motivations for the Go-Native Implementation:
@@ -47,7 +47,7 @@ All components within this repository MUST strictly adhere to the following inva
 
 | # | Invariant | Description |
 | :--- | :--- | :--- |
-| **INV-1** | **Zero Data File Rewrites** | XTable translates and generates *metadata only*. It MUST NEVER alter, rewrite, or move physical Parquet/ORC data files. |
+| **INV-1** | **Zero Data File Rewrites** | polytable translates and generates *metadata only*. It MUST NEVER alter, rewrite, or move physical Parquet/ORC data files. |
 | **INV-2** | **Schema & Field ID Integrity** | Hierarchical field IDs, nullability, data types, and comments MUST be accurately preserved across all format transformations. |
 | **INV-3** | **Pure Go Runtime** | Zero JVM, Hadoop, Spark, or CGO runtime dependencies in the core libraries. |
 | **INV-4** | **Embedded Sync Continuity** | Target converters MUST embed and read `TableSyncMetadata` (`xtable_last_instant_synced`, `xtable_source_format`) to guarantee idempotent and incremental sync safety. |
@@ -60,7 +60,7 @@ All components within this repository MUST strictly adhere to the following inva
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           Client / Consumer Layer                           │
-│   CLI (cmd/xtable)    │   REST Service (cmd/xtable-service)   │   C-Shared  │
+│  CLI (cmd/polytable)  │  REST Service (cmd/polytable-service) │   C-Shared  │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
 ┌──────────────────────────────────────▼──────────────────────────────────────┐
@@ -217,10 +217,10 @@ type Storage interface {
 
 ## 8. CLI & Service Interfaces
 
-### 8.1 CLI Commands (`cmd/xtable`)
-- `xtable sync --datasetConfig <path>`: Runs synchronization across configured datasets.
-- `xtable inspect --basePath <path> --format <DELTA|ICEBERG|HUDI|PARQUET>`: Pretty-prints schema, partition spec, commit time, and data file count.
-- `xtable version`: Displays binary version and commit hash.
+### 8.1 CLI Commands (`cmd/polytable`)
+- `polytable sync --datasetConfig <path>`: Runs synchronization across configured datasets.
+- `polytable inspect --basePath <path> --format <DELTA|ICEBERG|HUDI|PARQUET>`: Pretty-prints schema, partition spec, commit time, and data file count.
+- `polytable version`: Displays binary version and commit hash.
 
 ### 8.2 REST Service Specification (`spec/rest-service-open-api.yaml`)
 - `POST /v1/conversion/table`: Initiates table conversion (sync or async via `Prefer: respond-async`).
@@ -270,11 +270,11 @@ was: it was 83% before Go 1.27, and the json v2 rewrite took more out of parsing
 
 | Property | Measured | Method |
 | :--- | :--- | :--- |
-| `cmd/xtable`, `-ldflags="-s -w"` | 13.9 MiB | `go build`, darwin/arm64 |
-| `cmd/xtable-service`, same flags | 14.4 MiB | same |
-| `cmd/xtable-wasm`, same flags | 18.4 MiB | after excluding the AWS SDK from `js` builds; was 25.6 MiB |
-| `xtable version`, process start to exit | median 6.6 ms (min 6.3, max 7.3, n=30) | wall clock around `fork`/`exec`; an upper bound, it includes the harness |
-| `xtable-service` idle RSS | 15.9 MiB, unchanged after serving requests | `ps -o rss=` two seconds after the health endpoint answered |
+| `cmd/polytable`, `-ldflags="-s -w"` | 13.9 MiB | `go build`, darwin/arm64 |
+| `cmd/polytable-service`, same flags | 14.4 MiB | same |
+| `cmd/polytable-wasm`, same flags | 18.4 MiB | after excluding the AWS SDK from `js` builds; was 25.6 MiB |
+| `polytable version`, process start to exit | median 6.6 ms (min 6.3, max 7.3, n=30) | wall clock around `fork`/`exec`; an upper bound, it includes the harness |
+| `polytable-service` idle RSS | 15.9 MiB, unchanged after serving requests | `ps -o rss=` two seconds after the health endpoint answered |
 
 The three binary sizes are each larger than the figure this section carried previously, by 0.4 MiB
 for the two native binaries and 0.8 MiB for the WebAssembly artifact; idle RSS and startup time both
@@ -293,13 +293,13 @@ Earlier revisions published such a column, and its figures were not measured.
 
 - ~~The WebAssembly target links the entire AWS SDK~~ — **fixed.** `pkg/io/s3.go` and the Glue
   implementations in `pkg/catalog` now carry `//go:build !js`, with `js` counterparts returning
-  `ErrS3Unsupported` and `ErrGlueUnsupported`. `GOOS=js GOARCH=wasm go list -deps ./cmd/xtable-wasm`
+  `ErrS3Unsupported` and `ErrGlueUnsupported`. `GOOS=js GOARCH=wasm go list -deps ./cmd/polytable-wasm`
   now reports **zero** `aws-sdk-go-v2` and `smithy` packages, down from 103, and the artifact fell
   from 25.6 MiB to **18.4 MiB**. An `s3://` path in a browser now fails with a stated reason rather
   than dragging in an SDK that could never have worked there.
 - ~~Release artifacts are unstripped~~ — **fixed.** The release workflow, `build-artifacts.yml` and
   the `Makefile` all build with `-ldflags="-s -w"`, cutting roughly 6 MiB from each of the eight
-  published binaries — `cmd/xtable` measures 20.2 MiB unstripped against 13.9 MiB stripped. The
+  published binaries — `cmd/polytable` measures 20.2 MiB unstripped against 13.9 MiB stripped. The
   `c-shared` build is deliberately left unstripped: its dynamic symbol table is the interface.
 
 ---
@@ -315,10 +315,10 @@ Phases 4 and 5 have shipped. This section previously listed them as future work.
 | Catalog sync clients — AWS Glue, Iceberg REST | `pkg/catalog/{glue,rest}.go`, reached from `DatasetConfig.Catalogs` |
 | Catalog conversion sources — resolve a table as `db.table` instead of a path | `pkg/catalog/{glue,rest}_conversion.go`, reached from `DatasetConfig.SourceCatalog` |
 | Catalog partition synchronization | `pkg/catalog/partition.go` + `glue_partition.go`, applied automatically for Hive-style catalogs |
-| Continuous daemon and REST service | `pkg/daemon`, `cmd/xtable-service`, contract in `spec/rest-service-open-api.yaml` |
+| Continuous daemon and REST service | `pkg/daemon`, `cmd/polytable-service`, contract in `spec/rest-service-open-api.yaml` |
 | C-shared libraries for Python, Rust, DuckDB, C++ | `bindings/c`, built with `make bindings-c` |
-| Python SDK | `bindings/python` (`pyxtable`) |
-| WebAssembly — ⚠️ **experimental, untested** | `cmd/xtable-wasm`, `GOOS=js GOARCH=wasm`. Compile-checked only; never executed in a browser or under Node.js, and no test covers it. Only local and in-memory paths can work — S3, Glue and Iceberg REST are unreachable from a browser sandbox. |
+| Python SDK | `bindings/python` (`polytable`) |
+| WebAssembly — ⚠️ **experimental, untested** | `cmd/polytable-wasm`, `GOOS=js GOARCH=wasm`. Compile-checked only; never executed in a browser or under Node.js, and no test covers it. Only local and in-memory paths can work — S3, Glue and Iceberg REST are unreachable from a browser sandbox. |
 | Paimon adapter | `pkg/formats/paimon` — source and target |
 | Parquet target | `pkg/formats/parquet/target.go` |
 

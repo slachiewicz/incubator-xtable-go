@@ -31,8 +31,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/slachiewicz/xtable-go/pkg/catalog"
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/catalog"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 func TestTableFormatFromProperties(t *testing.T) {

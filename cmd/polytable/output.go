@@ -21,12 +21,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
-// SyncOutput is the machine-readable document `xtable sync --output json` writes to stdout. It is
+// SyncOutput is the machine-readable document `polytable sync --output json` writes to stdout. It is
 // the whole reason for this file: an agent driving the CLI parses this rather than screen-scraping
 // the human-readable progress text, which goes to stderr instead.
 type SyncOutput struct {
@@ -122,7 +122,7 @@ func (t TableSyncOutput) hasFailure() bool {
 	return false
 }
 
-// InspectOutput is the machine-readable document `xtable inspect --output json` writes to stdout.
+// InspectOutput is the machine-readable document `polytable inspect --output json` writes to stdout.
 type InspectOutput struct {
 	// TableName is the table's logical name.
 	TableName string `json:"tableName"`

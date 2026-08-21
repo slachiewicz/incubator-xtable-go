@@ -22,7 +22,7 @@ version: "3.9"
 services:
   minio:
     image: minio/minio:latest
-    container_name: xtable-minio
+    container_name: polytable-minio
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -35,7 +35,7 @@ services:
 
   iceberg-rest:
     image: tabulario/iceberg-rest:latest
-    container_name: xtable-iceberg-rest
+    container_name: polytable-iceberg-rest
     ports:
       - "8181:8181"
     environment:
@@ -49,11 +49,11 @@ services:
     depends_on:
       - minio
 
-  xtable-service:
+  polytable-service:
     build:
       context: ..
       dockerfile: demo/Dockerfile
-    container_name: xtable-service
+    container_name: polytable-service
     ports:
       - "8080:8080"
     environment:

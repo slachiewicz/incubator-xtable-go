@@ -17,22 +17,22 @@
   under the License.
 -->
 
-# xtable-go
+# polytable
 
-[![CI](https://github.com/slachiewicz/xtable-go/actions/workflows/ci.yml/badge.svg)](https://github.com/slachiewicz/xtable-go/actions/workflows/ci.yml)
-[![Integration Tests](https://github.com/slachiewicz/xtable-go/actions/workflows/integration.yml/badge.svg)](https://github.com/slachiewicz/xtable-go/actions/workflows/integration.yml)
-[![Security & SAST](https://github.com/slachiewicz/xtable-go/actions/workflows/security.yml/badge.svg)](https://github.com/slachiewicz/xtable-go/actions/workflows/security.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/slachiewicz/xtable-go)](https://goreportcard.com/report/github.com/slachiewicz/xtable-go)
+[![CI](https://github.com/slachiewicz/polytable/actions/workflows/ci.yml/badge.svg)](https://github.com/slachiewicz/polytable/actions/workflows/ci.yml)
+[![Integration Tests](https://github.com/slachiewicz/polytable/actions/workflows/integration.yml/badge.svg)](https://github.com/slachiewicz/polytable/actions/workflows/integration.yml)
+[![Security & SAST](https://github.com/slachiewicz/polytable/actions/workflows/security.yml/badge.svg)](https://github.com/slachiewicz/polytable/actions/workflows/security.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/slachiewicz/polytable)](https://goreportcard.com/report/github.com/slachiewicz/polytable)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Not an Apache Software Foundation project.** `xtable-go` is an independent, unofficial Go port of
+> **Not an Apache Software Foundation project.** `polytable` is an independent, unofficial Go port of
 > [Apache XTable (incubating)](https://github.com/apache/incubator-xtable). It is not affiliated with,
 > endorsed by, or supported by the ASF, and it is not an Apache release. "Apache", "Apache XTable",
 > "Apache Iceberg", "Apache Hudi" and "Apache Paimon" are trademarks of The Apache Software
 > Foundation, used here only to identify the upstream projects this software derives from or
 > interoperates with. For the official project, see [xtable.apache.org](https://xtable.apache.org).
 
-**xtable-go** is a lightweight, ultra-high performance, **zero-JVM** lakehouse metadata translation engine written in pure Go. It facilitates **omni-directional, zero-copy interoperability** across open lakehouse table formats (**Delta Lake**, **Apache Iceberg**, **Apache Hudi**, **Apache Paimon**, and **Raw Parquet**) without rewriting underlying data files.
+**polytable** is a lightweight, ultra-high performance, **zero-JVM** lakehouse metadata translation engine written in pure Go. It facilitates **omni-directional, zero-copy interoperability** across open lakehouse table formats (**Delta Lake**, **Apache Iceberg**, **Apache Hudi**, **Apache Paimon**, and **Raw Parquet**) without rewriting underlying data files.
 
 ---
 
@@ -53,11 +53,11 @@ that tax entirely, and makes embeddings the JVM cannot offer (C ABI, WASM) possi
 - 📦 **Deletion Vectors**: Delta deletion-vector descriptors are translated as descriptors, leaving the roaring bitmap payload untouched. Iceberg and Hudi are not covered yet.
 - 📈 **Column Statistics**: min/max bounds and null counts survive conversion between Delta, Iceberg and Parquet, so engines can keep pruning files on the converted table.
 - 🌐 **Ubiquitous Embeddability**:
-  - **CLI Tool** (`xtable`)
-  - **Continuous REST Daemon & Sidecar** (`xtable-service` with OpenAPI 3.0.3)
-  - **Python SDK** (`pyxtable` via ctypes C ABI)
-  - **C-Shared Dynamic Library** (`libxtable.so` / `libxtable.dylib`)
-  - **WebAssembly Engine** (`xtable.wasm`) — ⚠️ **experimental**, see [WebAssembly status](#webassembly-status)
+  - **CLI Tool** (`polytable`)
+  - **Continuous REST Daemon & Sidecar** (`polytable-service` with OpenAPI 3.0.3)
+  - **Python SDK** (`polytable` via ctypes C ABI)
+  - **C-Shared Dynamic Library** (`libpolytable.so` / `libpolytable.dylib`)
+  - **WebAssembly Engine** (`polytable.wasm`) — ⚠️ **experimental**, see [WebAssembly status](#webassembly-status)
 - ☁️ **Cloud Native Storage & Catalogs**: Native AWS S3 (`aws-sdk-go-v2`), AWS Glue Data Catalog, and Iceberg REST Catalog (Polaris, Unity, Nessie, Tabular).
 
 ---
@@ -93,8 +93,8 @@ official JVM implementation, use the upstream project.
 
 ```bash
 # Clone repository
-git clone https://github.com/slachiewicz/xtable-go.git
-cd xtable-go
+git clone https://github.com/slachiewicz/polytable.git
+cd polytable
 
 # Build all binaries
 make build
@@ -106,7 +106,7 @@ make build
 make demo
 ```
 
-### 3. CLI Synchronization (`xtable sync`)
+### 3. CLI Synchronization (`polytable sync`)
 
 Create a dataset configuration file `dataset.yaml`:
 
@@ -124,30 +124,30 @@ datasets:
 Run synchronization:
 
 ```bash
-./bin/xtable sync --config dataset.yaml
+./bin/polytable sync --config dataset.yaml
 ```
 
-### 4. CLI Table Inspection (`xtable inspect`)
+### 4. CLI Table Inspection (`polytable inspect`)
 
 ```bash
 # Inspect Delta table
-./bin/xtable inspect --path ./data/my_table --format DELTA
+./bin/polytable inspect --path ./data/my_table --format DELTA
 
 # Inspect Iceberg table
-./bin/xtable inspect --path ./data/my_table --format ICEBERG
+./bin/polytable inspect --path ./data/my_table --format ICEBERG
 
 # Inspect raw Parquet directory
-./bin/xtable inspect --path ./data/raw_parquet --format PARQUET
+./bin/polytable inspect --path ./data/raw_parquet --format PARQUET
 ```
 
 ---
 
-## 🛰️ Continuous REST Daemon (`xtable-service`)
+## 🛰️ Continuous REST Daemon (`polytable-service`)
 
-Run `xtable-service` as a standalone REST server or Kubernetes sidecar:
+Run `polytable-service` as a standalone REST server or Kubernetes sidecar:
 
 ```bash
-./bin/xtable-service --port 8080 --daemon --interval 10s --config dataset.yaml
+./bin/polytable-service --port 8080 --daemon --interval 10s --config dataset.yaml
 ```
 
 ### OpenAPI REST API Endpoints:
@@ -162,14 +162,14 @@ See full specification in [`spec/rest-service-open-api.yaml`](./spec/rest-servic
 
 ---
 
-## 🐍 Python SDK (`pyxtable`)
+## 🐍 Python SDK (`polytable`)
 
-Use Apache XTable natively in Python without JVM or PySpark:
+Use polytable natively in Python without JVM or PySpark:
 
 ```python
-from pyxtable import sync, inspect, version
+from polytable import sync, inspect, version
 
-print(f"Using XTable Engine: {version()}")
+print(f"Using polytable engine: {version()}")
 
 # Perform zero-copy sync in Python
 result = sync(
@@ -213,7 +213,7 @@ For detailed architectural diagrams, domain models, and conversion invariants, r
 
 ## ⚖️ License & Disclaimer
 
-`xtable-go` is licensed under the [Apache License, Version 2.0](LICENSE).
+`polytable` is licensed under the [Apache License, Version 2.0](LICENSE).
 
 It is **not** an Apache Software Foundation project and carries no ASF endorsement. Portions derive
 from [Apache XTable (incubating)](https://github.com/apache/incubator-xtable); see [`NOTICE`](NOTICE)
@@ -224,7 +224,7 @@ for the upstream attribution required by Apache-2.0 §4(d). The official Apache 
 
 **The WebAssembly target is experimental. It has never been executed in a browser or under Node.js,
 and it is not covered by any test.** The build is compile-checked only: `make check` runs
-`GOOS=js GOARCH=wasm go vet ./cmd/xtable-wasm`, which type-checks the package but never runs it.
+`GOOS=js GOARCH=wasm go vet ./cmd/polytable-wasm`, which type-checks the package but never runs it.
 
 Two known limitations, both consequences of how the target is currently built:
 
@@ -236,5 +236,5 @@ Two known limitations, both consequences of how the target is currently built:
   `ErrGlueUnsupported`. That removed all 103 `aws-sdk-go-v2` and `smithy` packages and cut 7 MiB.
   The remainder is the Go runtime and the format adapters.
 
-Treat `xtableInspect` and `xtableSync` as unvalidated. Report anything that works as much as
+Treat `polytableInspect` and `polytableSync` as unvalidated. Report anything that works as much as
 anything that does not.

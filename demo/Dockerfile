@@ -22,15 +22,15 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/xtable-service ./cmd/xtable-service
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/xtable ./cmd/xtable
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/polytable-service ./cmd/polytable-service
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /bin/polytable ./cmd/polytable
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /root/
-COPY --from=builder /bin/xtable-service /usr/local/bin/
-COPY --from=builder /bin/xtable /usr/local/bin/
+COPY --from=builder /bin/polytable-service /usr/local/bin/
+COPY --from=builder /bin/polytable /usr/local/bin/
 
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/xtable-service"]
+ENTRYPOINT ["/usr/local/bin/polytable-service"]
 CMD ["--port", "8080"]

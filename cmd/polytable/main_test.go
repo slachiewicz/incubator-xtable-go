@@ -36,11 +36,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/formats/delta"
-	xtio "github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/formats/delta"
+	xtio "github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 func TestParseOutputFormat(t *testing.T) {

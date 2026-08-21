@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/slachiewicz/xtable-go/pkg/formats/parquet"
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/formats/parquet"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 func TestParquet_TargetCommitSnapshot(t *testing.T) {

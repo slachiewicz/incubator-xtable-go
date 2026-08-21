@@ -25,13 +25,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/formats/delta"
-	"github.com/slachiewicz/xtable-go/pkg/formats/hudi"
-	"github.com/slachiewicz/xtable-go/pkg/formats/iceberg"
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/formats/delta"
+	"github.com/slachiewicz/polytable/pkg/formats/hudi"
+	"github.com/slachiewicz/polytable/pkg/formats/iceberg"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 func TestHudi_PropertiesParsing(t *testing.T) {

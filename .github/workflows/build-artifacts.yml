@@ -49,20 +49,20 @@ jobs:
       - name: Build CLI binaries
         run: |
           mkdir -p bin
-          go build -v -ldflags="-s -w" -o bin/xtable ./cmd/xtable
-          go build -v -ldflags="-s -w" -o bin/xtable-service ./cmd/xtable-service
-          ./bin/xtable --help
-          ./bin/xtable-service --help
+          go build -v -ldflags="-s -w" -o bin/polytable ./cmd/polytable
+          go build -v -ldflags="-s -w" -o bin/polytable-service ./cmd/polytable-service
+          ./bin/polytable --help
+          ./bin/polytable-service --help
 
       - name: Build WebAssembly Engine
         if: matrix.os == 'ubuntu-latest'
         run: |
-          GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o bin/xtable.wasm ./cmd/xtable-wasm
-          ls -lh bin/xtable.wasm
+          GOOS=js GOARCH=wasm go build -v -ldflags="-s -w" -o bin/polytable.wasm ./cmd/polytable-wasm
+          ls -lh bin/polytable.wasm
 
       - name: Build C-Shared Dynamic Library
         run: |
           mkdir -p lib
-          CGO_ENABLED=1 go build -buildmode=c-shared -o lib/libxtable.so ./bindings/c || \
-          CGO_ENABLED=1 go build -buildmode=c-shared -o lib/libxtable.dylib ./bindings/c
+          CGO_ENABLED=1 go build -buildmode=c-shared -o lib/libpolytable.so ./bindings/c || \
+          CGO_ENABLED=1 go build -buildmode=c-shared -o lib/libpolytable.dylib ./bindings/c
           ls -la lib/

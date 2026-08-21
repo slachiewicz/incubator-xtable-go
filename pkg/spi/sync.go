@@ -20,7 +20,7 @@ package spi
 import (
 	"time"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // SyncMode represents whether a sync operation is a full snapshot rebuild or incremental delta replay.

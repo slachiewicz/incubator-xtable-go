@@ -23,9 +23,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/io"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/io"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 // Daemon coordinates continuous, scheduled synchronization across configured lakehouse datasets.
@@ -52,7 +52,7 @@ func NewDaemon(cfg *conversion.Config, interval time.Duration, logger *slog.Logg
 
 // Start begins the continuous synchronization loop until the context is cancelled.
 func (d *Daemon) Start(ctx context.Context) error {
-	d.logger.Info("Starting continuous XTable synchronization daemon", "interval", d.interval, "datasets", len(d.config.Datasets))
+	d.logger.Info("Starting continuous polytable synchronization daemon", "interval", d.interval, "datasets", len(d.config.Datasets))
 
 	// Initial sync pass
 	d.syncAll(ctx)
@@ -63,7 +63,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			d.logger.Info("Stopping continuous XTable synchronization daemon")
+			d.logger.Info("Stopping continuous polytable synchronization daemon")
 			return ctx.Err()
 		case <-ticker.C:
 			d.syncAll(ctx)

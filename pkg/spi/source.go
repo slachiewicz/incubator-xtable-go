@@ -20,7 +20,7 @@ package spi
 import (
 	"context"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // ConversionSource defines the interface for reading table metadata, snapshots, and commit logs from a source table format.

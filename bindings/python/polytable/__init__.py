@@ -16,7 +16,7 @@
 #
 
 """
-Apache XTable (Go) Python Client.
+polytable Python client.
 Provides lightweight, zero-JVM lakehouse metadata translation across Delta, Iceberg, and Hudi.
 """
 
@@ -32,11 +32,11 @@ __version__ = "0.1.0"
 def _find_library() -> str:
     system = platform.system()
     if system == "Darwin":
-        libname = "libxtable.dylib"
+        libname = "libpolytable.dylib"
     elif system == "Windows":
-        libname = "libxtable.dll"
+        libname = "libpolytable.dll"
     else:
-        libname = "libxtable.so"
+        libname = "libpolytable.so"
 
     # Search in common locations
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -59,30 +59,30 @@ _lib_error = None
 try:
     _lib = ctypes.CDLL(_lib_path)
 
-    _lib.xtable_version.restype = ctypes.c_char_p
-    _lib.xtable_version.argtypes = []
+    _lib.polytable_version.restype = ctypes.c_char_p
+    _lib.polytable_version.argtypes = []
 
-    _lib.xtable_free_string.restype = None
-    _lib.xtable_free_string.argtypes = [ctypes.c_char_p]
+    _lib.polytable_free_string.restype = None
+    _lib.polytable_free_string.argtypes = [ctypes.c_char_p]
 
-    _lib.xtable_sync_json.restype = ctypes.c_char_p
-    _lib.xtable_sync_json.argtypes = [ctypes.c_char_p]
+    _lib.polytable_sync_json.restype = ctypes.c_char_p
+    _lib.polytable_sync_json.argtypes = [ctypes.c_char_p]
 
-    _lib.xtable_inspect_json.restype = ctypes.c_char_p
-    _lib.xtable_inspect_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    _lib.polytable_inspect_json.restype = ctypes.c_char_p
+    _lib.polytable_inspect_json.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
 except Exception as e:
     _lib = None
     _lib_error = str(e)
 
 
 def version() -> str:
-    """Returns the native XTable engine version."""
+    """Returns the native polytable engine version."""
     if _lib is None:
         error_msg = f"{__version__} (shared library not loaded)"
         if _lib_error:
             error_msg += f" - {_lib_error}"
         return error_msg
-    res_ptr = _lib.xtable_version()
+    res_ptr = _lib.polytable_version()
     val = res_ptr.decode("utf-8") if res_ptr else ""
     return val
 
@@ -92,7 +92,7 @@ def sync(config: Union[Dict[str, Any], str]) -> Dict[str, Any]:
     Synchronizes lakehouse table formats using the provided configuration dict or JSON/YAML string.
     """
     if _lib is None:
-        error_msg = "libxtable shared library is not loaded"
+        error_msg = "libpolytable shared library is not loaded"
         if _lib_error:
             error_msg += f" - {_lib_error}"
         raise RuntimeError(error_msg)
@@ -102,9 +102,9 @@ def sync(config: Union[Dict[str, Any], str]) -> Dict[str, Any]:
     else:
         config_str = str(config)
 
-    res_ptr = _lib.xtable_sync_json(config_str.encode("utf-8"))
+    res_ptr = _lib.polytable_sync_json(config_str.encode("utf-8"))
     if not res_ptr:
-        raise RuntimeError("Null response from native xtable_sync_json")
+        raise RuntimeError("Null response from native polytable_sync_json")
 
     try:
         raw_res = ctypes.cast(res_ptr, ctypes.c_char_p).value.decode("utf-8")
@@ -113,7 +113,7 @@ def sync(config: Union[Dict[str, Any], str]) -> Dict[str, Any]:
             raise RuntimeError(parsed.get("error", "Unknown sync error"))
         return parsed
     finally:
-        _lib.xtable_free_string(res_ptr)
+        _lib.polytable_free_string(res_ptr)
 
 
 def inspect(format_name: str, base_path: str) -> Dict[str, Any]:
@@ -121,14 +121,14 @@ def inspect(format_name: str, base_path: str) -> Dict[str, Any]:
     Inspects lakehouse table metadata, schema, and active files.
     """
     if _lib is None:
-        error_msg = "libxtable shared library is not loaded"
+        error_msg = "libpolytable shared library is not loaded"
         if _lib_error:
             error_msg += f" - {_lib_error}"
         raise RuntimeError(error_msg)
 
-    res_ptr = _lib.xtable_inspect_json(format_name.encode("utf-8"), base_path.encode("utf-8"))
+    res_ptr = _lib.polytable_inspect_json(format_name.encode("utf-8"), base_path.encode("utf-8"))
     if not res_ptr:
-        raise RuntimeError("Null response from native xtable_inspect_json")
+        raise RuntimeError("Null response from native polytable_inspect_json")
 
     try:
         raw_res = ctypes.cast(res_ptr, ctypes.c_char_p).value.decode("utf-8")
@@ -137,4 +137,4 @@ def inspect(format_name: str, base_path: str) -> Dict[str, Any]:
             raise RuntimeError(parsed.get("error", "Unknown inspect error"))
         return parsed
     finally:
-        _lib.xtable_free_string(res_ptr)
+        _lib.polytable_free_string(res_ptr)

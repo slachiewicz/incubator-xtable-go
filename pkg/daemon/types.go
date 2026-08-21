@@ -20,9 +20,9 @@ package daemon
 import (
 	"time"
 
-	"github.com/slachiewicz/xtable-go/pkg/conversion"
-	"github.com/slachiewicz/xtable-go/pkg/model"
-	"github.com/slachiewicz/xtable-go/pkg/spi"
+	"github.com/slachiewicz/polytable/pkg/conversion"
+	"github.com/slachiewicz/polytable/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
 // ConvertTableRequest represents the JSON request payload for POST /v1/conversion/table.

@@ -20,7 +20,7 @@ package spi
 import (
 	"context"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // ConversionTarget defines the interface for writing translated table metadata to a target table format.

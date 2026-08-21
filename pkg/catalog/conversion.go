@@ -22,7 +22,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/slachiewicz/xtable-go/pkg/model"
+	"github.com/slachiewicz/polytable/pkg/model"
 )
 
 // Table property keys used to describe a table registered in an external catalog. These mirror the

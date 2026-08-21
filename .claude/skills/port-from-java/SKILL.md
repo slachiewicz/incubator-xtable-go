@@ -1,6 +1,6 @@
 ---
 name: port-from-java
-description: Port a class or subsystem from the Java Apache XTable project to Go. Use when implementing any xtable-go type or converter that has a counterpart in ../incubator-xtable.
+description: Port a class or subsystem from the Java Apache XTable project to Go. Use when implementing any polytable type or converter that has a counterpart in ../incubator-xtable.
 disable-model-invocation: true
 ---
 
