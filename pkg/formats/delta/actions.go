@@ -18,9 +18,20 @@
 package delta
 
 // FormatProvider describes the underlying physical data format in Delta metadata.
+//
+// Options carries no omitempty on purpose: the Delta protocol declares it non-nullable, and
+// delta-kernel-rs (the reader behind DuckDB's delta_scan and delta-rs) fails the whole log with
+// "Encountered unmasked nulls in non-nullable StructArray child" when the key is absent. A nil map
+// would marshal to null and fail the same way, so writers must set an empty map.
 type FormatProvider struct {
 	Provider string            `json:"provider"`
-	Options  map[string]string `json:"options,omitempty"`
+	Options  map[string]string `json:"options"`
+}
+
+// NewParquetFormat returns the FormatProvider every polytable-written Delta table carries. Use it
+// rather than a bare literal: the empty Options map is load-bearing, see FormatProvider.
+func NewParquetFormat() FormatProvider {
+	return FormatProvider{Provider: "parquet", Options: map[string]string{}}
 }
 
 // ProtocolAction represents protocol versions supported by the table.

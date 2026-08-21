@@ -27,11 +27,15 @@ import (
 )
 
 // DeltaStructField matches a field in Delta schemaString JSON.
+//
+// Metadata carries no omitempty on purpose: delta-kernel-rs rejects a schemaString field without
+// the key outright, with "missing field `metadata`". See FormatProvider.Options for the sibling
+// case. A nil map marshals to null, which fails the same way, so writers must set an empty map.
 type DeltaStructField struct {
 	Name     string          `json:"name"`
 	Type     json.RawMessage `json:"type"`
 	Nullable bool            `json:"nullable"`
-	Metadata map[string]any  `json:"metadata,omitempty"`
+	Metadata map[string]any  `json:"metadata"`
 }
 
 // DeltaStructType matches a struct in Delta schemaString JSON.

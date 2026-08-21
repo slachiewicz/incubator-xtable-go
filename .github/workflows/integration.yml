@@ -42,6 +42,19 @@ jobs:
           check-latest: true
           cache: true
 
+      # The engine-verification suite skips itself when duckdb is not on PATH, so without this step
+      # it would go green having checked nothing. Pinned rather than tracking latest: a new DuckDB
+      # minor moves the delta and iceberg extension versions under it.
+      - name: Install the DuckDB CLI
+        env:
+          DUCKDB_VERSION: v1.5.5
+        run: |
+          curl -fsSL -o /tmp/duckdb.zip \
+            "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/duckdb_cli-linux-amd64.zip"
+          sudo unzip -o /tmp/duckdb.zip -d /usr/local/bin
+          sudo chmod +x /usr/local/bin/duckdb
+          duckdb --version
+
       - name: Run E2E and Dockertest Suites
         run: |
           go test -race -v -count=1 ./test/...
