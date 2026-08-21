@@ -51,6 +51,23 @@ func WithCatalogClientFactory(factory CatalogClientFactory) Option {
 	}
 }
 
+// syncOptions carries the per-call settings for Sync, as opposed to Option's per-Controller ones.
+type syncOptions struct {
+	dryRun bool
+}
+
+// SyncOption customizes a single Sync call.
+type SyncOption func(*syncOptions)
+
+// WithDryRun makes Sync resolve the source, compute the changes it would write to each target, and
+// report the result without committing anything — no CommitSnapshot/CommitChanges call on any
+// target, and no catalog registration. Init and GetTableMetadata still run against the target,
+// since every target adapter's implementation is in-memory only and reading the target's existing
+// sync metadata is what decides full vs. incremental in the first place.
+func WithDryRun() SyncOption {
+	return func(o *syncOptions) { o.dryRun = true }
+}
+
 // NewController creates a new ConversionController instance.
 func NewController(storage io.Storage, opts ...Option) *Controller {
 	c := &Controller{
@@ -63,8 +80,14 @@ func NewController(storage io.Storage, opts ...Option) *Controller {
 	return c
 }
 
-// Sync synchronizes a source table to all configured target formats.
-func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig) (map[model.TableFormat]*spi.SyncResult, error) {
+// Sync synchronizes a source table to all configured target formats. opts is currently only
+// WithDryRun; pass none for the normal, committing behavior.
+func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig, opts ...SyncOption) (map[model.TableFormat]*spi.SyncResult, error) {
+	var so syncOptions
+	for _, opt := range opts {
+		opt(&so)
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid dataset configuration: %w", err)
 	}
@@ -89,11 +112,14 @@ func (c *Controller) Sync(ctx context.Context, cfg *DatasetConfig) (map[model.Ta
 			continue
 		}
 
-		syncResult := c.syncToTarget(ctx, cfg, source, target, targetFormat, startTime)
+		syncResult := c.syncToTarget(ctx, cfg, source, target, targetFormat, startTime, so.dryRun)
 		_ = target.Close()
 		results[targetFormat] = syncResult
 
-		if syncResult.StatusCode == spi.SyncStatusSuccess && len(cfg.Catalogs) > 0 {
+		// A dry run never registers with a catalog: the metadata it would register was never
+		// written to the target, so a catalog client reading it back would see stale or absent
+		// state.
+		if !so.dryRun && syncResult.StatusCode == spi.SyncStatusSuccess && len(cfg.Catalogs) > 0 {
 			if catalogErr := c.syncTargetToCatalogs(ctx, cfg, targetFormat); catalogErr != nil {
 				results[targetFormat].Error = appendCatalogError(results[targetFormat].Error, catalogErr.Error())
 			}
@@ -175,8 +201,10 @@ func (c *Controller) syncToTarget(
 	target spi.ConversionTarget,
 	targetFormat model.TableFormat,
 	startTime time.Time,
+	dryRun bool,
 ) *spi.SyncResult {
-	// Check existing target sync metadata
+	// Check existing target sync metadata. GetTableMetadata is read-only on every adapter, so this
+	// is safe to call under a dry run.
 	meta, _ := target.GetTableMetadata(ctx)
 
 	canSyncIncrementally := false
@@ -196,13 +224,19 @@ func (c *Controller) syncToTarget(
 			return spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to extract changes: %w", err), time.Since(startTime))
 		}
 		if len(changes.TableChanges) > 0 {
-			if err := target.CommitChanges(ctx, changes); err != nil {
-				return spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to commit changes: %w", err), time.Since(startTime))
+			if !dryRun {
+				if err := target.CommitChanges(ctx, changes); err != nil {
+					return spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to commit changes: %w", err), time.Since(startTime))
+				}
 			}
 			lastInstant := changes.TableChanges[len(changes.TableChanges)-1].CommitTime
 			return spi.NewSuccessSyncResult(targetFormat, lastInstant, time.Since(startTime))
 		}
-		return spi.NewSuccessSyncResult(targetFormat, lastSyncedInstant, time.Since(startTime))
+		// No new commits since the last synced instant: nothing was (or would be) written.
+		// Report NO_OP rather than a SUCCESS indistinguishable from real work.
+		result := spi.NewSuccessSyncResult(targetFormat, lastSyncedInstant, time.Since(startTime))
+		result.NoOp = true
+		return result
 	}
 
 	// Full snapshot sync
@@ -211,8 +245,10 @@ func (c *Controller) syncToTarget(
 		return spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to extract current snapshot: %w", err), time.Since(startTime))
 	}
 
-	if err := target.CommitSnapshot(ctx, snapshot); err != nil {
-		return spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to commit snapshot: %w", err), time.Since(startTime))
+	if !dryRun {
+		if err := target.CommitSnapshot(ctx, snapshot); err != nil {
+			return spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to commit snapshot: %w", err), time.Since(startTime))
+		}
 	}
 
 	return spi.NewSuccessSyncResult(targetFormat, snapshot.Table.LatestCommitTime, time.Since(startTime))

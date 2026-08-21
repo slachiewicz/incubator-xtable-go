@@ -1,0 +1,25 @@
+{
+  "tableName": "orders",
+  "format": "DELTA",
+  "basePath": "s3://lake/orders",
+  "latestCommitTimeMillis": 1755777600000,
+  "activeDataFiles": 3,
+  "fields": [
+    {
+      "name": "id",
+      "dataType": "int",
+      "nullable": false
+    },
+    {
+      "name": "country",
+      "dataType": "string",
+      "nullable": true
+    }
+  ],
+  "partitionFields": [
+    {
+      "name": "country",
+      "transform": "VALUE"
+    }
+  ]
+}

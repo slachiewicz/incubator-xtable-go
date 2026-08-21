@@ -912,7 +912,7 @@ is walked but never emitted — the case the per-commit rebuild existed to serve
 prefix walk followed by a second walk over every commit). Left alone deliberately; it is a separate
 change.
 
-## T22 — Agent-legible CLI: sync mode, dry run, JSON output, timeout
+## T22 — Agent-legible CLI: sync mode, dry run, JSON output, timeout ✅ COMPLETED
 
 Upstream issue #889 is open and unresolved, so this is a place the port can lead rather than follow.
 Related upstream: #821 and PR #823 (per-table timeout), PR #794 (fail on sync error), #594
@@ -938,6 +938,58 @@ aggregates `hasErrors` and returns an error, so a failed sync exits non-zero. Wh
 struct in `cmd/xtable`; `--mode full` forces a snapshot sync on a table that would otherwise go
 incremental; `--dry-run` leaves the target's metadata directory byte-identical; a table whose source
 has no new commits reports `NO_OP`. Golden-file tests for the JSON shape.
+
+### Outcome ✅ COMPLETED
+
+All four flags landed, plus the `SyncResult.Verdict()` this task named. `pkg/spi/sync.go` gained
+`SyncResult.NoOp` and a `Verdict()` method (`SUCCESS`/`FAILED`/`NO_OP`); `pkg/conversion/controller.go`
+sets `NoOp` at exactly the site the task named (the empty-changes branch of `syncToTarget`, was
+`:205`) and gained `Sync(ctx, cfg, opts ...SyncOption)` with `WithDryRun()` — a controller-level
+no-commit path, not a `main`-only flag check, satisfying the task's explicit requirement. Dry run
+skips `CommitSnapshot`/`CommitChanges` and skips catalog registration (registering an unwritten
+target would read stale or absent state); `Init`/`GetTableMetadata` still run under dry run because
+every target adapter's implementation of both is in-memory only (verified by reading all five
+`pkg/formats/*/target.go` before relying on it).
+
+`cmd/xtable/output.go` (new file) holds the JSON types (`SyncOutput`, `TableSyncOutput`,
+`TargetSyncOutput`, `InspectOutput`) and pure builder functions (`buildTableSyncOutput`,
+`buildInspectOutput`) that sort targets by format name, since `Controller.Sync` returns a map.
+`cmd/xtable/main.go` gained `--output text|json`, `--mode full|incremental`, `--dry-run`, `--timeout`
+on `sync`, and `--output` on `inspect`; JSON goes to stdout via `cmd.OutOrStdout()`, progress chatter
+moves to stderr only in JSON mode (`--output text`, the default, keeps both on stdout, matching prior
+behavior). `--timeout` wraps each dataset via `withDatasetTimeout`, a helper factored out so the
+wiring is unit-testable without depending on storage slow enough to observe a real deadline.
+
+Acceptance, checked directly:
+- **JSON round-trip**: `TestSyncOutput_JSONRoundTrip`/`TestInspectOutput_JSONRoundTrip`
+  (`cmd/xtable/main_test.go`) marshal a fixed fixture and unmarshal it back into the same struct.
+  Also proven against the built binary — `xtable sync --output json` piped through `python3 -c
+  "import json; json.load(...)"` parsed cleanly, with progress chatter confirmed absent from stdout.
+- **`--mode full` forces a snapshot sync**: `TestController_ModeFullForcesSnapshotSyncEvenWithNoNewCommits`
+  and the CLI-level `TestSyncOneDataset_ModeFullForcesSnapshotSync` both show incremental mode going
+  `NO_OP` on a table with no new commits, and the same table under forced `SyncMode: FULL` reporting
+  `SUCCESS` instead — proving the snapshot path actually ran. Reproduced against the built binary
+  with a real Delta→Iceberg table.
+- **`--dry-run` leaves target metadata byte-identical**: `TestController_DryRunLeavesTargetByteIdentical`
+  (in-memory storage, SHA-256 per file) and `TestSyncOneDataset_DryRunLeavesTargetByteIdentical`
+  (local filesystem) both hash every file under the target's metadata directory before and after a
+  dry run and assert equality. Reproduced against the built binary: `shasum` of every file under
+  `metadata/` was identical before and after `xtable sync --output json --mode full --dry-run`.
+- **`NO_OP` verdict**: `TestController_IncrementalSyncWithNoNewCommitsReportsNoOp` and
+  `TestSyncOneDataset_NoNewCommitsReportsNoOp` build a real one-commit Delta source, sync it twice,
+  and assert the second sync's verdict is `NO_OP` while `StatusCode` stays `SUCCESS`. Reproduced
+  against the built binary.
+- **Golden-file tests for the JSON shape**: `TestSyncOutput_GoldenFile`/`TestInspectOutput_GoldenFile`
+  compare indented JSON against `cmd/xtable/testdata/{sync,inspect}_output.golden.json`, built from a
+  fixed-clock fixture so timestamps/durations cannot make the test flaky (`UPDATE_GOLDEN=1` regenerates
+  them).
+
+Deviation from the ground rules, forced by the language rather than chosen: `cmd/xtable/main_test.go`
+is `package main`, not an external `<pkg>_test` package. Go cannot import a `main` package, so the
+black-box convention has no available form here; the tests stay table-driven with `t.Parallel()`
+throughout. `make check` passes, including `go test -short -race ./pkg/...` (this task touches
+`pkg/conversion` and `pkg/spi`, not goroutine code, but the race run was still executed per the
+ground rules and is clean).
 
 ## T23 — Catalog table discovery (list and scan)
 
@@ -1128,11 +1180,11 @@ The C header, wheel and REST spec all carry the new name. No tag exists yet when
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T26 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T26 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T27 (polytable rename — blocks the first tag) |
+| 🎯 Open queue | T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit), T27 (polytable rename — blocks the first tag) |
 
 **Picking up the queue.** The tasks are independent; take them in any order. Suggested value order
 is T22, T23, T25, then T27 last before any tag. T24 is a decision

@@ -1,0 +1,43 @@
+{
+  "startedAt": "2026-08-21T12:00:00Z",
+  "duration": 1500000000,
+  "dryRun": true,
+  "tables": [
+    {
+      "tableName": "orders",
+      "sourceFormat": "DELTA",
+      "targets": [
+        {
+          "targetFormat": "ICEBERG",
+          "verdict": "SUCCESS",
+          "lastInstantSynced": 1755777600000,
+          "duration": 200000000
+        },
+        {
+          "targetFormat": "PARQUET",
+          "verdict": "NO_OP",
+          "lastInstantSynced": 1755777600000,
+          "duration": 50000000
+        }
+      ]
+    },
+    {
+      "tableName": "shipments",
+      "sourceFormat": "ICEBERG",
+      "error": "failed to initialize storage for s3://bad-bucket: access denied"
+    },
+    {
+      "tableName": "customers",
+      "sourceFormat": "HUDI",
+      "targets": [
+        {
+          "targetFormat": "DELTA",
+          "verdict": "FAILED",
+          "duration": 10000000,
+          "error": "failed to extract current snapshot: commit log unreadable"
+        }
+      ]
+    }
+  ],
+  "hasErrors": true
+}
