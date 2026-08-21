@@ -192,13 +192,20 @@ func (s *Source) GetTable(ctx context.Context, commitID string) (*model.Table, e
 		return nil, fmt.Errorf("no metadata action found in delta log up to version %d", targetVer)
 	}
 
-	readSchema, err := DeltaJSONToSchema(latestMeta.SchemaString)
+	return s.tableFromMetadata(latestMeta, latestCommitTime)
+}
+
+// tableFromMetadata builds the table a metaData action describes. It is the expensive half of
+// GetTable — it parses the schema — so a backlog walk calls it only when a commit carries a new
+// metaData action rather than once per commit.
+func (s *Source) tableFromMetadata(meta *MetadataAction, commitTime int64) (*model.Table, error) {
+	readSchema, err := DeltaJSONToSchema(meta.SchemaString)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse delta schema: %w", err)
 	}
 
 	var partitionFields []*model.PartitionField
-	for _, col := range latestMeta.PartitionColumns {
+	for _, col := range meta.PartitionColumns {
 		field := readSchema.FieldByPath(col)
 		if field == nil {
 			field = &model.Field{Name: col, Schema: model.NewPrimitiveSchema(model.TypeString, true)}
@@ -210,13 +217,22 @@ func (s *Source) GetTable(ctx context.Context, commitID string) (*model.Table, e
 	}
 
 	return &model.Table{
-		Name:               latestMeta.Name,
+		Name:               meta.Name,
 		TableFormat:        model.TableFormatDelta,
 		ReadSchema:         readSchema,
 		BasePath:           s.basePath,
 		PartitioningFields: partitionFields,
-		LatestCommitTime:   latestCommitTime,
+		LatestCommitTime:   commitTime,
 	}, nil
+}
+
+// tableAsOf returns table with its instant moved to commitTime. The copy is shallow on purpose:
+// consecutive commits with no metaData action between them share one schema, which is read-only
+// here, and rebuilding it per commit is exactly the cost this avoids.
+func tableAsOf(table *model.Table, commitTime int64) *model.Table {
+	asOf := *table
+	asOf.LatestCommitTime = commitTime
+	return &asOf
 }
 
 // GetCurrentSnapshot constructs the full active data file snapshot at the latest commit.
@@ -281,6 +297,12 @@ func (s *Source) GetTableChangeForCommit(ctx context.Context, commitID string) (
 		return nil, err
 	}
 
+	return s.changeFromCommit(commit, table), nil
+}
+
+// changeFromCommit converts an already-parsed commit into a table change against the table as of
+// that commit, whose LatestCommitTime carries the commit's instant.
+func (s *Source) changeFromCommit(commit *DeltaCommit, table *model.Table) *model.TableChange {
 	var added []*model.DataFile
 	var removed []*model.DataFile
 
@@ -299,22 +321,34 @@ func (s *Source) GetTableChangeForCommit(ctx context.Context, commitID string) (
 	return &model.TableChange{
 		FilesDiff:        model.NewFilesDiff(added, removed),
 		TableAsOfChange:  table,
-		SourceIdentifier: commitID,
+		SourceIdentifier: strconv.FormatInt(commit.Version, 10),
 		// The instant reported here is the derived one, not commitInfo's raw timestamp: the
 		// controller persists it and hands it back as the next sync's fromInstant.
 		CommitTime: table.LatestCommitTime,
-	}, nil
+	}
 }
 
 // GetChangesSince returns all sequential table changes since fromInstant.
+//
+// The whole backlog is served by one walk of the log: each commit file is read exactly once, and the
+// table is rebuilt only where a commit carries a metaData action, with the schema carried forward
+// across the commits in between. Reading a commit to test its instant and then reading it again to
+// convert it — with a full log-prefix walk per commit to rebuild the table — made the cost quadratic
+// in the backlog length. Upstream #861 made the same change in Java.
 func (s *Source) GetChangesSince(ctx context.Context, fromInstant int64) (*model.IncrementalTableChanges, error) {
 	versions, err := s.listCommitFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("no delta log commits found in %s", s.basePath)
+	}
 
-	var changes []*model.TableChange
-	var commitTime int64
+	var (
+		changes    []*model.TableChange
+		table      *model.Table
+		commitTime int64
+	)
 	for _, v := range versions {
 		commit, err := s.readCommit(ctx, v)
 		if err != nil {
@@ -323,23 +357,31 @@ func (s *Source) GetChangesSince(ctx context.Context, fromInstant int64) (*model
 		// Derived instants increase strictly with the version, so "instant greater than
 		// fromInstant" selects exactly the versions after the one that instant identifies.
 		commitTime = advanceCommitTime(commitTime, commit.CommitTime)
-		if commitTime > fromInstant {
-			change, err := s.GetTableChangeForCommit(ctx, strconv.FormatInt(v, 10))
-			if err != nil {
-				return nil, err
+
+		for _, a := range commit.Actions {
+			if a.MetaData != nil {
+				if table, err = s.tableFromMetadata(a.MetaData, commitTime); err != nil {
+					return nil, err
+				}
 			}
-			changes = append(changes, change)
 		}
+
+		if commitTime <= fromInstant {
+			continue
+		}
+		if table == nil {
+			return nil, fmt.Errorf("no metadata action found in delta log up to version %d", v)
+		}
+		changes = append(changes, s.changeFromCommit(commit, tableAsOf(table, commitTime)))
 	}
 
-	currentTable, err := s.GetCurrentTable(ctx)
-	if err != nil {
-		return nil, err
+	if table == nil {
+		return nil, fmt.Errorf("no metadata action found in delta log up to version %d", versions[len(versions)-1])
 	}
 
 	return &model.IncrementalTableChanges{
 		TableChanges: changes,
-		CurrentTable: currentTable,
+		CurrentTable: tableAsOf(table, commitTime),
 	}, nil
 }
 

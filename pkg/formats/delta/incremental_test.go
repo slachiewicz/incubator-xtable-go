@@ -22,6 +22,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -98,6 +100,27 @@ func writeDeltaLog(t *testing.T, storage io.Storage, basePath string, commits []
 		path := io.JoinPath(basePath, "_delta_log", fmt.Sprintf("%020d.json", version))
 		require.NoError(t, storage.Write(ctx, path, buf.Bytes()))
 	}
+}
+
+// countingStorage counts object reads so a test can assert on read amplification rather than on
+// wall-clock time.
+type countingStorage struct {
+	io.Storage
+	mu    sync.Mutex
+	reads int
+}
+
+func (c *countingStorage) Read(ctx context.Context, path string) ([]byte, error) {
+	c.mu.Lock()
+	c.reads++
+	c.mu.Unlock()
+	return c.Storage.Read(ctx, path)
+}
+
+func (c *countingStorage) readCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads
 }
 
 func syncedVersions(changes []*model.TableChange) []string {
@@ -260,4 +283,91 @@ func TestSource_GetChangesSince_CommitTimeAnomalies(t *testing.T) {
 			assert.Empty(t, syncedVersions(resumed.TableChanges))
 		})
 	}
+}
+
+// TestSource_GetChangesSince_BacklogReadsEachCommitOnce covers T21: walking a backlog used to read
+// every commit twice and rebuild the table from the whole log prefix for each one.
+func TestSource_GetChangesSince_BacklogReadsEachCommitOnce(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	const (
+		backlogSize    = 100
+		schemaChangeAt = 50
+	)
+
+	commits := make([]commitSpec, 0, backlogSize)
+	for version := range backlogSize {
+		spec := commitSpec{
+			timestamp: int64(1000 + version*10),
+			addPath:   fmt.Sprintf("part-%d.parquet", version),
+		}
+		switch version {
+		case 0:
+			spec.columns = []string{"id"}
+		case schemaChangeAt:
+			spec.columns = []string{"id", "amount"}
+		}
+		commits = append(commits, spec)
+	}
+
+	storage := &countingStorage{Storage: io.NewMemoryStorage()}
+	basePath := "mem://lake/t21"
+	writeDeltaLog(t, storage, basePath, commits)
+	require.Zero(t, storage.readCount(), "building the fixture must not read")
+
+	changes, err := delta.NewSource(storage, basePath).GetChangesSince(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, changes.TableChanges, backlogSize)
+
+	// One read per commit file, and nothing else. Before T21 the same fixture cost 5350 reads:
+	// every commit was read twice and the table rebuilt from the whole log prefix for each one.
+	assert.Equal(t, backlogSize, storage.readCount(), "object reads for a %d-commit backlog", backlogSize)
+
+	for version, change := range changes.TableChanges {
+		assert.Equal(t, strconv.Itoa(version), change.SourceIdentifier)
+		assert.Equal(t, int64(1000+version*10), change.CommitTime)
+
+		table := change.TableAsOfChange
+		require.NotNil(t, table)
+		assert.Equal(t, change.CommitTime, table.LatestCommitTime)
+
+		// The schema of the commit that introduced it must be carried forward across the commits
+		// that follow, none of which repeats the metaData action.
+		wantColumns := 1
+		if version >= schemaChangeAt {
+			wantColumns = 2
+		}
+		require.Len(t, table.ReadSchema.Fields, wantColumns, "schema at version %d", version)
+
+		require.Len(t, change.FilesDiff.FilesAdded, 1)
+		assert.Equal(t, io.JoinPath(basePath, fmt.Sprintf("part-%d.parquet", version)), change.FilesDiff.FilesAdded[0].PhysicalPath)
+	}
+
+	require.NotNil(t, changes.CurrentTable)
+	assert.Len(t, changes.CurrentTable.ReadSchema.Fields, 2)
+	assert.Equal(t, int64(1000+(backlogSize-1)*10), changes.CurrentTable.LatestCommitTime)
+}
+
+// TestSource_GetChangesSince_SchemaChangedBeforeTheBacklog covers the case the per-commit table
+// rebuild used to serve: the metaData action that describes the backlog sits in a commit older than
+// fromInstant, so it is walked but never emitted.
+func TestSource_GetChangesSince_SchemaChangedBeforeTheBacklog(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	storage := io.NewMemoryStorage()
+	basePath := "mem://lake/t21-schema"
+	writeDeltaLog(t, storage, basePath, []commitSpec{
+		{timestamp: 1000, columns: []string{"id"}, addPath: "part-0.parquet"},
+		{timestamp: 2000, addPath: "part-1.parquet"},
+		{timestamp: 3000, columns: []string{"id", "amount"}, addPath: "part-2.parquet"},
+		{timestamp: 4000, addPath: "part-3.parquet"},
+	})
+
+	changes, err := delta.NewSource(storage, basePath).GetChangesSince(ctx, 3000)
+	require.NoError(t, err)
+	require.Len(t, changes.TableChanges, 1)
+	assert.Equal(t, []string{"3"}, syncedVersions(changes.TableChanges))
+	require.Len(t, changes.TableChanges[0].TableAsOfChange.ReadSchema.Fields, 2)
 }

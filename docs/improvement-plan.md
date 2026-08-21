@@ -863,6 +863,32 @@ to serve — a schema change mid-backlog — and carry the schema forward rather
 reads through a counting `io.Storage` wrapper in the test, do not assert on wall-clock); existing
 Delta incremental tests stay green; add a case with a schema change in the middle of the backlog.
 
+### Outcome — done, and the saving is larger than 2× ✅
+
+Measured through a counting `io.Storage` wrapper in
+`pkg/formats/delta/incremental_test.go`, a 100-commit backlog cost **5350 object reads** before and
+costs **100** after — one read per commit file, nothing else.
+
+The 2N in the task description understated it. `GetTableChangeForCommit` called `GetTable`, which
+walks the log prefix from version 0, so the backlog was quadratic: N reads to test instants, N to
+convert, and N(N+1)/2 to rebuild the table once per commit, plus a final `GetCurrentTable` prefix
+walk (100 + 100 + 5050 + 100).
+
+`GetChangesSince` now walks the log once. `tableFromMetadata` — the schema-parsing half of
+`GetTable` — runs only where a commit carries a metaData action; commits in between reuse that table
+through `tableAsOf`, a shallow copy that moves the instant and shares the schema. The current table
+comes out of the same walk rather than a second one. `changeFromCommit` takes the parsed commit, so
+`GetTableChangeForCommit` (still an `spi` method, still a single-commit read plus `GetTable`) and the
+backlog walk share one converter.
+
+Two cases guard the schema handling: a metaData action in the middle of the backlog (versions before
+it keep one column, versions after it see two), and one in a commit *older* than `fromInstant`, which
+is walked but never emitted — the case the per-commit rebuild existed to serve.
+
+`GetCurrentSnapshot` still has the older 2N shape it does not share with this path (a `GetTable`
+prefix walk followed by a second walk over every commit). Left alone deliberately; it is a separate
+change.
+
 ## T22 — Agent-legible CLI: sync mode, dry run, JSON output, timeout
 
 Upstream issue #889 is open and unresolved, so this is a place the port can lead rather than follow.
@@ -1034,14 +1060,14 @@ anomaly can see one commit re-emitted on the next sync. That is at-least-once, n
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T26 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T21, T26 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T20 (column stats), T21 (Delta backlog reads), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit) |
+| 🎯 Open queue | T20 (column stats), T22 (CLI surface), T23 (catalog discovery), T24 (deletion vectors — decide first), T25 (pre-port fix audit) |
 
-**Picking up T20–T25.** They are independent; take them in any order. Suggested value order is T21
-(smallest, one file), then T20 (largest correctness win), then T22, T23, T25. T24 is a decision
+**Picking up T20–T25.** They are independent; take them in any order. Suggested value order is T20
+(largest correctness win), then T22, T23, T25. T24 is a decision
 before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
 translator until the INV-1 question in the task is answered.
 
