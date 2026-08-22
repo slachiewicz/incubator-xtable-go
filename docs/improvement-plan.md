@@ -1783,7 +1783,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T53 |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T53, T55, T56 for Azure usability |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -2457,14 +2457,25 @@ reset every HTTP request while the container answered correctly on its own netwo
 pre-existing MinIO suite failed identically. Restarting Docker Desktop fixed it. Suspect the daemon
 before the code when every published port resets at once.
 
+**The credential and scheme coverage was widened afterwards**, closing two of the four gaps below
+as originally written. `test/dockertest_azurite_test.go` now also covers: a container-scoped SAS as
+the only credential, the same SAS carrying the leading `?` that a portal copy-paste includes,
+anonymous access to a private container failing rather than looking like an empty table, SAS
+outranking a deliberately invalid account key — which is how the first-match-wins order is pinned,
+since a regression would fail loudly on the bad key — and all four ABFS spellings reading back one
+blob byte-identically. Pagination is deliberately skipped rather than faked: `List` sets no
+`MaxResults`, and the server-side default page is 5000 on both Azure and Azurite, so forcing a
+second page would need 5000 uploads.
+
 **Why this is still ⚠️ and not ✅ — three acceptance criteria remain unmet:**
 
 1. **Nothing has reached a real Azure account.** The emulator implements the Blob API; it is not
-   Azure, and it does not exercise Entra ID, network policy, or ADLS Gen2's hierarchical namespace.
-   `docs/azure-test-environment.md` is the recipe for closing this.
-2. **Only the shared-key credential path is exercised**, by the Azurite suite. SAS, anonymous and
-   the `DefaultAzureCredential` chain have no test — the last cannot have one without a tenant.
-3. **No OneLake request has been made**, though the shapes are now sourced rather than guessed.
+   Azure, and it does not exercise Entra ID, network policy, or ADLS Gen2's hierarchical namespace —
+   T54 fixed a directory bug that no emulator test could have caught, which is the concrete evidence
+   for why this gap matters. `docs/azure-test-environment.md` is the recipe for closing it.
+2. **`DefaultAzureCredential` has no test** and cannot have one without a tenant. SAS, shared key
+   and anonymous are now covered.
+3. **No OneLake request has been made**, though the shapes are sourced rather than guessed.
    Microsoft documents the abfss form as
    `abfs[s]://<workspace>@onelake.dfs.fabric.microsoft.com/<item>.<itemtype>/<path>/<fileName>`,
    with "the account name is always `onelake`, the container name is your workspace name" — which
@@ -2476,9 +2487,6 @@ before the code when every published port resets at once.
    since resolving the global endpoint for an out-of-region workspace can move data across a
    region boundary), a workspace private-link FQDN, and `api.onelake.fabric.microsoft.com`, which
    contains neither `.dfs.` nor `.blob.` and passes through the swap untouched.
-4. **Only `abfss://` is exercised end to end.** `abfs://`, `wasbs://` and `wasb://` are routed and
-   parse-tested, so the task's own "state which it is" clause resolves to: in scope, unit-tested,
-   not run against a store.
 
 Closing this to ✅ needs an Azure subscription. Until then `docs/features-and-limitations.md` says
 so, and the format matrix must not claim Azure interop beyond the emulator.
@@ -2699,6 +2707,83 @@ to reach it.
 
 Verified: `go test -race ./pkg/io/` clean, `golangci-lint` 0 issues, `js/wasm` build clean, and the
 Azurite suite still passes — the Blob-convention path is unchanged.
+
+---
+
+## T55 — One process, one Azure account: credentials are process-wide
+
+The daemon loops datasets (`pkg/daemon/daemon.go:75`) and builds a `Storage` per dataset from that
+dataset's own `StorageConfig`. Azure credentials do not follow that per-dataset path: `SASToken`
+falls back to `AZURE_STORAGE_SAS_TOKEN` and `AccountKey` to `AZURE_STORAGE_KEY`
+(`pkg/io/azure.go:119`, `:123`), both process-wide. So a daemon or REST service syncing tables that
+live in two storage accounts with different keys cannot serve both, and there is no configuration
+that expresses it.
+
+`AzureStorageConfig` deliberately holds no secret, and that rule stays: a config file gets
+committed, logged and POSTed to the REST service. **The fix is to name the variable, not the
+value** — the config says which environment variable holds the secret for this dataset:
+
+```yaml
+storage:
+  azure:
+    accountName: acct1
+    accountKeyEnv: ACCT1_STORAGE_KEY
+```
+
+The secret still never appears in the file, and one process can hold as many accounts as it has
+variables. An unset named variable is an error naming the variable, not a silent fall-through to the
+Entra chain — that fallback would turn a typo into a confusing 403 much later.
+
+Ordering is the part to get right: an explicitly named variable outranks the well-known one, so
+`accountKeyEnv` beats `AZURE_STORAGE_KEY`, and the existing first-match-wins order between SAS,
+shared key, anonymous and Entra is otherwise unchanged.
+
+**S3 has the same shape of limitation** — `NewS3Storage` relies entirely on
+`awsconfig.LoadDefaultConfig` — so decide in this task whether the mechanism is Azure-only or
+`StorageConfig`-wide. Azure-only is defensible if nobody has asked for the S3 case; say which was
+chosen and why.
+
+**Acceptance:** two datasets naming different account-key variables sync to different accounts in
+one process, covered by the Azurite suite with two containers and two variables; an unset named
+variable fails with a message naming it; the well-known variables keep working unchanged, pinned by
+the existing tests.
+
+**Commit:** `feat: let a dataset name the environment variable holding its Azure credential`
+
+---
+
+## T56 — `Exists` cannot tell "absent" from "not allowed"
+
+Found by the Azurite credential work, as a reasoned risk rather than a reproduction — record it that
+way and confirm it before writing the fix.
+
+`AzureStorage.Exists` (`pkg/io/azure.go`) maps `bloberror.BlobNotFound` to `(false, nil)`, mirroring
+what the S3 backend does with `NotFound`. Azure's documented behavior for an **anonymous request
+against a private container is `404`, not `403`** — deliberately, so that the API does not leak
+whether a resource exists. Under that response, a permissions failure is indistinguishable from a
+missing file, and every caller treats it as absent.
+
+That is the same failure class as T37's Hudi 1.x finding: a table that reads as empty and exits 0 is
+worse than one that fails, because a sync succeeds and writes empty target metadata over it.
+
+**Not reproduced.** On Azurite, anonymous access to a private container returns `403
+AuthorizationFailure`, and `AnonymousAccessFailsClosed` in `test/dockertest_azurite_test.go` pins
+that behavior. The emulator and the service differ here, which is precisely why this needs a real
+account before anyone changes the mapping.
+
+**Scope, in order.** (1) Confirm against a real storage account what an anonymous and an
+under-privileged request return for a blob that exists and one that does not — four cases, and the
+answer decides everything after. (2) If `404` is returned for both, `Exists` cannot use the status
+alone: the distinguishing signal is whether the client is anonymous, or the `x-ms-error-code` header
+Azure sets alongside. (3) Check whether the S3 backend has the same exposure before deciding where
+the fix lives.
+
+**Acceptance:** against a real account, an unauthorized `Exists` returns an error rather than
+`(false, nil)`, a genuinely missing blob still returns `(false, nil)`, and the Azurite suite keeps
+passing unchanged. If the investigation shows Azure returns `403` here after all, the outcome is a
+line in this task saying so and no code change.
+
+**Commit:** `fix: distinguish an inaccessible blob from a missing one`
 
 ---
 

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
 	"github.com/stretchr/testify/assert"
@@ -261,5 +262,179 @@ func TestDockertest_Azurite_FullLakehouseMatrix(t *testing.T) {
 			assert.Equal(t, azuriteHost, host)
 			assert.Equal(t, "tables/financial_events/roundtrip/probe.txt", blobPath)
 		}
+	})
+
+	// 9. Credential-mode and URI-scheme coverage. These share the container and the raw
+	// shared-key credential the setup above already built, rather than standing up a second
+	// Azurite container. generateContainerSAS signs a container-scoped SAS against the
+	// devstoreaccount1 shared key -- the same credential used to create the container -- so
+	// every SAS subtest below exercises a real signature Azurite has to validate, not a
+	// hand-built query string.
+	generateContainerSAS := func(t *testing.T, perms sas.ContainerPermissions) string {
+		t.Helper()
+		// Protocol is left at its zero value deliberately: Azurite is reached over plain HTTP in
+		// this suite, and sas.ProtocolHTTPS would bake "spr=https" into the signature, which
+		// Azurite would then reject against an http:// request.
+		qp, sasErr := sas.BlobSignatureValues{
+			StartTime:     time.Now().UTC().Add(-10 * time.Second),
+			ExpiryTime:    time.Now().UTC().Add(1 * time.Hour),
+			Permissions:   perms.String(),
+			ContainerName: azuriteContainer,
+		}.SignWithSharedKey(cred)
+		require.NoError(t, sasErr)
+		return qp.Encode()
+	}
+
+	fullSASPermissions := sas.ContainerPermissions{Read: true, Write: true, List: true, Delete: true}
+
+	t.Run("SASTokenCredential", func(t *testing.T) {
+		sasToken := generateContainerSAS(t, fullSASPermissions)
+
+		optFnsSAS := storageConfig.ToOptionFuncs()
+		optFnsSAS = append(optFnsSAS, func(opts *io.Options) { opts.Azure.SASToken = sasToken })
+
+		sasStorage, err := io.NewStorageForPathWithOptions(ctx, tableBasePath, optFnsSAS...)
+		require.NoError(t, err)
+
+		probePath := fmt.Sprintf("%s/credmatrix/sas/probe.txt", tableBasePath)
+		probeData := []byte("sas token credential probe")
+
+		err = sasStorage.Write(ctx, probePath, probeData)
+		require.NoError(t, err, "write with only SASToken set (no AccountKey) must succeed")
+
+		got, err := sasStorage.Read(ctx, probePath)
+		require.NoError(t, err)
+		assert.Equal(t, probeData, got)
+
+		exists, err := sasStorage.Exists(ctx, probePath)
+		require.NoError(t, err)
+		assert.True(t, exists)
+
+		listPrefix := fmt.Sprintf("%s/credmatrix/sas", tableBasePath)
+		infos, err := sasStorage.List(ctx, listPrefix)
+		require.NoError(t, err)
+		assert.NotEmpty(t, infos)
+
+		err = sasStorage.Delete(ctx, probePath)
+		require.NoError(t, err)
+
+		exists, err = sasStorage.Exists(ctx, probePath)
+		require.NoError(t, err)
+		assert.False(t, exists)
+	})
+
+	t.Run("SASTokenWithLeadingQuestionMark", func(t *testing.T) {
+		sasToken := generateContainerSAS(t, fullSASPermissions)
+
+		optFnsSAS := storageConfig.ToOptionFuncs()
+		// NewAzureStorage trims a leading "?" from SASToken. Passing it here proves that trim,
+		// since a SAS string copied out of the Azure portal carries one and a caller that forgets
+		// to strip it should not get an opaque auth failure.
+		optFnsSAS = append(optFnsSAS, func(opts *io.Options) { opts.Azure.SASToken = "?" + sasToken })
+
+		sasStorage, err := io.NewStorageForPathWithOptions(ctx, tableBasePath, optFnsSAS...)
+		require.NoError(t, err)
+
+		probePath := fmt.Sprintf("%s/credmatrix/sas-leading-qmark/probe.txt", tableBasePath)
+		probeData := []byte("sas token with leading question mark probe")
+
+		err = sasStorage.Write(ctx, probePath, probeData)
+		require.NoError(t, err, "a SAS token with a leading ? must work identically to one without")
+
+		got, err := sasStorage.Read(ctx, probePath)
+		require.NoError(t, err)
+		assert.Equal(t, probeData, got)
+	})
+
+	t.Run("AnonymousAccessFailsClosed", func(t *testing.T) {
+		// NewAzureStorage checks AZURE_STORAGE_SAS_TOKEN and AZURE_STORAGE_KEY before it reaches
+		// the Anonymous case. Clear both so ambient environment on the machine running the test
+		// cannot silently authenticate this subtest through a different path.
+		t.Setenv("AZURE_STORAGE_SAS_TOKEN", "")
+		t.Setenv("AZURE_STORAGE_KEY", "")
+
+		optFnsAnon := storageConfig.ToOptionFuncs()
+		optFnsAnon = append(optFnsAnon, func(opts *io.Options) { opts.Azure.Anonymous = true })
+
+		anonStorage, err := io.NewStorageForPathWithOptions(ctx, tableBasePath, optFnsAnon...)
+		require.NoError(t, err)
+
+		listPrefix := fmt.Sprintf("%s/roundtrip", tableBasePath)
+		_, err = anonStorage.List(ctx, listPrefix)
+		require.Error(t, err, "anonymous access to a private container must fail, not return an empty list")
+
+		// Exists is probed separately, and deliberately not asserted either way: pkg/io/azure.go's
+		// Exists maps bloberror.BlobNotFound to (false, nil). If Azurite's anonymous-access
+		// rejection on a private container surfaces with that same error code (which real Azure's
+		// anonymous-access-disabled response sometimes does, depending on the exact failure mode),
+		// then an auth failure and a genuinely missing blob become indistinguishable through this
+		// method -- a real table would look empty instead of inaccessible. This is a candidate bug
+		// in pkg/io/azure.go, reported here rather than fixed: that file belongs to another task.
+		existsResult, existsErr := anonStorage.Exists(ctx, parquetFilePath)
+		if existsErr != nil {
+			t.Logf("Exists on a private container under anonymous access returned an error, as expected: %v", existsErr)
+		} else {
+			t.Logf("Exists on a private container under anonymous access returned (%v, nil) instead of an "+
+				"error -- see the comment above this probe: pkg/io/azure.go's BlobNotFound mapping makes an "+
+				"auth failure indistinguishable from a missing blob", existsResult)
+		}
+	})
+
+	t.Run("SASBeatsAccountKey", func(t *testing.T) {
+		sasToken := generateContainerSAS(t, fullSASPermissions)
+
+		optFnsPrecedence := storageConfig.ToOptionFuncs()
+		optFnsPrecedence = append(optFnsPrecedence,
+			func(opts *io.Options) { opts.Azure.SASToken = sasToken },
+			// Deliberately wrong, and not even valid base64 (shared keys are base64 and "-" is
+			// outside that alphabet). If the credential switch in NewAzureStorage ever stops
+			// picking SAS first, this makes it fail loudly at NewSharedKeyCredential rather than
+			// silently authenticating with a key that happens to parse.
+			func(opts *io.Options) { opts.Azure.AccountKey = "NOT-A-VALID-BASE64-KEY-DELIBERATELY-WRONG" },
+		)
+
+		precedenceStorage, err := io.NewStorageForPathWithOptions(ctx, tableBasePath, optFnsPrecedence...)
+		require.NoError(t, err, "SAS must win first-match-wins over AccountKey; a wrong key must not even be reached")
+
+		probePath := fmt.Sprintf("%s/credmatrix/precedence/probe.txt", tableBasePath)
+		probeData := []byte("sas beats account key probe")
+
+		err = precedenceStorage.Write(ctx, probePath, probeData)
+		require.NoError(t, err, "SAS token must win first-match-wins over a wrong account key")
+
+		got, err := precedenceStorage.Read(ctx, probePath)
+		require.NoError(t, err)
+		assert.Equal(t, probeData, got)
+	})
+
+	t.Run("AllFourSchemes", func(t *testing.T) {
+		schemeProbeData := []byte("scheme parity probe payload")
+		writePath := fmt.Sprintf("abfss://%s@%s/credmatrix/schemes/probe.txt", azuriteContainer, azuriteHost)
+
+		err := testStorage.Write(ctx, writePath, schemeProbeData)
+		require.NoError(t, err)
+
+		schemes := []string{"abfss", "abfs", "wasbs", "wasb"}
+		for _, scheme := range schemes {
+			t.Run(scheme, func(t *testing.T) {
+				readPath := fmt.Sprintf("%s://%s@%s/credmatrix/schemes/probe.txt", scheme, azuriteContainer, azuriteHost)
+
+				schemeStorage, err := io.NewStorageForPathWithOptions(ctx, readPath, optFns...)
+				require.NoError(t, err)
+
+				got, err := schemeStorage.Read(ctx, readPath)
+				require.NoError(t, err, "expected %s:// to read back the blob written through abfss://", scheme)
+				assert.Equal(t, schemeProbeData, got)
+			})
+		}
+	})
+
+	t.Run("ListPagination", func(t *testing.T) {
+		t.Skip("pkg/io/azure.go's List hard-codes azblob.ListBlobsFlatOptions{Prefix: &blobPath} with no " +
+			"MaxResults, so the list page size cannot be lowered from outside pkg/ -- and pkg/ is out of " +
+			"scope for this file. The un-overridden server default page size for ListBlobs is 5000 on both " +
+			"Azure and Azurite, so forcing a second page needs more than 5000 sequential blob uploads " +
+			"against a single container, which is impractical for a unit test. Skipped rather than faked " +
+			"with a lowered page size that would not actually exercise pagination.")
 	})
 }
