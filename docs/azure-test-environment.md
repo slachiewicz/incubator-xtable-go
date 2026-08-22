@@ -100,10 +100,67 @@ they change:
   moment you are done**; see [Teardown](#teardown) for exactly which command
   applies to which resource.
 
+## Rehearse locally first, without a subscription
+
+Everything except OneLake and Entra ID can be rehearsed against the Azurite
+emulator with the same tools this page uses, at no cost. Do that before
+spending money: it catches config mistakes and wrong flags without an Azure
+bill attached.
+
+Install the three tools on macOS:
+
+```shell
+brew install azure-cli azcopy
+npm install -g azurite
+```
+
+Verified together on 2026-08-22 with `az` 2.89.1, `azcopy` 10.32.7 and
+`azurite` 3.36.0.
+
+Start the emulator, pointing it at a scratch directory:
+
+```shell
+azurite-blob --blobHost 127.0.0.1 --blobPort 10000 \
+  --location /tmp/azurite --skipApiVersionCheck
+```
+
+`--skipApiVersionCheck` is required: the Azure SDK polytable links sends a
+newer `x-ms-version` than the emulator recognizes, and Azurite rejects the
+first request without it.
+
+Point the CLI at the emulator with its well-known development account. These
+credentials are fixed and public, not secrets:
+
+```shell
+export AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=http;\
+AccountName=devstoreaccount1;\
+AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;\
+BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+az storage container create --name lake
+az storage blob upload-batch --destination lake --destination-path tables/orders \
+  --source test/testdata/fixtures/delta-rs-checkpoint/orders
+```
+
+From here the storage-sandbox commands below work unchanged, except that the
+dataset config needs `storage.azure.endpoint` set to
+`http://127.0.0.1:10000/devstoreaccount1` and `storage.azure.accountName` set
+to `devstoreaccount1`, because the emulator carries the account in the URL
+path rather than the host.
+
+Two limits are worth knowing before you rely on the rehearsal. Azurite has no
+hierarchical namespace, so it cannot exercise ADLS Gen2 directory semantics —
+that gap is what hid the bug fixed in T54. And `azcopy` cannot infer the
+emulator's location from its hostname: every emulator command needs an
+explicit `--from-to`, for example
+`azcopy copy ./local /path?<sas> --from-to LocalBlob`. Against real Azure the
+switch is unnecessary.
+
 ## Prerequisites
 
-- **Azure CLI.** Every command below is checked against the CLI's documented
-  command surface, not run, since this environment has no `az` installed.
+- **Azure CLI.** Install it with `brew install azure-cli`. The storage
+  commands below were run against the Azurite emulator with `az` 2.89.1; the
+  ones that need a real subscription are checked against the CLI's documented
+  command surface rather than executed.
   Confirm your version with `az --version` and run `az <command> --help`
   before pasting anything that looks unfamiliar—flag names occasionally
   change between CLI releases, and any command below flagged "unverified" is
