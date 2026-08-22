@@ -243,6 +243,8 @@ Step-by-step guides:
 - 🔍 [Query a synced table](docs/query-engines.md) — DuckDB (verified), Spark, Trino, Athena, Redshift, BigQuery, Snowflake, StarRocks, Fabric
 - ⚖️ [Features and limitations](docs/features-and-limitations.md) — the honest capability reference and known issues
 - 🧪 [How polytable is tested](docs/testing.md) — foreign fixtures, engine verification, and the coverage bar
+- 🗺️ [Roadmap](docs/roadmap.md) — direction, positioned against the upstream release train
+- 🔭 [Upstream watch](docs/upstream-watch.md) — dated knowledge base of Java XTable's plans, bugs, and roadmap
 
 ---
 
