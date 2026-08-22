@@ -174,6 +174,13 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 
 // listDataFiles returns the dataset's data files, ordered by path so that everything derived from
 // the listing is derived in the same order on every call.
+//
+// A polytable-synced directory holds every target's metadata side by side with the data files, by
+// design, so the listing is filtered component-wise with io.IsMetadataPath rather than by the
+// file's own base name: a Delta checkpoint at "_delta_log/…checkpoint.parquet", an Iceberg
+// manifest under "metadata/", a Paimon manifest under "manifest/" and this format's own
+// "_polytable_metadata/" all end in ".parquet" or otherwise pass a suffix-only check, but none of
+// them is a data file (docs/improvement-plan.md T45).
 func (s *Source) listDataFiles(ctx context.Context) ([]io.FileInfo, error) {
 	allFiles, err := s.storage.List(ctx, s.basePath)
 	if err != nil {
@@ -182,9 +189,19 @@ func (s *Source) listDataFiles(ctx context.Context) ([]io.FileInfo, error) {
 
 	var parquetFiles []io.FileInfo
 	for _, f := range allFiles {
-		if !f.IsDir && strings.HasSuffix(f.Path, ".parquet") && !strings.HasPrefix(filepath.Base(f.Path), ".") {
-			parquetFiles = append(parquetFiles, f)
+		if f.IsDir || !strings.HasSuffix(f.Path, ".parquet") {
+			continue
 		}
+
+		rel, err := io.RelativizePath(f.Path, s.basePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to relativize %s under %s: %w", f.Path, s.basePath, err)
+		}
+		if io.IsMetadataPath(rel) {
+			continue
+		}
+
+		parquetFiles = append(parquetFiles, f)
 	}
 	if len(parquetFiles) == 0 {
 		return nil, fmt.Errorf("no parquet files found under %s", s.basePath)

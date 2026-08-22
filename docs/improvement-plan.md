@@ -1780,12 +1780,12 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T53, T54, T55, T56, T58 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T45, T53, T54, T55, T56, T58 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T57, T59, T60, T61, T62 |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T44, T46–T50 from the roadmap, and T57, T59, T60, T61, T62, T63 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -3272,6 +3272,40 @@ cloud SDK packages; the binary-size delta is recorded; and the BigLake half eith
 explicitly deferred to T59 with the reason.
 
 **Commit:** `feat: add a Google Cloud Storage backend`
+
+---
+
+## T63 — `ParquetSchemaToModel` panics on an unexpected nested group
+
+Found by T45's negative control, and it is worse than the bug T45 fixed.
+
+Reverting T45's exclusion and re-running its acceptance test did not merely miscount a Delta
+checkpoint as a seventh data file — `GetCurrentSnapshot` **panicked**, inside
+`ParquetSchemaToModel`, on `parquet-go`'s `groupType.Kind` for the checkpoint's nested schema shape.
+
+A hand-placed file of garbage bytes would have produced a clean `OpenFile` error and hidden this
+entirely. It took a real delta-rs-written checkpoint — a shape this repository's own Delta target
+never produces — to reach the panicking path, which is a good argument for T45's insistence that the
+fixture be built by real writers rather than by hand.
+
+**A library must not panic on input it merely failed to understand.** T45 stops the Parquet source
+from *reaching* this file, so the specific route is closed, but the schema converter is still
+reachable with any Parquet file whose nested group shape it does not expect — a user pointing the
+Parquet source at a directory of genuinely odd Parquet takes the process down.
+
+**Scope.** Audit `ParquetSchemaToModel` for every type assertion and interface conversion that can
+fail on a well-formed-but-unexpected schema, and return an error naming the column and the shape
+instead. Check whether `parquet-go` exposes a safe way to interrogate a group before calling `Kind`.
+Decide whether a `recover` at the package boundary is warranted as a backstop, and record the
+reasoning — a converted panic is better than a crash but worse than a real error, so it is a
+fallback, not the fix.
+
+**Acceptance:** feeding a Delta checkpoint Parquet file straight to the schema converter returns an
+error naming the file and what it could not map, and does not panic; the existing Parquet fixtures
+still convert unchanged; and a fuzz or table test covers at least the nested-group shape that
+triggered this.
+
+**Commit:** `fix: return an error instead of panicking on an unmappable Parquet schema`
 
 ---
 

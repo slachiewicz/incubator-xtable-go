@@ -35,3 +35,6 @@ __pycache__/
 # Demo generated data
 demo/sample_delta_table/
 
+
+# wrangler CLI state, created by 'wrangler login'
+.wrangler/
