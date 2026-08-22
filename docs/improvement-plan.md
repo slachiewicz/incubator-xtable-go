@@ -2566,16 +2566,45 @@ all three Entra spellings, an unknown value, and a nil `Properties` map. ~20 con
 through one client are clean under `-race`, which matters because the cached token is shared mutable
 state. `make check` green.
 
-**Why ⚠️ — four criteria unmet, and one of them was only discovered after the code landed:**
+### First contact with the real endpoint, 2026-08-22
+
+A tenant-level Entra login (`az login --allow-no-subscriptions`, tenant
+`31rstw.onmicrosoft.com`, no Azure subscription) was enough to exercise part of this against the
+live service, and it settled three things:
+
+- **`DefaultOneLakeScope` is right, verified rather than read.** `az account get-access-token
+  --resource https://storage.azure.com/` returns a token whose decoded `aud` is exactly
+  `https://storage.azure.com/`, the audience OneLake documents as the only one it accepts.
+- **The Entra transport works against a real Microsoft endpoint.** Driving
+  `IcebergRESTConversionSource` with `auth: entra` at
+  `https://onelake.table.fabric.microsoft.com/iceberg`, `DefaultAzureCredential` picked up the CLI
+  login, acquired the token and attached it. The response was a `500`, not a `401` — authentication
+  passed. That closes this task's second criterion: a token has now been presented to a Fabric
+  endpoint and accepted.
+- **T53's negotiation behaves correctly against the real service.** It surfaced
+  `iceberg REST catalog config endpoint returned 500: {"Error":{"Code":"CommunicationError"...}}`
+  rather than silently falling back to an empty prefix, which is exactly the non-latched path the
+  design calls for.
+
+**What it does not prove**, and the reason this task stays ⚠️: only the failure path ran. The `500`
+comes from a warehouse that does not exist — this tenant has Fabric disabled outright
+(`AADSTS500014: The service principal for resource 'https://api.fabric.microsoft.com' is
+disabled`), so no workspace could be created to point at. The success path — a real warehouse
+resolving a prefix and a table — is still unrun.
+
+**Worth recording for the troubleshooting guide:** OneLake answers a non-existent warehouse with a
+`500 CommunicationError`, not a `404`. A typo in the `warehouse` property therefore surfaces as an
+opaque internal error. polytable passes the status and body through verbatim, which is the right
+call, but a reader needs to know that a 500 here usually means "wrong warehouse" rather than
+"OneLake is broken".
+
+**Why ⚠️ — three criteria unmet, and one of them was only discovered after the code landed:**
 
 1. **No Fabric lakehouse table has been resolved or converted.** Everything above is unit-level. The
    acceptance criterion needs a Fabric workspace, and none was available.
-2. **`DefaultOneLakeScope` is now sourced, not guessed — but still unexercised.** Microsoft's
-   OneLake connection guide states that OneLake accepts tokens in the `Storage` audience only, and
-   `https://storage.azure.com/.default` is the scope that requests that audience, so the default is
-   right by documentation. What has not happened is a single token being presented to a Fabric
-   endpoint. `scope` stays configurable because a non-OneLake REST catalog behind Entra ID may want
-   a different audience.
+2. ~~**`DefaultOneLakeScope` is unexercised.**~~ **Closed above**: the audience is confirmed from a
+   decoded token and one has been accepted by the live endpoint. `scope` stays configurable because
+   a non-OneLake REST catalog behind Entra ID may want a different audience.
 
 3. ~~**The endpoint needs prefix negotiation polytable does not do.**~~ **Closed by T53.** Microsoft publishes OneLake's Iceberg REST endpoint at
    `https://onelake.table.fabric.microsoft.com/iceberg`. A client first calls

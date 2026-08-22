@@ -442,6 +442,12 @@ the Azure Identity SDK and its MSAL dependency out of the browser bundle entirel
   on its own network — reachable by running a client container with
   `--network container:<name>`. The give-away is that unrelated suites fail identically. Restart
   Docker Desktop.
+- **A `500 CommunicationError` from OneLake's Iceberg REST endpoint.** This usually means the
+  `warehouse` property names a workspace or item that does not exist, not that the service is
+  broken: OneLake answers an unknown warehouse with a `500`, not a `404`. Check the warehouse
+  against the portal — it is `<WorkspaceID>/<DataItemID>` or
+  `<WorkspaceName>/<DataItemName>.<DataItemType>`. A wrong *token audience* fails differently, with
+  a `401`.
 - **A tool or proxy rejects a `dfs.fabric.microsoft.com` or `blob.fabric.microsoft.com` URL.**
   Microsoft's documentation notes that some tools validate storage URLs against an allowed list
   that includes `dfs.core.windows.net` and rejects anything else, including OneLake's own
