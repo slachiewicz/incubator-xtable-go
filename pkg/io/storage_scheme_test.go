@@ -165,3 +165,60 @@ func TestParseAzureURI(t *testing.T) {
 		})
 	}
 }
+
+// TestRelativizePath_AzureEndpointAliases pins a defect found by converting a Snowflake Iceberg
+// table on Azure and reading the result with two independent Delta readers.
+//
+// ADLS Gen2 serves one account on both a dfs and a blob endpoint. Snowflake writes its Iceberg
+// locations against ".blob."; a caller typically addresses the table as ".dfs.". Comparing the
+// hosts as written failed to see the file was under its own table, so an absolute URI was written
+// into the Delta log's add.path -- and both DuckDB (delta-kernel-rs) and delta-rs resolve that
+// relative to the table root, producing a path with the root prepended to an absolute URI, and fail
+// with BlobNotFound. The same conversion on S3 produced a relative path, which is what showed this
+// was an inconsistency rather than a deliberate choice.
+func TestRelativizePath_AzureEndpointAliases(t *testing.T) {
+	t.Parallel()
+
+	const dfsBase = "abfss://c@acct.dfs.core.windows.net/tbl"
+	const blobBase = "abfss://c@acct.blob.core.windows.net/tbl"
+
+	tests := []struct {
+		name string
+		file string
+		base string
+		want string
+	}{
+		{"blob file under dfs base", blobBase + "/data/f.parquet", dfsBase, "data/f.parquet"},
+		{"dfs file under blob base", dfsBase + "/data/f.parquet", blobBase, "data/f.parquet"},
+		{"same spelling still works", dfsBase + "/data/f.parquet", dfsBase, "data/f.parquet"},
+		{
+			// The authority is normalised, never the path: a directory that happens to be spelled
+			// like an endpoint must not be rewritten.
+			name: "a path component spelled like an endpoint is untouched",
+			file: dfsBase + "/.blob.core.windows.net/f.parquet",
+			base: dfsBase,
+			want: ".blob.core.windows.net/f.parquet",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := io.RelativizePath(tc.file, tc.base)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// TestRelativizePath_DifferentAccountStillRefused guards the fix from becoming too generous: two
+// different accounts are two different stores whichever endpoint spells them.
+func TestRelativizePath_DifferentAccountStillRefused(t *testing.T) {
+	t.Parallel()
+
+	_, err := io.RelativizePath(
+		"abfss://c@other.blob.core.windows.net/tbl/data/f.parquet",
+		"abfss://c@acct.dfs.core.windows.net/tbl",
+	)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, io.ErrPathNotUnderBase)
+}

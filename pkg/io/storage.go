@@ -162,6 +162,13 @@ func RelativizePath(physicalPath, basePath string) (string, error) {
 		return file, nil
 	}
 
+	// One store can be addressed by more than one host spelling, and comparing the strings as
+	// written then fails to see that a file sits under its own table. Normalise both sides for the
+	// comparison only -- the path component is untouched, so the suffix returned below is the same
+	// either way, and nothing a source deliberately wrote gets rewritten.
+	base = canonicalHostForCompare(base)
+	file = canonicalHostForCompare(file)
+
 	if file == base {
 		return "", fmt.Errorf("%w: %q is the base path itself", ErrPathNotUnderBase, physicalPath)
 	}
@@ -172,6 +179,31 @@ func RelativizePath(physicalPath, basePath string) (string, error) {
 		return "", fmt.Errorf("%w: %q is not under %q", ErrPathNotUnderBase, physicalPath, basePath)
 	}
 	return strings.TrimPrefix(rest, "/"), nil
+}
+
+// canonicalHostForCompare rewrites host spellings that denote one store into a single form, so that
+// RelativizePath can tell a file is under its table when the two were written against different
+// endpoints of the same account.
+//
+// ADLS Gen2 serves the same account on a dfs and a blob endpoint, and writers disagree about which
+// to record: Snowflake writes Iceberg locations against ".blob." while a caller typically addresses
+// the table as ".dfs.". Before this, such a file failed to relativize and an absolute URI was
+// written into the Delta log, which delta-kernel-rs and delta-rs both resolve relative to the table
+// root and then cannot find. Verified against both readers.
+//
+// Only the authority is touched, and only up to the first path separator, so a path component that
+// happens to contain ".blob." is left alone.
+func canonicalHostForCompare(p string) string {
+	authority := p
+	rest := ""
+	if i := strings.IndexByte(strings.TrimPrefix(p, "/"), '/'); i >= 0 {
+		off := len(p) - len(strings.TrimPrefix(p, "/"))
+		authority, rest = p[:off+i], p[off+i:]
+	}
+	authority = strings.Replace(authority, ".blob.core.windows.net", ".dfs.core.windows.net", 1)
+	// OneLake exposes the same pair, documented alongside the endpoint swap in pkg/io/azure.go.
+	authority = strings.Replace(authority, "onelake.blob.fabric.microsoft.com", "onelake.dfs.fabric.microsoft.com", 1)
+	return authority + rest
 }
 
 // NewStorageForPath automatically resolves and instantiates the appropriate Storage implementation for a path URI.

@@ -3930,7 +3930,7 @@ the source table.
 
 ---
 
-## T67 — Relativization does not know `.dfs.` and `.blob.` are the same store
+## T67 — Relativization does not know `.dfs.` and `.blob.` are the same store ✅ COMPLETED
 
 Found by converting a Snowflake Iceberg table on Azure to Delta and reading the result with DuckDB.
 
@@ -3977,6 +3977,25 @@ only.
 path, produces a Delta log with relative `add.path` entries; DuckDB's `delta_scan` reads the result;
 a table genuinely outside its root still gets an absolute path; and the equivalent S3 and GCS
 spellings are either covered or explicitly recorded as untested.
+
+### Outcome
+
+**Confirmed ours, not the reader's**, by two checks rather than one. The same conversion on S3 wrote a
+**relative** path (`data/<file>.parquet`) while Azure wrote an absolute one, from the same code — so
+the absolute path was an inconsistency, not a choice. And **delta-rs 1.6.3**, the reference Rust
+implementation, fails identically to DuckDB, joining the absolute URI onto the table root. Two
+independent readers agreeing settled it without needing Spark.
+
+Fixed by normalising the **authority only**, for the comparison only, so the stored path is never
+rewritten and a directory spelled like an endpoint is untouched. Covers the Azure blob/dfs pair and
+the OneLake pair that `pkg/io/azure.go` already documents.
+
+**Verified end to end afterwards**: DuckDB reads 8 rows / sum 40.0 / 4 regions and delta-rs reads the
+same, matching what Snowflake reports for the source table.
+
+**Left open deliberately**: the equivalent aliases for other backends — S3 virtual-hosted versus
+path-style, and `gs://` versus `storage.googleapis.com` — are **untested**, and the acceptance
+criterion above asked for them to be covered or recorded. They are recorded, not covered.
 
 **Commit:** `fix: treat dfs and blob endpoints as one store when relativizing`
 
