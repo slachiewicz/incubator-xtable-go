@@ -63,6 +63,12 @@ func TestDockertest_Azurite_FullLakehouseMatrix(t *testing.T) {
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
 		Repository: "mcr.microsoft.com/azure-storage/azurite",
 		Tag:        "latest",
+		// Only the blob service is needed, and two flags are load-bearing. --blobHost 0.0.0.0
+		// makes the listener reachable through the published port. --skipApiVersionCheck is
+		// required because azblob sends a newer x-ms-version than Azurite recognizes, which
+		// Azurite rejects with InvalidHeaderValue on the first request; the emulator trails the
+		// service, so this will keep being true after the next SDK bump.
+		Cmd: []string{"azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000", "--skipApiVersionCheck"},
 		PortBindings: map[docker.Port][]docker.PortBinding{
 			"10000/tcp": {{HostIP: "127.0.0.1", HostPort: ""}},
 		},

@@ -1784,11 +1784,10 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
 | 🎯 Open queue | T24, T30, T34, T37, and T38–T50 from the roadmap |
-| ⚠️ Landed, unverified against the real service | T51 (Azure storage — never run against Azurite or Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
+| ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
-**Picking up the queue.** T51 and T52 have landed as code and need an environment, not more work:
-a Docker host runs `test/dockertest_azurite_test.go`, and an Azure subscription plus a Fabric
-workspace closes the rest. Otherwise by value: **T40** first — the Iceberg
+**Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
+is green, and `docs/azure-test-environment.md` is the recipe for the rest. Otherwise by value: **T40** first — the Iceberg
 source has no incremental sync at all, which is a correctness defect rather than a gap — then T45
 (the Parquet source crawls other formats' metadata as data), then T37's 1.x timeline, then T34.
 
@@ -2316,7 +2315,7 @@ the same commit; `docs/upstream-watch.md`'s #715 line updates to name the outcom
 
 ---
 
-## T51 — Azure storage: ADLS Gen2, `abfss://`, and the OneLake path shape ⚠️ LANDED, NOT RUN AGAINST AZURE
+## T51 — Azure storage: ADLS Gen2, `abfss://`, and the OneLake path shape ⚠️ GREEN ON AZURITE, UNTESTED ON AZURE
 
 **A stated requirement, not an extension** (maintainer decision, 2026-08-22), and the reason the
 GCS/Azure non-goal was withdrawn: its stated precondition — T3's unreachable storage configuration —
@@ -2373,7 +2372,7 @@ last is out of scope — and `wasbs://` is currently untested either way, so sta
 
 **Commit:** `feat: add an Azure Data Lake Storage backend`
 
-### Outcome ⚠️ — the code is in and the gate is green; nothing has touched real Azure
+### Outcome ⚠️ — green against the Azurite emulator; nothing has touched a real Azure account
 
 **The scheme-list fix came first and stands on its own.** `uriSchemes` (`pkg/io/storage.go`) now
 carries `abfss://`, `abfs://`, `wasbs://` and `wasb://`, with `azureSchemes` and `IsAzurePath`
@@ -2427,13 +2426,33 @@ table-tested including the OneLake workspace-as-container shape and the four mal
 `storage_scheme_test.go` pin that asserted `abfss://` was refused is inverted rather than deleted,
 so it now proves the opposite.
 
-**Why this is ⚠️ and not ✅ — four acceptance criteria are unmet:**
+**The Azurite suite runs, and it passes.** `test/dockertest_azurite_test.go` was executed against
+`mcr.microsoft.com/azure-storage/azurite`: `DeltaToIcebergAndHudi_OnAzurite` and
+`HudiToDeltaAndIceberg_OnAzurite` both sync through the Azure backend, and `RoundTripsAbfssPaths`
+asserts every `FileInfo.Path` that `List` returns starts with `abfss://` and parses back through
+`ParseAzureURI` to the same container, host and blob. `go test -count=1 ./test/...` is green with
+the MinIO and Iceberg REST suites alongside it, so the `ToOptionFuncs` change did not regress them.
 
-1. **The Azurite end-to-end suite has never executed.** `test/dockertest_azurite_test.go` is
-   written, compiles, and skips correctly under `-short`, but no Docker daemon was available here.
-   Nothing in this task has talked to a real blob endpoint, emulated or otherwise.
-2. **No credential mode is exercised.** The account-key path is what the unrun Azurite suite would
-   cover; SAS, anonymous and the Entra chain have no test at all.
+**Two flags are load-bearing for the emulator, and both cost a debugging cycle to find.** Azurite
+needs `--blobHost 0.0.0.0`, because the listener otherwise binds the container's loopback and a
+published port resets rather than answering; and `--skipApiVersionCheck`, because `azblob` sends a
+newer `x-ms-version` than Azurite recognizes and Azurite rejects the first request with
+`InvalidHeaderValue`. The emulator trails the service, so the second will keep being true after the
+next SDK bump. Both are in the `RunOptions.Cmd` with that reasoning in a comment.
+
+**Unrelated to this code, worth recording because it wasted a cycle:** the failure that looked like
+a broken backend was Docker Desktop's port forwarding, which accepted the TCP connection and then
+reset every HTTP request while the container answered correctly on its own network. The
+pre-existing MinIO suite failed identically. Restarting Docker Desktop fixed it. Suspect the daemon
+before the code when every published port resets at once.
+
+**Why this is still ⚠️ and not ✅ — three acceptance criteria remain unmet:**
+
+1. **Nothing has reached a real Azure account.** The emulator implements the Blob API; it is not
+   Azure, and it does not exercise Entra ID, network policy, or ADLS Gen2's hierarchical namespace.
+   `docs/azure-test-environment.md` is the recipe for closing this.
+2. **Only the shared-key credential path is exercised**, by the Azurite suite. SAS, anonymous and
+   the `DefaultAzureCredential` chain have no test — the last cannot have one without a tenant.
 3. **No OneLake request has been made**, though the shapes are now sourced rather than guessed.
    Microsoft documents the abfss form as
    `abfs[s]://<workspace>@onelake.dfs.fabric.microsoft.com/<item>.<itemtype>/<path>/<fileName>`,
@@ -2446,11 +2465,12 @@ so it now proves the opposite.
    since resolving the global endpoint for an out-of-region workspace can move data across a
    region boundary), a workspace private-link FQDN, and `api.onelake.fabric.microsoft.com`, which
    contains neither `.dfs.` nor `.blob.` and passes through the swap untouched.
-4. **`wasbs://` and `wasb://` are routed and parse-tested but never run**, so the task's own
-   "state which it is" clause resolves to: in scope, untested.
+4. **Only `abfss://` is exercised end to end.** `abfs://`, `wasbs://` and `wasb://` are routed and
+   parse-tested, so the task's own "state which it is" clause resolves to: in scope, unit-tested,
+   not run against a store.
 
-Closing this to ✅ needs a Docker host for item 1 and an Azure subscription for the rest. Until then
-`docs/features-and-limitations.md` says so, and the format matrix must not claim Azure interop.
+Closing this to ✅ needs an Azure subscription. Until then `docs/features-and-limitations.md` says
+so, and the format matrix must not claim Azure interop beyond the emulator.
 
 ---
 

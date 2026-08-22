@@ -74,8 +74,19 @@ self-referential test could see — the register (T28, T29, T31) records them.
 the Azurite Azure Storage emulator. All three start containers via `ory/dockertest` and are skipped
 in `-short` mode.
 
-The Azurite suite has never been executed: it was written without a Docker daemon available. Treat
-its result as unknown rather than passing until someone runs it.
+The Azurite suite passes: both sync directions run through the Azure backend against the emulator,
+and `abfss://` paths round-trip through `List`. It covers the shared-key credential path only, and
+the emulator is not Azure — see `docs/azure-test-environment.md` for what a real subscription adds.
+
+Two Azurite flags are required and set in the suite. `--blobHost 0.0.0.0` makes the listener
+reachable through a published port; without it the listener binds the container's loopback and the
+connection resets. `--skipApiVersionCheck` is needed because `azblob` sends a newer `x-ms-version`
+than Azurite recognizes, which Azurite rejects with `InvalidHeaderValue`.
+
+If every container suite fails at once with `connection reset by peer` on a published port, suspect
+the Docker daemon rather than the code. Docker Desktop can reach a state where it accepts the TCP
+connection and resets every HTTP request while the container answers correctly on its own network.
+Restarting Docker Desktop clears it.
 
 ## The coverage bar
 
