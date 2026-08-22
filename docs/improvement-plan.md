@@ -3127,6 +3127,20 @@ only but advertises `POST /v1/{prefix}/namespaces/{ns}/tables/{table}/metrics`, 
 write-route filter. polytable would have called it writable and failed a registration with a bare
 status instead of the read-only message. Routes ending in `/metrics` no longer count as writes.
 
+**Confirmed against Amazon S3 Tables, which would have been broken without both fixes.** Its
+`GET /v1/config` for a table bucket returns:
+
+```json
+{"defaults":{...,"prefix":"arn%3Aaws%3As3tables%3A<region>%3A<account>%3Abucket%2F<name>"},"overrides":{}}
+```
+
+That is both bugs at once, from a service nobody had suggested was affected. The prefix is under
+`defaults` with `overrides` present but **empty**, so the pre-fix client would have computed no
+prefix at all; and it arrives **already percent-encoded** — the ARN's `:` and `/` are `%3A` and
+`%2F` — so the pre-fix per-segment escaping would have turned each `%` into `%25`. Either alone
+breaks it. polytable's client listed namespaces and discovered a table against the live endpoint on
+the first attempt, with the region and signing name derived from the host and no properties set.
+
 **Confirmed against a live Apache Polaris container**, after the fixes landed: `overrides.prefix`
 is `pt_catalog` with `defaults` carrying no prefix, so the merge order is right; an unknown
 warehouse really does answer `404 NotFoundException` while no warehouse answers `400`, which is
