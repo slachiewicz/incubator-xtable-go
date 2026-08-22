@@ -34,6 +34,12 @@ const PropCatalogToken = "token"
 // PropCatalogScope overrides the Entra ID scope requested for the catalog.
 const PropCatalogScope = "scope"
 
+// PropCatalogWarehouse carries the Iceberg REST warehouse identifier sent as
+// GET /v1/config?warehouse=<value>. This is distinct from Config.DatabaseName, which maps to the
+// Iceberg namespace (e.g. "dbo" in Microsoft's OneLake examples): a warehouse addresses the whole
+// catalog instance (OneLake's is "<WorkspaceID>/<DataItemID>"), a namespace a grouping within it.
+const PropCatalogWarehouse = "warehouse"
+
 // DefaultOneLakeScope is the Entra ID scope requested when auth=entra and no scope is configured.
 //
 // The storage audience is what OneLake documents: it accepts tokens in the Storage audience only,

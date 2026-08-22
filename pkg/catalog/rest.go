@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/slachiewicz/polytable/pkg/formats/iceberg"
@@ -33,10 +32,8 @@ import (
 
 // IcebergRESTCatalogClient synchronizes Iceberg table metadata with standard Iceberg REST Catalogs (Polaris, Unity, Tabular, Nessie).
 type IcebergRESTCatalogClient struct {
-	httpClient *http.Client
-	baseURI    string
-	namespace  string
-	authToken  string
+	endpoint  *restCatalogEndpoint
+	namespace string
 }
 
 var _ SyncClient = (*IcebergRESTCatalogClient)(nil)
@@ -56,22 +53,19 @@ func NewIcebergRESTCatalogClient(cfg *Config) (*IcebergRESTCatalogClient, error)
 	}
 
 	return &IcebergRESTCatalogClient{
-		httpClient: client,
-		baseURI:    strings.TrimSuffix(cfg.URI, "/"),
-		namespace:  cfg.DatabaseName,
-		authToken:  token,
+		endpoint:  newRESTCatalogEndpoint(client, cfg.URI, token, cfg.Properties),
+		namespace: cfg.DatabaseName,
 	}, nil
 }
 
 // NewIcebergRESTCatalogClientWithHTTPClient creates a client using a caller-supplied HTTP client.
 // This mirrors NewIcebergRESTConversionSourceWithClient in rest_conversion.go; that seam existed
-// for the read side only until now, with no equivalent for the write side.
+// for the read side only until now, with no equivalent for the write side. It carries no
+// warehouse: callers needing prefix negotiation with a warehouse go through NewIcebergRESTCatalogClient.
 func NewIcebergRESTCatalogClientWithHTTPClient(client *http.Client, baseURI, namespace, authToken string) *IcebergRESTCatalogClient {
 	return &IcebergRESTCatalogClient{
-		httpClient: client,
-		baseURI:    strings.TrimSuffix(baseURI, "/"),
-		namespace:  namespace,
-		authToken:  authToken,
+		endpoint:  newRESTCatalogEndpoint(client, baseURI, authToken, nil),
+		namespace: namespace,
 	}
 }
 
@@ -84,6 +78,13 @@ func (c *IcebergRESTCatalogClient) CatalogType() CatalogType {
 func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, table *model.Table, _ *model.Snapshot) error {
 	if table == nil {
 		return fmt.Errorf("table cannot be nil")
+	}
+
+	if err := c.endpoint.negotiatePrefix(ctx); err != nil {
+		return fmt.Errorf("failed to negotiate Iceberg REST catalog config: %w", err)
+	}
+	if known, advertised := c.endpoint.writeEndpointAdvertised(); known && !advertised {
+		return readOnlyCatalogError(c.endpoint.baseURI, "CreateOrUpdateTable")
 	}
 
 	schemaID := 0
@@ -107,25 +108,23 @@ func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, tabl
 		return err
 	}
 
-	url := fmt.Sprintf("%s/v1/namespaces/%s/tables", c.baseURI, c.namespace)
+	url := c.endpoint.path("namespaces", c.namespace, "tables")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBytes))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.authToken)
-	}
+	c.endpoint.setAuth(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.endpoint.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request to iceberg rest catalog: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusConflict {
-		// Table exists, issue commit updates endpoint: POST /v1/namespaces/{ns}/tables/{table}
-		updateURL := fmt.Sprintf("%s/v1/namespaces/%s/tables/%s", c.baseURI, c.namespace, table.Name)
+		// Table exists, issue commit updates endpoint: POST /v1/{prefix}/namespaces/{ns}/tables/{table}
+		updateURL := c.endpoint.path("namespaces", c.namespace, "tables", table.Name)
 		commitUpdateBody := map[string]any{
 			"identifier": map[string]any{
 				"namespace": []string{c.namespace},
@@ -146,15 +145,16 @@ func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, tabl
 			return err
 		}
 		updReq.Header.Set("Content-Type", "application/json")
-		if c.authToken != "" {
-			updReq.Header.Set("Authorization", "Bearer "+c.authToken)
-		}
+		c.endpoint.setAuth(updReq)
 
-		updResp, err := c.httpClient.Do(updReq)
+		updResp, err := c.endpoint.httpClient.Do(updReq)
 		if err != nil {
 			return fmt.Errorf("failed to update table in iceberg rest catalog: %w", err)
 		}
 		defer func() { _ = updResp.Body.Close() }()
+		if updResp.StatusCode == http.StatusMethodNotAllowed {
+			return readOnlyCatalogError(c.endpoint.baseURI, "CreateOrUpdateTable (commit update)")
+		}
 		if updResp.StatusCode >= 400 {
 			body, _ := io.ReadAll(updResp.Body)
 			return fmt.Errorf("iceberg rest catalog returned error %d: %s", updResp.StatusCode, string(body))
@@ -162,6 +162,9 @@ func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, tabl
 		return nil
 	}
 
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		return readOnlyCatalogError(c.endpoint.baseURI, "CreateOrUpdateTable")
+	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("iceberg rest catalog create returned error %d: %s", resp.StatusCode, string(body))
@@ -172,25 +175,33 @@ func (c *IcebergRESTCatalogClient) CreateOrUpdateTable(ctx context.Context, tabl
 
 // DropTable removes the table registration from the REST catalog.
 func (c *IcebergRESTCatalogClient) DropTable(ctx context.Context, databaseName, tableName string) error {
+	if err := c.endpoint.negotiatePrefix(ctx); err != nil {
+		return fmt.Errorf("failed to negotiate Iceberg REST catalog config: %w", err)
+	}
+	if known, advertised := c.endpoint.writeEndpointAdvertised(); known && !advertised {
+		return readOnlyCatalogError(c.endpoint.baseURI, "DropTable")
+	}
+
 	ns := c.namespace
 	if databaseName != "" {
 		ns = databaseName
 	}
-	url := fmt.Sprintf("%s/v1/namespaces/%s/tables/%s", c.baseURI, ns, tableName)
+	url := c.endpoint.path("namespaces", ns, "tables", tableName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return err
 	}
-	if c.authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.authToken)
-	}
+	c.endpoint.setAuth(req)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.endpoint.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		return readOnlyCatalogError(c.endpoint.baseURI, "DropTable")
+	}
 	if resp.StatusCode >= 400 && resp.StatusCode != http.StatusNotFound {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to drop table: status %d: %s", resp.StatusCode, string(body))

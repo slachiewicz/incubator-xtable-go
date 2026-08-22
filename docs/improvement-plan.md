@@ -1778,12 +1778,12 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T54 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T53, T54 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T53, T55, T56 for Azure usability |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T55, T56 for Azure usability |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -2577,8 +2577,7 @@ state. `make check` green.
    endpoint. `scope` stays configurable because a non-OneLake REST catalog behind Entra ID may want
    a different audience.
 
-3. **The endpoint needs prefix negotiation polytable does not do, and this is the finding that
-   matters.** Microsoft publishes OneLake's Iceberg REST endpoint at
+3. ~~**The endpoint needs prefix negotiation polytable does not do.**~~ **Closed by T53.** Microsoft publishes OneLake's Iceberg REST endpoint at
    `https://onelake.table.fabric.microsoft.com/iceberg`. A client first calls
    `GET /v1/config?warehouse=<Workspace>/<DataItem>`, and the response's `overrides.prefix` goes
    into every later path as `/v1/{prefix}/namespaces/...`. polytable builds `/v1/namespaces/...`
@@ -2588,10 +2587,9 @@ state. `make check` green.
    read-only — its advertised operations are `GET` and `HEAD` only — so the sync client can never
    register a table into a Fabric workspace through it, and the sample configuration requests
    `https://storage.azure.com/.default`, confirming `DefaultOneLakeScope` exactly.
-4. **Listing is still unavailable**, so the acceptance clause "resolves as a conversion source by
-   identifier" is met only for `GetSourceTable`. `docs/iceberg-rest-catalog.md` now documents the
-   `auth`, `token` and `scope` properties, the OneLake mode and this listing limit, which closes
-   the documentation half of the acceptance.
+4. ~~**Listing is still unavailable.**~~ **Closed by T53**, which implemented `ListTables` for REST
+   catalogs. `docs/iceberg-rest-catalog.md` documents the `auth`, `token`, `scope` and `warehouse`
+   properties, which closes the documentation half of the acceptance.
 
 Also still true and not part of this task: `ListTables` yields `ErrCatalogNotImplemented` for REST
 catalogs (`pkg/catalog/rest_conversion.go`), so T23's `--catalog … --database` discovery does not
@@ -2600,7 +2598,7 @@ reach a OneLake workspace. Whether Fabric supports listing, and whether a worksp
 
 ---
 
-## T53 — Iceberg REST: negotiate the catalog prefix before addressing anything
+## T53 — Iceberg REST: negotiate the catalog prefix before addressing anything ✅ COMPLETED
 
 Found while documenting T52, by reading Microsoft's OneLake table-API guide rather than the code.
 It is a general Iceberg REST conformance gap that happens to block OneLake completely.
@@ -2650,6 +2648,49 @@ attempt against a read-only catalog fails with a message naming that as the reas
 needs a Fabric workspace — see `docs/azure-test-environment.md`.
 
 **Commit:** `fix: negotiate the Iceberg REST catalog prefix before addressing tables`
+
+### Outcome ✅
+
+`restCatalogEndpoint` (`pkg/catalog/rest_config.go`) is the one place the HTTP client, bearer token,
+base URI and negotiated prefix live, and both REST types are built around it instead of each
+carrying their own copy.
+
+**What "at most once" actually means here.** `negotiatePrefix` runs under a mutex and latches only
+*terminal* outcomes: a decoded 200, or a 404/405 meaning the catalog predates `/v1/config`, which
+latches an empty prefix — today's behavior exactly. A transport error or an unexpected status is
+deliberately **not** latched, because negotiation did not conclude; latching it would let one
+network blip brick the client for its whole lifetime. That distinction is the design decision worth
+remembering.
+
+**The path builder handles the shape OneLake actually uses.** `path()` escapes every segment, and
+splits a prefix that itself contains a slash — OneLake's is `<workspace>/<item>` — so the separator
+survives escaping instead of becoming `%2F`. An empty prefix emits no segment at all, which is what
+keeps the existing catalogs working.
+
+**`ListTables` is implemented**, replacing `ErrCatalogNotImplemented`. An empty `database` walks
+every namespace via `GET /v1/{prefix}/namespaces`; a named one lists just that. Both listings follow
+`next-page-token`, so a large namespace is not silently truncated. It mirrors
+`GlueConversionSource.ListTables` for mid-iteration errors and early abandonment. Note
+`TableFilter.RequireConversionMarkers` costs one `GetSourceTable` per candidate, because the REST
+listing endpoints return identifiers without properties; the default unset filter costs nothing
+extra.
+
+**Read-only catalogs fail with a reason.** `writeEndpointAdvertised` reads the config response's
+`endpoints` array and counts only POST/PUT/DELETE routes mentioning `/tables` or `/namespaces`, so
+an unrelated `POST /v1/oauth/tokens` cannot mask a genuinely read-only table surface. A write is
+refused pre-emptively when the catalog advertises no write route, and on a runtime 405, with a
+message naming the operation rather than a bare status.
+
+**Verified:** `pkg/catalog/rest_prefix_test.go` drives an `httptest` server shaped like OneLake and
+covers all eight required scenarios — the prefix reaching the request path, the warehouse reaching
+the config query, an empty prefix producing today's paths, one config call across two operations, a
+404 falling back, `ListTables` walking and surfacing a mid-iteration error, a 405 naming the
+operation, and concurrent operations making exactly one config call under `-race`.
+`TestDockertest_IcebergREST` against the `tabulario/iceberg-rest` container passes unchanged, which
+is the proof the empty-prefix path did not regress. `make check` green.
+
+**The OneLake leg is still unrun** — the endpoint now addresses correctly by construction, but no
+request has reached a Fabric workspace. That stays T52's open criterion, not this task's.
 
 ---
 

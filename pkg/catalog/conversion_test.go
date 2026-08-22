@@ -431,7 +431,11 @@ func TestGlueConversionSourceListTables(t *testing.T) {
 	})
 }
 
-func TestIcebergRESTConversionSourceListTablesRefuses(t *testing.T) {
+// IcebergRESTConversionSource.ListTables is implemented (docs/improvement-plan.md T53); a REST
+// catalog that cannot be reached at all still surfaces a single error rather than an empty
+// listing, which this pins. Coverage of the happy paths (walking namespaces, pagination, filter
+// application) lives in rest_prefix_test.go alongside the rest of T53's prefix-negotiation tests.
+func TestIcebergRESTConversionSourceListTablesUnreachableCatalogYieldsOneError(t *testing.T) {
 	t.Parallel()
 
 	src := catalog.NewIcebergRESTConversionSourceWithClient(http.DefaultClient, "http://localhost:8181", "ns", "")
@@ -443,9 +447,8 @@ func TestIcebergRESTConversionSourceListTablesRefuses(t *testing.T) {
 		gotErr = err
 	}
 
-	assert.Equal(t, 1, count, "the refusal is a single yielded error, never an empty database")
+	assert.Equal(t, 1, count, "an unreachable catalog yields a single error, never an empty database")
 	require.Error(t, gotErr)
-	assert.ErrorIs(t, gotErr, catalog.ErrCatalogNotImplemented)
 }
 
 func TestGlueConversionSourceGetSourceTable(t *testing.T) {

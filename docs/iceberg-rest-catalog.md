@@ -62,6 +62,10 @@ The `properties` block takes three keys:
 - **`token`**: a static bearer token, used when `auth` is empty. It never
   expires from polytable's point of view, so a long-running sync fails when
   the token does.
+- **`warehouse`**: the catalog's warehouse identifier, sent to
+  `GET /v1/config` so the catalog can return the path prefix it wants every
+  later request to carry. OneLake needs it and spells it
+  `<WorkspaceID>/<DataItemID>`; catalogs that use no prefix ignore it.
 - **`scope`**: the Entra ID scope to request, used when `auth` selects Entra.
   It defaults to `https://storage.azure.com/.default`, which is the scope that
   requests the `Storage` audience — the only audience OneLake accepts. Set it
@@ -106,12 +110,13 @@ usual. Explicitly set dataset fields win over resolved ones.
   token in `properties.token`.
 - Nessie: the Iceberg REST endpoint is served under `/iceberg` on the Nessie
   server, for example `http://localhost:19120/iceberg`.
-- Microsoft OneLake and Fabric: not usable yet. The endpoint is
-  `https://onelake.table.fabric.microsoft.com/iceberg`, and it requires prefix
-  negotiation that polytable does not implement — see
-  [Azure and OneLake](azure.md#catalogs-on-azure) and T53 in
-  [the improvement plan](improvement-plan.md). It is also read-only, so it can
-  serve a conversion source but never accept a registration.
+- Microsoft OneLake and Fabric: the endpoint is
+  `https://onelake.table.fabric.microsoft.com/iceberg`. Set `auth: entra` and a
+  `warehouse` property of `<WorkspaceID>/<DataItemID>`; `databaseName` is the
+  Iceberg namespace, not the workspace. The endpoint is read-only, so it can
+  serve a conversion source but never accept a registration, and no request
+  has yet reached a live workspace — see
+  [Azure and OneLake](azure.md#catalogs-on-azure).
 
 These endpoint shapes come from the respective vendors' documentation; only the
 `tabulario/iceberg-rest` image is exercised by this repository's integration
