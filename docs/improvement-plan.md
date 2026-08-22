@@ -1108,24 +1108,98 @@ Same `package main` deviation as T22 for the CLI tests, for the same reason: Go 
 
 ## T24 — Deletion vectors beyond Delta: implement or narrow the claim
 
-Deletion-vector code exists only in `pkg/formats/delta/{source,target}.go` and `pkg/model/datafile.go`.
-`pkg/formats/iceberg` and `pkg/formats/hudi` contain none.
+### What happens today, checked rather than assumed
 
-The README overclaimed this — the format matrix marked Iceberg "✅ (Equality/Positional)" and Hudi
-"✅" — and was corrected on 2026-08-21 to `—` for both, in the same spirit as T9. `SPEC.md:189` was
-already accurate, scoping the claim to the Delta adapter.
+`pkg/formats/delta/source.go:540` parses a Delta `deletionVector` into `model.DeletionVector`, so
+the descriptor reaches the internal model intact. **Nothing consumes it.** `grep -rn DeletionVector
+pkg/formats/iceberg pkg/formats/hudi` returns nothing; only `pkg/model/datafile.go` and the Delta
+adapter mention it at all.
 
-That correction makes the docs honest; it does not close the gap. Upstream tracks the real work as
-#345 and #346 (read Delta and Iceberg deletion vectors into the internal representation), #347 and
-#348 (write them to the Delta and Iceberg targets), #640 (the snapshot case) and open PR #661.
+**And there is no diagnostic.** A search across `pkg/` and `cmd/` for any deletion-vector mention
+co-occurring with warn, log, error, unsupported or skip returns zero lines. A sync of a Delta table
+whose rows were deleted by a deletion vector reports success and produces a target table that
+answers queries with the deleted rows still present.
 
-The decision to make first: `SPEC.md:390` records the INV-1 consequence — deletion vectors are
-translated as descriptors, never decoded, because decoding would mean reading data files. Iceberg
-positional deletes are a *separate Parquet file of row positions*, not a bitmap descriptor, so
-Delta↔Iceberg deletion-vector translation may not be expressible without violating INV-1. Resolve
-that before writing code. If it is not expressible, the outcome of this task is #657's flag — warn
-and continue when the target cannot represent the source's deletes — plus a line in `SPEC.md`
-saying so.
+The README once claimed Iceberg "✅ (Equality/Positional)" and Hudi "✅"; both were corrected to `—`
+on 2026-08-21. That made the documentation honest. **It did not change the behavior**, and honest
+documentation is not a substitute for a tool that declines to do the thing it cannot do.
+
+### The same defect exists in Java XTable, demonstrated
+
+The session working on upstream PR #897 reproduced it end to end on 2026-08-22, and the shape is
+worth recording because it is the oracle this repository should copy:
+
+- 1000 rows, `delta.enableDeletionVectors=true`, sync DELTA→ICEBERG. Iceberg snapshot reports
+  `total-records=1000`, 4 data files, 0 delete files. Correct.
+- `DELETE FROM ... WHERE id < 100`. Delta now reads 900 rows; one `deletion_vector_*.bin` on disk.
+- Incremental sync reports **"Sync is successful"**, advances `sourceIdentifier`, writes a new
+  Iceberg snapshot — still `total-records=1000`, `total-delete-files=0`.
+- A **pyiceberg** scan of the result returns 1000 rows with all 100 deleted ids present.
+
+The conclusion held because the oracle was an independent reader, not the tool's own log. No
+assertion about XTable made using XTable could have found this.
+
+### polytable's mechanism differs, and the difference is not an improvement
+
+Java cancels a `RemoveFile(old)` + `AddFile(same path, with DV)` pair out of both maps, since at
+file level nothing changed. polytable has **no cancel-out**: `GetTableChangeForCommit`
+(`pkg/formats/delta/source.go:381-396`) appends every `Remove` to `removed` and every `Add` to
+`added` with no pairing step, so the same commit surfaces as a removal and an addition of the same
+path. Re-adding the file re-adds every row in it, so the target ends up equally wrong by a different
+route. **Do not cite polytable as the better-behaved implementation.**
+
+### The design question that has to be settled first
+
+`SPEC.md:390` records INV-1: deletion vectors are translated as *descriptors* and never decoded,
+because decoding means reading data files rather than metadata. An Iceberg positional delete is a
+**separate Parquet file of row positions**, not a bitmap descriptor. Materialising one from a Delta
+deletion vector means knowing which row positions the bitmap marks, which means reading the data
+file.
+
+So Delta→Iceberg deletion-vector translation may be **inexpressible without violating INV-1**, and
+INV-1 is not an implementation detail — it is why polytable is a metadata translator with a small
+binary and millisecond startup rather than a query engine.
+
+Two facts bound the decision:
+
+- **It is possible.** Microsoft extended XTable to convert Delta deletion vectors into Iceberg
+  positional deletes for Fabric's virtualization, which is documented on their side. Fabric's
+  Iceberg output carries `XTABLE_METADATA`, so it is genuinely XTable underneath. Whatever they do,
+  they must be reading data files to materialise row positions.
+- **Upstream has not.** #339 is the epic, with #343–#348 splitting read and write per format, #640
+  for the snapshot case, and PR #661 open since March 2025. Open since 2024 and unimplemented.
+  Whether that is neglect or a deliberate refusal to cross the same line is not recorded.
+
+### Three outcomes, and only one of them is cheap
+
+1. **Refuse and say so.** Detect a deletion vector the target cannot represent, and fail the sync
+   with an error naming the file and the reason. Safe, honest, and small. Breaks anyone currently
+   getting silently-wrong output, which is the point.
+2. **Warn and continue.** Upstream #657's flag. Preserves current behavior for people who know what
+   they are getting. Weaker: a warning in a log is not seen by whoever queries the table a week
+   later, and the table itself carries no marker.
+3. **Translate.** Requires reading data files, so requires reopening INV-1 — a decision about what
+   polytable *is*, not about deletion vectors.
+
+**Option 1 is the recommended default**, with the target-side capability check written so that
+option 3 can be added later without changing the call sites. Note that Delta→Delta and Delta→Hudi
+have different answers from Delta→Iceberg, so the check belongs on the target, not in the source.
+
+### Acceptance
+
+- A Delta table with a deletion vector, synced to Iceberg, either produces a target whose row count
+  matches the source **or** fails with an error naming the deletion vector. It must not report
+  success and produce a table with the deleted rows present.
+- A fixture with a real deletion vector is committed. delta-rs `DeltaTable.delete()` rewrites files
+  rather than writing deletion vectors by default, so generating one needs
+  `delta.enableDeletionVectors=true` and a writer that honours it — establish which, and record the
+  recipe next to the fixture, because the next person will hit the same wall.
+- Verification uses an **independent reader** — pyiceberg for Iceberg output, delta-rs for Delta —
+  and asserts the row count and the absence of the deleted ids. A test that asks polytable whether
+  polytable is correct does not close this task.
+- `SPEC.md` records the decision and its reason, whichever outcome is chosen.
+
+**Commit:** `fix: refuse to sync a deletion vector the target cannot represent`
 
 ## T25 — Audit upstream bug fixes merged before the port started
 
