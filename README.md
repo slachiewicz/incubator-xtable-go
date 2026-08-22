@@ -233,6 +233,19 @@ make lint
 
 ---
 
+## 📚 Guides
+
+Step-by-step guides:
+- 🚀 [Create your first interoperable table](docs/how-to.md) — Delta → Iceberg + Hudi locally and on S3/MinIO, verified with DuckDB
+- 🗄️ [Sync to the AWS Glue Data Catalog](docs/glue-catalog.md) — registration, table discovery, and source resolution
+- 🧊 [Sync to an Iceberg REST catalog](docs/iceberg-rest-catalog.md) — Nessie, Polaris, Unity Catalog
+- ☁️ [Cloud storage](docs/cloud-storage.md) — S3 credentials and IAM, MinIO and S3-compatible stores, GCS/Azure status
+- 🔍 [Query a synced table](docs/query-engines.md) — DuckDB (verified), Spark, Trino, Athena, Redshift, BigQuery, Snowflake, StarRocks, Fabric
+- ⚖️ [Features and limitations](docs/features-and-limitations.md) — the honest capability reference and known issues
+- 🧪 [How polytable is tested](docs/testing.md) — foreign fixtures, engine verification, and the coverage bar
+
+---
+
 ## 🏛️ Architecture & Specifications
 
 For detailed architectural diagrams, domain models, and conversion invariants, refer to:
