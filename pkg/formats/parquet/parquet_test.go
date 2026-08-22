@@ -169,7 +169,8 @@ func TestParquetSchemaToModel_LogicalTypes(t *testing.T) {
 			t.Parallel()
 
 			schema := parquet.NewSchema("root", parquet.Group{"col": tt.node})
-			got := pqformat.ParquetSchemaToModel(schema)
+			got, err := pqformat.ParquetSchemaToModel(schema)
+			require.NoError(t, err)
 			require.NotNil(t, got)
 			require.Len(t, got.Fields, 1)
 

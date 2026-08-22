@@ -108,6 +108,11 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 			latestModTime = modTimeMs
 		}
 
+		footerSchema, err := ParquetSchemaToModel(pfObj.Schema())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read the schema of %s: %w", pf.Path, err)
+		}
+
 		crawled = append(crawled, &crawledFile{
 			info:       pf,
 			numRows:    pfObj.NumRows(),
@@ -117,7 +122,7 @@ func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error
 		footers = append(footers, FooterSchema{
 			Path:    pf.Path,
 			ModTime: pf.ModTime,
-			Schema:  ParquetSchemaToModel(pfObj.Schema()),
+			Schema:  footerSchema,
 		})
 	}
 

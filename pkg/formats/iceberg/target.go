@@ -35,6 +35,15 @@ import (
 // manifest and manifest-list schemas in manifest.go describe.
 const icebergFormatVersion = 2
 
+// maxReadableFormatVersion is the highest Iceberg format-version this adapter's source can read.
+// It is a distinct constant from icebergFormatVersion — "the version we write" and "the highest
+// version we can read" are different guarantees, even though today they happen to be the same
+// number. Version 3 adds row lineage (next-row-id, per-row _row_id), deletion vectors carried as
+// Puffin blobs, and new primitive types that this reader does not implement; see docs/improvement-plan.md
+// T65 (and T24's still-open INV-1 question, which the same Puffin-blob handling depends on).
+// Source.readMetadata refuses anything above this rather than silently misreading it as v2.
+const maxReadableFormatVersion = 2
+
 // Target implements spi.ConversionTarget for Apache Iceberg tables.
 type Target struct {
 	storage     io.Storage

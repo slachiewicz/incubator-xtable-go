@@ -123,6 +123,16 @@ func (s *Source) readMetadata(ctx context.Context, filePath string) (*TableMetad
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("failed to parse iceberg metadata JSON: %w", err)
 	}
+
+	// format-version is mandatory in the specification; an absent field decodes to Go's zero value
+	// (0), which is indistinguishable from a malformed one without this check — left unchecked, both
+	// were silently treated as version 2 and read anyway.
+	if meta.FormatVersion < 1 {
+		return nil, fmt.Errorf("iceberg metadata %s: format-version %d is missing or invalid (must be >= 1)", filePath, meta.FormatVersion)
+	}
+	if meta.FormatVersion > maxReadableFormatVersion {
+		return nil, fmt.Errorf("iceberg metadata %s: format-version %d exceeds the highest version this reader supports (%d)", filePath, meta.FormatVersion, maxReadableFormatVersion)
+	}
 	return &meta, nil
 }
 

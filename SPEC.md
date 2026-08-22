@@ -191,7 +191,18 @@ type Storage interface {
 - **Incremental Sync**: Single-pass log walk (one read per commit, schema rebuilt only on `metaData` actions). Sync instants are derived from version order — strictly increasing even for same-millisecond commits, backwards clock skew, or commits without a `commitInfo` action — so `instant > fromInstant` selects exactly the versions after the last synced one.
 
 ### 6.2 Apache Iceberg Adapter (`pkg/formats/iceberg`)
-- **Metadata Specification**: Iceberg Table Metadata v2/v3 (`metadata/v{N}.metadata.json`).
+- **Metadata Specification**: Iceberg Table Metadata (`metadata/v{N}.metadata.json`).
+- **Format Version**: `format-version` 1 and 2 pass the read gate (`maxReadableFormatVersion`,
+  `target.go`); a metadata file above that, or missing/zero/negative, is refused at every read entry
+  point (`GetCurrentTable`, `GetTable`, `GetCurrentSnapshot`, `GetTableChangeForCommit`,
+  `GetChangesSince`, `IsIncrementalSyncSafeFrom`) rather than being misread as v2 — v3 adds row
+  lineage, Puffin-blob deletion vectors and new primitive types this reader does not implement. The
+  target always writes 2 (`icebergFormatVersion`, `target.go`), which is the version exercised
+  end to end against the pyiceberg fixture and this adapter's own round trip; v1's manifest shape
+  (no `content` or `sequence_number` fields) is tolerated by the Avro field readers, which default
+  a missing field rather than erroring, but no v1 fixture exercises it. See
+  `docs/improvement-plan.md` T65. Supporting v3 reads is blocked on the same open question as T24's
+  deletion-vector handling (INV-1), not attempted here.
 - **Manifests**: Avro OCF manifest lists (`snap-<snapshot_id>-<attempt>-<uuid>.avro`) and manifest
   files (`<uuid>-m0.avro`), as the Iceberg specification requires. Earlier revisions of this
   document said JSON; that was true of the implementation until it was corrected, and no engine

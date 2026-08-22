@@ -1865,7 +1865,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38, T39, T41–T44, T46–T50 from the roadmap, and T57, T61, T63, T64, T65 |
+| 🎯 Open queue | T24, T30, T34, T37, T38, T39, T41–T44, T46–T50 from the roadmap, and T57, T61, T65 (v3 support), T67 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -3927,6 +3927,58 @@ reported 6 rows, sum 212.0 and 4 distinct regions — identical to what Snowflak
 the source table.
 
 **Commit:** `fix: write partitionColumns as an array, never null`
+
+---
+
+## T67 — Relativization does not know `.dfs.` and `.blob.` are the same store
+
+Found by converting a Snowflake Iceberg table on Azure to Delta and reading the result with DuckDB.
+
+Snowflake writes its Iceberg locations against the **blob** endpoint:
+`azure://<account>.blob.core.windows.net/<container>/...`. The sync was addressed against the
+**dfs** endpoint, `abfss://<container>@<account>.dfs.core.windows.net/...`, which is the same store —
+ADLS Gen2 serves both, and `pkg/io/azure.go` itself swaps `.dfs.` for `.blob.` when building its
+service URL, with a comment explaining they are the same account.
+
+`RelativizePath` compares strings. The data file path starts `.blob.`, the table root starts
+`.dfs.`, the prefix does not match, so nothing is stripped and the **absolute** URI is written into
+the Delta log's `add.path`:
+
+```
+add.path = abfss://<container>@<account>.blob.core.windows.net/<prefix>/data/<file>.parquet
+```
+
+delta-kernel-rs then resolves it relative to the table root and asks for a path with the root
+prepended to the absolute URI:
+
+```
+IO Error: ... open file 'abfss://<c>@<a>.dfs.core.windows.net/<prefix>/abfss://<c>@<a>.blob.core.windows.net/<prefix>/data/<file>.parquet'
+BlobNotFound
+```
+
+So the table is unreadable by DuckDB, while polytable reads it back happily — the same shape as T66,
+and found the same way.
+
+**Note what is not claimed.** Whether the Delta protocol permits an absolute `add.path` at all is a
+separate question this task does not need to answer: the file **is** under the table root, so a
+relative path is both correct and what every writer emits. The defect is failing to recognise that.
+
+**Scope.** Teach path relativization that a set of host spellings denote one store, at minimum
+`.dfs.` and `.blob.` for `*.core.windows.net`, and the OneLake pair `onelake.dfs.fabric.microsoft.com`
+and `onelake.blob.fabric.microsoft.com` that `pkg/io/azure.go` already documents. Check whether the
+same class exists elsewhere: S3 virtual-hosted versus path-style, and `gs://` versus
+`storage.googleapis.com`, are the obvious candidates and neither has been tested.
+
+**Do not fix it by rewriting every path to one spelling on read.** That hides the mismatch rather
+than resolving it and would rewrite paths a source deliberately wrote. Normalise for **comparison**
+only.
+
+**Acceptance:** an Iceberg table whose file locations use the blob endpoint, synced from a dfs base
+path, produces a Delta log with relative `add.path` entries; DuckDB's `delta_scan` reads the result;
+a table genuinely outside its root still gets an absolute path; and the equivalent S3 and GCS
+spellings are either covered or explicitly recorded as untested.
+
+**Commit:** `fix: treat dfs and blob endpoints as one store when relativizing`
 
 ---
 

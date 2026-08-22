@@ -162,7 +162,8 @@ func TestParquet_ColumnStatsFromFooter(t *testing.T) {
 			t.Parallel()
 
 			file := openStatsFile(t, tt.records, tt.options...)
-			schema := pqformat.ParquetSchemaToModel(file.Schema())
+			schema, err := pqformat.ParquetSchemaToModel(file.Schema())
+			require.NoError(t, err)
 			require.NotNil(t, schema)
 
 			stats := pqformat.ColumnStatsFromFooter(file, schema)
@@ -180,7 +181,9 @@ func TestParquet_ColumnStatsFromFooterNilInputs(t *testing.T) {
 	t.Parallel()
 
 	file := openStatsFile(t, []StatsRecord{{ID: 1}})
-	assert.Nil(t, pqformat.ColumnStatsFromFooter(nil, pqformat.ParquetSchemaToModel(file.Schema())))
+	schema, err := pqformat.ParquetSchemaToModel(file.Schema())
+	require.NoError(t, err)
+	assert.Nil(t, pqformat.ColumnStatsFromFooter(nil, schema))
 	assert.Nil(t, pqformat.ColumnStatsFromFooter(file, nil))
 }
 
