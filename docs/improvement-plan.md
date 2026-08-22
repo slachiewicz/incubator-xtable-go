@@ -1150,22 +1150,28 @@ route. **Do not cite polytable as the better-behaved implementation.**
 
 ### The design question that has to be settled first
 
-`SPEC.md:390` records INV-1: deletion vectors are translated as *descriptors* and never decoded,
-because decoding means reading data files rather than metadata. An Iceberg positional delete is a
-**separate Parquet file of row positions**, not a bitmap descriptor. Materialising one from a Delta
-deletion vector means knowing which row positions the bitmap marks, which means reading the data
-file.
+**An earlier version of this task argued that translation was inexpressible without violating
+INV-1. That argument was wrong, and it is corrected here rather than quietly removed**, because it
+was repeated to another session and nearly published.
 
-So Delta→Iceberg deletion-vector translation may be **inexpressible without violating INV-1**, and
-INV-1 is not an implementation detail — it is why polytable is a metadata translator with a small
-binary and millisecond startup rather than a query engine.
+A Delta deletion vector is a roaring bitmap of **row positions**, stored in its own small side file
+(`deletion_vector_*.bin`) beside the data — not inside the data file. Decoding it means reading that
+side file, which is metadata-sized. Iceberg positional deletes are a list of positions. So the
+transform is side-file to side-file, and **nothing about it requires reading data files**. Upstream's
+own merged design says so: RFC-2 (`rfc/rfc-2`, PR #634, merged 2025-03-03) specifies the conversion
+and costs it as "proportional to the number of records affected by the deletion operations, and not
+the size of metadata or number of files".
+
+INV-1 therefore does **not** forbid this. Not decoding remains a defensible *choice* — it keeps the
+translator cheap — but it must be stated as a choice. `SPEC.md` §10.4 has been corrected the same
+way.
 
 Two facts bound the decision:
 
-- **It is possible.** Microsoft extended XTable to convert Delta deletion vectors into Iceberg
-  positional deletes for Fabric's virtualization, which is documented on their side. Fabric's
-  Iceberg output carries `XTABLE_METADATA`, so it is genuinely XTable underneath. Whatever they do,
-  they must be reading data files to materialise row positions.
+- **Upstream already designed it.** RFC-2 is merged and specifies the conversion, so this is not a
+  question of feasibility. The claim previously made here — that Microsoft extended XTable for
+  Fabric and therefore must be reading data files — was doubly unsound: the reading-data-files half
+  is false as above, and the Fabric half rests on weaker evidence than stated. See T30's note.
 - **Upstream has not.** #339 is the epic, with #343–#348 splitting read and write per format, #640
   for the snapshot case, and PR #661 open since March 2025. Open since 2024 and unimplemented.
   Whether that is neglect or a deliberate refusal to cross the same line is not recorded.
@@ -3631,6 +3637,14 @@ re-authenticating today.
 
 **Related but distinct:** T59's SigV4 and OAuth2 work is about authenticating *to the catalog*. This
 is about the catalog authenticating you *to the storage*. Do not conflate them.
+
+**A note on the Fabric evidence, recorded because it was overstated.** This register and several
+messages have said that Fabric's Iceberg responses carry `XTABLE_METADATA` with
+`sourceTableFormat: DELTA`, described as observed. It was **read from Microsoft's documentation
+sample** (`learn.microsoft.com/fabric/onelake/table-apis/iceberg-table-apis-get-started`), not from
+a live Fabric call — no Fabric workspace has ever been reached from here, because the tenant has
+Fabric disabled (T52). It is good evidence, but it is a documentation sample, and any argument
+resting on it should say so.
 
 ### Observed, not inferred: Snowflake
 

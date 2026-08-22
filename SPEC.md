@@ -387,5 +387,5 @@ built but not exercised in CI.
 
 | Item | Reason |
 | :--- | :--- |
-| Decoding deletion-vector bitmaps | Would require reading data files, violating INV-1. Deletion vectors are translated as descriptors — path, offset, size, cardinality — and the bitmap payload is passed through untouched. |
+| Decoding deletion-vector bitmaps | A **choice**, not a limit. Deletion vectors are translated as descriptors — path, offset, size, cardinality — and the bitmap payload is passed through untouched. The earlier reason given here, that decoding "would require reading data files, violating INV-1", was **wrong**: a Delta deletion vector is a roaring bitmap of row positions in its own small side file next to the data, so decoding reads that side file and never the data. Upstream's merged RFC-2 specifies the conversion and costs it as proportional to the number of rows deleted. INV-1 is not what stands in the way; the cost of the work and the T24 decision are. |
 | Renaming stuttering identifiers (`delta.DeltaCommit`, `catalog.CatalogType`) | A breaking public API change; `revive`'s stuttering check is disabled deliberately rather than obeyed. |
