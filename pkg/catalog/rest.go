@@ -50,17 +50,29 @@ func NewIcebergRESTCatalogClient(cfg *Config) (*IcebergRESTCatalogClient, error)
 		return nil, fmt.Errorf("URI is required for Iceberg REST catalog")
 	}
 
-	token := ""
-	if cfg.Properties != nil {
-		token = cfg.Properties["token"]
+	client, token, err := restHTTPClient(cfg, 30*time.Second)
+	if err != nil {
+		return nil, err
 	}
 
 	return &IcebergRESTCatalogClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: client,
 		baseURI:    strings.TrimSuffix(cfg.URI, "/"),
 		namespace:  cfg.DatabaseName,
 		authToken:  token,
 	}, nil
+}
+
+// NewIcebergRESTCatalogClientWithHTTPClient creates a client using a caller-supplied HTTP client.
+// This mirrors NewIcebergRESTConversionSourceWithClient in rest_conversion.go; that seam existed
+// for the read side only until now, with no equivalent for the write side.
+func NewIcebergRESTCatalogClientWithHTTPClient(client *http.Client, baseURI, namespace, authToken string) *IcebergRESTCatalogClient {
+	return &IcebergRESTCatalogClient{
+		httpClient: client,
+		baseURI:    strings.TrimSuffix(baseURI, "/"),
+		namespace:  namespace,
+		authToken:  authToken,
+	}
 }
 
 // CatalogType returns ICEBERG_REST.

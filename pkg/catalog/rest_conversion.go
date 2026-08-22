@@ -60,13 +60,13 @@ func NewIcebergRESTConversionSource(cfg *Config) (*IcebergRESTConversionSource, 
 		return nil, fmt.Errorf("URI is required for Iceberg REST catalog")
 	}
 
-	token := ""
-	if cfg.Properties != nil {
-		token = cfg.Properties["token"]
+	client, token, err := restHTTPClient(cfg, 30*time.Second)
+	if err != nil {
+		return nil, err
 	}
 
 	return &IcebergRESTConversionSource{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: client,
 		baseURI:    strings.TrimSuffix(cfg.URI, "/"),
 		namespace:  cfg.DatabaseName,
 		authToken:  token,

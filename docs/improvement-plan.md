@@ -1783,12 +1783,12 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T52 |
-| ⚠️ Landed, unverified against the real service | T51 (Azure storage — never run against Azurite or Azure); the task names its unmet criteria |
+| 🎯 Open queue | T24, T30, T34, T37, and T38–T50 from the roadmap |
+| ⚠️ Landed, unverified against the real service | T51 (Azure storage — never run against Azurite or Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
-**Picking up the queue.** **T52** is next — it is what makes T51 reachable from a Fabric workspace.
-T51 itself needs an environment rather than more work: a Docker host runs
-`test/dockertest_azurite_test.go`. Otherwise by value: **T40** first — the Iceberg
+**Picking up the queue.** T51 and T52 have landed as code and need an environment, not more work:
+a Docker host runs `test/dockertest_azurite_test.go`, and an Azure subscription plus a Fabric
+workspace closes the rest. Otherwise by value: **T40** first — the Iceberg
 source has no incremental sync at all, which is a correctness defect rather than a gap — then T45
 (the Parquet source crawls other formats' metadata as data), then T37's 1.x timeline, then T34.
 
@@ -2454,7 +2454,7 @@ Closing this to ✅ needs a Docker host for item 1 and an Azure subscription for
 
 ---
 
-## T52 — OneLake and Fabric as a catalog
+## T52 — OneLake and Fabric as a catalog ⚠️ AUTH LANDED, NO FABRIC WORKSPACE REACHED
 
 Blocked on T51 for data access, and separate work: OneLake's read API is Iceberg-REST compatible, so
 `pkg/catalog/rest.go` is the entry point rather than a new client — but the authentication and
@@ -2487,6 +2487,68 @@ exists as a distinct type or the task records why `ICEBERG_REST` with properties
 spelling; `docs/iceberg-rest-catalog.md` and `docs/cloud-storage.md` state which is supported.
 
 **Commit:** `feat: authenticate the Iceberg REST catalog with Entra ID for OneLake`
+
+### Outcome ⚠️ — the auth gap is closed; the Fabric half is unverified
+
+**No new catalog client, and that was the point.** OneLake's read API is Iceberg-REST compatible, so
+the work was authentication, not a client. `pkg/catalog/rest_auth.go` holds the one decision point,
+`restHTTPClient(cfg, timeout)`, and both REST types call it — `NewIcebergRESTCatalogClient` and
+`NewIcebergRESTConversionSource` no longer each read `Properties["token"]` and build their own
+`http.Client`.
+
+**`ICEBERG_REST` with properties, not a new `CatalogTypeOneLake`** — the task asked for this decision
+to be recorded either way. A distinct type would have duplicated every method to change one header,
+and `CatalogType.Implemented()` would have gained a third case that behaves identically to the
+second. OneLake differs from Polaris or Unity in *how it authenticates*, not in what it serves, and
+authentication is already a per-config concern. Properties: `auth` (empty, `entra`, `entra-id` or
+`azure`), `scope`, and the pre-existing `token`. An unrecognized `auth` value is an error naming what
+was accepted, deliberately: a typo must not silently downgrade a deployment to unauthenticated.
+
+**The transport.** `entraTransport` (`pkg/catalog/entra.go`, `//go:build !js`) refreshes when the
+cached token is empty or expires within five minutes, holds its mutex across the check and refresh
+only — never across `base.RoundTrip` — and **clones the request**, since mutating the caller's
+`*http.Request` violates the `http.RoundTripper` contract. `newEntraHTTPClient` wraps
+`azidentity.NewDefaultAzureCredential`, the single call covering workload identity, managed
+identity, an environment service principal and the Azure CLI.
+`NewEntraHTTPClientWithCredential` is the seam the tests drive without a tenant.
+
+**The asymmetry that shaped the design is gone.** The read side already had
+`NewIcebergRESTConversionSourceWithClient`; the write side had no equivalent, so auth logic would
+have had to be duplicated across both files. `NewIcebergRESTCatalogClientWithHTTPClient` closes it.
+
+**WASM:** `entra_js.go` returns `ErrEntraUnsupported`; `pkg/catalog` still builds for `js/wasm` and
+`GOOS=js GOARCH=wasm go list -deps ./cmd/polytable-wasm | grep -ci azure` is 0.
+
+**What was checked**, all against a fake `azcore.TokenCredential` and `httptest`: the bearer header is
+attached; a still-valid token is reused (two requests, one `GetToken`); a token inside the five-minute
+window is refreshed and the second request carries the new value; a `GetToken` failure surfaces and
+names the scope; the caller's request is not mutated; and `restHTTPClient` covers the static default,
+all three Entra spellings, an unknown value, and a nil `Properties` map. ~20 concurrent requests
+through one client are clean under `-race`, which matters because the cached token is shared mutable
+state. `make check` green.
+
+**Why ⚠️ — three criteria unmet, one of them the headline:**
+
+1. **No Fabric lakehouse table has been resolved or converted.** Everything above is unit-level. The
+   acceptance criterion needs a Fabric workspace, and none was available.
+2. **`DefaultOneLakeScope` is now sourced, not guessed — but still unexercised.** Microsoft's
+   OneLake connection guide states that OneLake accepts tokens in the `Storage` audience only, and
+   `https://storage.azure.com/.default` is the scope that requests that audience, so the default is
+   right by documentation. What has not happened is a single token being presented to a Fabric
+   endpoint. `scope` stays configurable because a non-OneLake REST catalog behind Entra ID may want
+   a different audience.
+
+3. **Listing is still unavailable**, so the acceptance clause "resolves as a conversion source by
+   identifier" is met only for `GetSourceTable`. `docs/iceberg-rest-catalog.md` now documents the
+   `auth`, `token` and `scope` properties, the OneLake mode and this listing limit, which closes
+   the documentation half of the acceptance.
+
+Also still true and not part of this task: `ListTables` yields `ErrCatalogNotImplemented` for REST
+catalogs (`pkg/catalog/rest_conversion.go`), so T23's `--catalog … --database` discovery does not
+reach a OneLake workspace. Whether Fabric supports listing, and whether a workspace maps onto
+`DatabaseName`, stays open.
+
+---
 
 ## Non-goals
 

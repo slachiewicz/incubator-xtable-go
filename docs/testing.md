@@ -68,10 +68,14 @@ self-referential test could see — the register (T28, T29, T31) records them.
 
 ## Container suites
 
-`test/dockertest_minio_matrix_test.go` runs the sync matrix against a real MinIO S3 endpoint, and
+`test/dockertest_minio_matrix_test.go` runs the sync matrix against a real MinIO S3 endpoint,
 `test/dockertest_iceberg_rest_test.go` registers tables in a real Iceberg REST catalog server
-(the `tabulario/iceberg-rest` image). Both start containers via `ory/dockertest` and are skipped
+(the `tabulario/iceberg-rest` image), and `test/dockertest_azurite_test.go` runs the matrix against
+the Azurite Azure Storage emulator. All three start containers via `ory/dockertest` and are skipped
 in `-short` mode.
+
+The Azurite suite has never been executed: it was written without a Docker daemon available. Treat
+its result as unknown rather than passing until someone runs it.
 
 ## The coverage bar
 
@@ -87,7 +91,7 @@ engine diversity, but most fixtures are insert-only; widening the scenario dimen
 
 Tests live in an external `<pkg>_test` package, are table-driven, and everything under `pkg/`
 calls `t.Parallel()` in both the parent test and its subtests. The e2e suites in `test/` do not,
-and the two `dockertest_*` suites must not. `testify` (`assert` + `require`) is the only
+and the three `dockertest_*` suites must not. `testify` (`assert` + `require`) is the only
 assertion library.
 
 ## Benchmarks

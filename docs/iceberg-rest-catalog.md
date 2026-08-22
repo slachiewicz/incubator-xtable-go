@@ -50,6 +50,32 @@ Replace `MY_BEARER_TOKEN` with a token your catalog accepts, or omit the
 exist; polytable creates or updates the table inside it after each successful
 sync.
 
+### Authentication properties
+
+The `properties` block takes three keys:
+
+- **`auth`**: the authentication mode. Omit it, or leave it empty, for the
+  static bearer token in `token`. Set it to `entra`, `entra-id`, or `azure`
+  for Microsoft Entra ID. Any other value fails with an error naming the
+  accepted ones, so a typo cannot silently leave the catalog
+  unauthenticated.
+- **`token`**: a static bearer token, used when `auth` is empty. It never
+  expires from polytable's point of view, so a long-running sync fails when
+  the token does.
+- **`scope`**: the Entra ID scope to request, used when `auth` selects Entra.
+  It defaults to `https://storage.azure.com/.default`, which is the scope that
+  requests the `Storage` audience — the only audience OneLake accepts. Set it
+  for a non-OneLake catalog behind Entra ID that expects a different
+  audience.
+
+With `auth: entra`, polytable acquires the token through
+`DefaultAzureCredential`, which covers workload identity, managed identity, an
+environment service principal, and the Azure CLI, and refreshes it before it
+expires. This path has not been exercised against a live Fabric workspace.
+
+Entra ID authentication is unavailable in the WebAssembly build, which has no
+credential chain; it returns an error saying so.
+
 Register only the `ICEBERG` target in a REST catalog — the protocol carries
 Iceberg metadata, so a Delta Lake or Hudi target has nothing to register there.
 
@@ -80,6 +106,10 @@ usual. Explicitly set dataset fields win over resolved ones.
   token in `properties.token`.
 - Nessie: the Iceberg REST endpoint is served under `/iceberg` on the Nessie
   server, for example `http://localhost:19120/iceberg`.
+- Microsoft OneLake and Fabric: set `auth: entra` and leave `scope` at its
+  default. Listing tables is not available for REST catalogs, so
+  `polytable sync --catalog ... --database ...` does not scan a Fabric
+  workspace.
 
 These endpoint shapes come from the respective vendors' documentation; only the
 `tabulario/iceberg-rest` image is exercised by this repository's integration
