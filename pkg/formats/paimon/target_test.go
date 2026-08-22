@@ -62,6 +62,12 @@ func TestPaimon_TargetCommitSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, syncMetadata)
 	assert.Equal(t, model.TableFormatPaimon, syncMetadata.TargetFormat)
+	assert.Equal(t, "snap1", syncMetadata.SourceIdentifier)
+
+	// T60: every sync must leave both polytable's own flat keys and Java XTable's single
+	// XTABLE_METADATA property behind, or one direction of interop silently regresses.
+	assert.Contains(t, syncMetadata.CustomProperties, model.KeyLastInstantSynced)
+	assert.Contains(t, syncMetadata.CustomProperties, model.KeyXTableMetadata)
 
 	err = target.Close()
 	require.NoError(t, err)
@@ -116,6 +122,8 @@ func TestPaimon_TargetCommitChanges(t *testing.T) {
 	assert.Equal(t, int64(123456789), syncMetadata.LastInstantSynced)
 	assert.Equal(t, model.TableFormatDelta, syncMetadata.SourceFormat)
 	assert.Equal(t, model.TableFormatPaimon, syncMetadata.TargetFormat)
+	assert.Equal(t, "snap2", syncMetadata.SourceIdentifier)
+	assert.Contains(t, syncMetadata.CustomProperties, model.KeyXTableMetadata)
 
 	err = target.Close()
 	require.NoError(t, err)

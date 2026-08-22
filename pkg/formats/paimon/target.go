@@ -80,17 +80,12 @@ func (t *Target) GetTableMetadata(ctx context.Context) (*model.TableSyncMetadata
 		return nil, nil
 	}
 
-	syncMeta := &model.TableSyncMetadata{
-		TargetFormat:     model.TableFormatPaimon,
-		CustomProperties: snap.Properties,
+	syncMeta := model.ReadSyncMetadataFromProperties(snap.Properties)
+	if syncMeta == nil {
+		return nil, nil
 	}
-	if lastInstant, err := strconv.ParseInt(snap.Properties[model.KeyLastInstantSynced], 10, 64); err == nil {
-		syncMeta.LastInstantSynced = lastInstant
-	}
-	if sourceFormat := snap.Properties[model.KeySourceFormat]; sourceFormat != "" {
-		syncMeta.SourceFormat = model.TableFormat(sourceFormat)
-	}
-
+	syncMeta.TargetFormat = model.TableFormatPaimon
+	syncMeta.CustomProperties = snap.Properties
 	return syncMeta, nil
 }
 
@@ -111,7 +106,7 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 		schemaID:   schemaID,
 		added:      snapshot.AllDataFiles(),
 		commitKind: commitKindOverwrite,
-		properties: syncProperties(snapshot.Table.LatestCommitTime, snapshot.Table.TableFormat),
+		properties: syncProperties(snapshot.Table.LatestCommitTime, snapshot.Table.TableFormat, snapshot.SourceIdentifier),
 	})
 }
 
@@ -156,7 +151,7 @@ func (t *Target) CommitChanges(ctx context.Context, changes *model.IncrementalTa
 			added:      added,
 			removed:    removed,
 			commitKind: commitKindAppend,
-			properties: syncProperties(latestSyncInstant, changes.CurrentTable.TableFormat),
+			properties: syncProperties(latestSyncInstant, changes.CurrentTable.TableFormat, change.SourceIdentifier),
 		}); err != nil {
 			return err
 		}
@@ -459,12 +454,12 @@ func fileKey(basePath string, file *model.DataFile) string {
 }
 
 // syncProperties builds the sync metadata a commit embeds in its snapshot properties.
-func syncProperties(lastInstant int64, sourceFormat model.TableFormat) map[string]string {
-	props := map[string]string{
-		model.KeyLastInstantSynced: strconv.FormatInt(lastInstant, 10),
-	}
-	if sourceFormat != "" {
-		props[model.KeySourceFormat] = string(sourceFormat)
-	}
+func syncProperties(lastInstant int64, sourceFormat model.TableFormat, sourceIdentifier string) map[string]string {
+	props := make(map[string]string)
+	model.WriteSyncMetadataProperties(props, &model.TableSyncMetadata{
+		LastInstantSynced: lastInstant,
+		SourceFormat:      sourceFormat,
+		SourceIdentifier:  sourceIdentifier,
+	})
 	return props
 }

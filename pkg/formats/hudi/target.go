@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -61,8 +60,42 @@ func (t *Target) Init(_ context.Context, targetTable *model.Table) error {
 	return nil
 }
 
-// GetTableMetadata retrieves previously saved TableSyncMetadata from hoodie.properties.
+// GetTableMetadata retrieves previously saved TableSyncMetadata. Java XTable's Hudi target
+// (HudiConversionTarget#getExtraMetadata) writes XTABLE_METADATA into the extraMetadata of the
+// latest commit file, not into hoodie.properties, and reads it back from there too -- so that is
+// tried first. polytable's own tables carry the same information (both shapes, see
+// WriteSyncMetadataProperties) in hoodie.properties as well, which is the fallback for a table only
+// polytable has touched or whose latest commit file cannot be read.
+//
+// This only checks the *latest* completed commit's extraMetadata, matching what the Java source
+// reads. Whether Java itself scans further back when the newest commit lacks XTABLE_METADATA (for
+// example, a native Hudi writer committed after a Java XTable sync) was not established from the
+// Java source and is left alone rather than guessed; the fallback to hoodie.properties, or to
+// "no metadata" if that too is absent, makes an unrecognized case a safe full resync rather than a
+// wrong incremental one.
 func (t *Target) GetTableMetadata(ctx context.Context) (*model.TableSyncMetadata, error) {
+	commits, err := t.source.ListCompletedCommits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(commits) > 0 {
+		latest := commits[len(commits)-1]
+		commitFilePath := io.JoinPath(t.targetTable.BasePath, ".hoodie", latest.FileName)
+		if data, readErr := t.storage.Read(ctx, commitFilePath); readErr == nil {
+			var commitMeta HoodieCommitMetadata
+			if json.Unmarshal(data, &commitMeta) == nil && len(commitMeta.ExtraMetadata) > 0 {
+				if syncMeta := model.ReadSyncMetadataFromProperties(commitMeta.ExtraMetadata); syncMeta != nil {
+					syncMeta.TargetFormat = model.TableFormatHudi
+					syncMeta.CustomProperties = commitMeta.ExtraMetadata
+					return syncMeta, nil
+				}
+			}
+		}
+		// A missing, unreadable or metadata-free commit file falls through to hoodie.properties
+		// rather than failing the sync: for a polytable-synced table that file always carries the
+		// same sync state anyway (both are written on every commit).
+	}
+
 	props, err := t.source.ReadProperties(ctx)
 	if err != nil {
 		// A table with no properties yet has no metadata; an unreadable one (a Hudi 1.x table,
@@ -73,19 +106,12 @@ func (t *Target) GetTableMetadata(ctx context.Context) (*model.TableSyncMetadata
 		return nil, err
 	}
 
-	syncMeta := &model.TableSyncMetadata{
-		TargetFormat:     model.TableFormatHudi,
-		CustomProperties: props.Properties,
+	syncMeta := model.ReadSyncMetadataFromProperties(props.Properties)
+	if syncMeta == nil {
+		return nil, nil
 	}
-	if lastInstantStr := props.Get(model.KeyLastInstantSynced); lastInstantStr != "" {
-		if lastInstant, err := strconv.ParseInt(lastInstantStr, 10, 64); err == nil {
-			syncMeta.LastInstantSynced = lastInstant
-		}
-	}
-	if srcFormatStr := props.Get(model.KeySourceFormat); srcFormatStr != "" {
-		syncMeta.SourceFormat = model.TableFormat(srcFormatStr)
-	}
-
+	syncMeta.TargetFormat = model.TableFormatHudi
+	syncMeta.CustomProperties = props.Properties
 	return syncMeta, nil
 }
 
@@ -131,10 +157,16 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 		partitionStats[partPath] = append(partitionStats[partPath], ws)
 	}
 
-	// 4. Build and write Commit Metadata
+	// 4. Build and write Commit Metadata. extraMetadata is where Java XTable's Hudi target stores
+	// XTABLE_METADATA (see GetTableMetadata), so it is written here even though it is also
+	// duplicated into hoodie.properties below for polytable's own read path.
+	syncMeta := &model.TableSyncMetadata{
+		LastInstantSynced: snapshot.Table.LatestCommitTime,
+		SourceFormat:      snapshot.Table.TableFormat,
+		SourceIdentifier:  snapshot.SourceIdentifier,
+	}
 	extraMeta := make(map[string]string)
-	extraMeta[model.KeyLastInstantSynced] = strconv.FormatInt(snapshot.Table.LatestCommitTime, 10)
-	extraMeta[model.KeySourceFormat] = string(snapshot.Table.TableFormat)
+	model.WriteSyncMetadataProperties(extraMeta, syncMeta)
 
 	commitMeta := HoodieCommitMetadata{
 		PartitionToWriteStats: partitionStats,
@@ -172,8 +204,11 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 		props.Set(PropPartitionFields, strings.Join(partFieldNames, ","))
 	}
 	props.Set(PropTableSchema, avroJSON)
-	props.Set(model.KeyLastInstantSynced, strconv.FormatInt(snapshot.Table.LatestCommitTime, 10))
-	props.Set(model.KeySourceFormat, string(snapshot.Table.TableFormat))
+	// Same syncMeta as the commit file's extraMetadata above, duplicated here for polytable's own
+	// GetTableMetadata fallback -- see the comment on that method for why both locations matter.
+	for k, v := range extraMeta {
+		props.Set(k, v)
+	}
 
 	propsFilePath := io.JoinPath(t.targetTable.BasePath, ".hoodie", "hoodie.properties")
 	return t.storage.Write(ctx, propsFilePath, props.Serialize())

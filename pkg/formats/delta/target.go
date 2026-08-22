@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,18 +78,12 @@ func (t *Target) GetTableMetadata(ctx context.Context) (*model.TableSyncMetadata
 
 	for _, a := range commit.Actions {
 		if a.MetaData != nil && a.MetaData.Configuration != nil {
-			syncMeta := &model.TableSyncMetadata{
-				TargetFormat:     model.TableFormatDelta,
-				CustomProperties: a.MetaData.Configuration,
+			syncMeta := model.ReadSyncMetadataFromProperties(a.MetaData.Configuration)
+			if syncMeta == nil {
+				return nil, nil
 			}
-			if lastInstantStr, ok := a.MetaData.Configuration[model.KeyLastInstantSynced]; ok {
-				if lastInstant, err := strconv.ParseInt(lastInstantStr, 10, 64); err == nil {
-					syncMeta.LastInstantSynced = lastInstant
-				}
-			}
-			if srcFormatStr, ok := a.MetaData.Configuration[model.KeySourceFormat]; ok {
-				syncMeta.SourceFormat = model.TableFormat(srcFormatStr)
-			}
+			syncMeta.TargetFormat = model.TableFormatDelta
+			syncMeta.CustomProperties = a.MetaData.Configuration
 			return syncMeta, nil
 		}
 	}
@@ -116,8 +109,11 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 	}
 
 	config := make(map[string]string)
-	config[model.KeyLastInstantSynced] = strconv.FormatInt(snapshot.Table.LatestCommitTime, 10)
-	config[model.KeySourceFormat] = string(snapshot.Table.TableFormat)
+	model.WriteSyncMetadataProperties(config, &model.TableSyncMetadata{
+		LastInstantSynced: snapshot.Table.LatestCommitTime,
+		SourceFormat:      snapshot.Table.TableFormat,
+		SourceIdentifier:  snapshot.SourceIdentifier,
+	})
 
 	now := time.Now().UnixMilli()
 	tableID := uuid.New().String()
@@ -181,7 +177,14 @@ func (t *Target) CommitChanges(ctx context.Context, changes *model.IncrementalTa
 		}
 
 		config := make(map[string]string)
-		config[model.KeyLastInstantSynced] = strconv.FormatInt(change.CommitTime, 10)
+		// SourceFormat and SourceIdentifier are filled in here too -- CommitSnapshot always did, but
+		// the incremental path previously wrote only the instant, leaving KeySourceFormat unset on a
+		// table that had only ever been synced incrementally.
+		model.WriteSyncMetadataProperties(config, &model.TableSyncMetadata{
+			LastInstantSynced: change.CommitTime,
+			SourceFormat:      change.TableAsOfChange.TableFormat,
+			SourceIdentifier:  change.SourceIdentifier,
+		})
 
 		now := time.Now().UnixMilli()
 		var actions []SingleAction

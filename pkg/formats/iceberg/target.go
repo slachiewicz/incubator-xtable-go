@@ -83,19 +83,12 @@ func (t *Target) GetTableMetadata(ctx context.Context) (*model.TableSyncMetadata
 		return nil, nil
 	}
 
-	syncMeta := &model.TableSyncMetadata{
-		TargetFormat:     model.TableFormatIceberg,
-		CustomProperties: meta.Properties,
+	syncMeta := model.ReadSyncMetadataFromProperties(meta.Properties)
+	if syncMeta == nil {
+		return nil, nil
 	}
-	if lastInstantStr, ok := meta.Properties[model.KeyLastInstantSynced]; ok {
-		if lastInstant, err := strconv.ParseInt(lastInstantStr, 10, 64); err == nil {
-			syncMeta.LastInstantSynced = lastInstant
-		}
-	}
-	if srcFormatStr, ok := meta.Properties[model.KeySourceFormat]; ok {
-		syncMeta.SourceFormat = model.TableFormat(srcFormatStr)
-	}
-
+	syncMeta.TargetFormat = model.TableFormatIceberg
+	syncMeta.CustomProperties = meta.Properties
 	return syncMeta, nil
 }
 
@@ -257,8 +250,11 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 			props[k] = v
 		}
 	}
-	props[model.KeyLastInstantSynced] = strconv.FormatInt(snapshot.Table.LatestCommitTime, 10)
-	props[model.KeySourceFormat] = string(snapshot.Table.TableFormat)
+	model.WriteSyncMetadataProperties(props, &model.TableSyncMetadata{
+		LastInstantSynced: snapshot.Table.LatestCommitTime,
+		SourceFormat:      snapshot.Table.TableFormat,
+		SourceIdentifier:  snapshot.SourceIdentifier,
+	})
 
 	// The name mapping is written on every commit rather than once, because the schema it mirrors
 	// is rewritten on every commit too.

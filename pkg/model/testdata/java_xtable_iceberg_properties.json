@@ -1,0 +1,6 @@
+{
+  "write.metadata.delete-after-commit.enabled": "true",
+  "write.data.path": "abfss://xtable-pr897@polytable410464.dfs.core.windows.net/src/delta_small",
+  "XTABLE_METADATA": "{\"lastInstantSynced\":\"2026-08-22T16:10:52Z\",\"instantsToConsiderForNextSync\":[],\"version\":0,\"sourceTableFormat\":\"DELTA\",\"sourceIdentifier\":\"1\"}",
+  "write.parquet.compression-codec": "zstd"
+}

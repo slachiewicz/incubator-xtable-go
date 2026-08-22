@@ -162,6 +162,14 @@ func TestHudi_SnapshotCommitAndRead(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	assert.Equal(t, table.LatestCommitTime, meta.LastInstantSynced)
+	assert.Equal(t, "20260812165200000", meta.SourceIdentifier)
+
+	// T60: every sync must leave both polytable's own flat keys and Java XTable's single
+	// XTABLE_METADATA property behind (here, in the latest commit's extraMetadata, which is where
+	// Java's own Hudi target reads and writes it), or one direction of interop silently regresses.
+	assert.Contains(t, meta.CustomProperties, model.KeyLastInstantSynced)
+	assert.Contains(t, meta.CustomProperties, model.KeySourceFormat)
+	assert.Contains(t, meta.CustomProperties, model.KeyXTableMetadata)
 }
 
 func TestHudi_CrossFormatSync(t *testing.T) {

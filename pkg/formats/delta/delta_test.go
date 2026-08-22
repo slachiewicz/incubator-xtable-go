@@ -136,6 +136,13 @@ func TestDelta_SnapshotCommitAndRead(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, meta)
 	assert.Equal(t, table.LatestCommitTime, meta.LastInstantSynced)
+	assert.Equal(t, "snap-1", meta.SourceIdentifier)
+
+	// T60: every sync must leave both polytable's own flat keys and Java XTable's single
+	// XTABLE_METADATA property behind, or one direction of interop silently regresses.
+	assert.Contains(t, meta.CustomProperties, model.KeyLastInstantSynced)
+	assert.Contains(t, meta.CustomProperties, model.KeySourceFormat)
+	assert.Contains(t, meta.CustomProperties, model.KeyXTableMetadata)
 }
 
 // TestDelta_MetadataCarriesKernelRequiredKeys guards the two keys delta-kernel-rs refuses to read a

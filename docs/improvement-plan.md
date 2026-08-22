@@ -3297,6 +3297,66 @@ the JVM lane in T30 to verify.
 
 **Commit:** `fix: read Java XTable's XTABLE_METADATA sync state`
 
+### Outcome ✅ — both directions read, both shapes written, verified against the live fixture
+
+**Decision: write both shapes**, as this task anticipated. `model.WriteSyncMetadataProperties`
+(`pkg/model/metadata.go`) sets polytable's own flat `xtable_last_instant_synced` /
+`xtable_source_format` keys and Java's single `XTABLE_METADATA` JSON blob on every sync, in every
+target (Delta, Iceberg, Hudi, Paimon). `model.ReadSyncMetadataFromProperties` reads either shape,
+preferring `XTABLE_METADATA` when both are present because it is the richer, canonical one (it
+alone carries `sourceIdentifier` and pending instants) — tested in
+`TestReadSyncMetadataFromProperties/both_present_prefers_XTABLE_METADATA_because_it_is_the_richer_canonical_shape`.
+
+**The instant conversion round-trips without drift.** Java's Jackson (`JavaTimeModule`,
+`WRITE_DATES_AS_TIMESTAMPS=false`) renders a millisecond-precision `Instant` as whole seconds when
+the millisecond component is zero, or exactly 3 fractional digits otherwise —
+`DateTimeFormatterBuilder#appendInstant(-1)`'s fixed-group rule. Go's `time.RFC3339Nano`, formatting
+a `time.UnixMilli(ms).UTC()` value, produces the identical decimal value under its own
+trim-trailing-zeros rule whenever the input is a whole number of milliseconds, so no bespoke
+formatter was needed — `instantToISO8601`/`iso8601ToInstant` in `pkg/model/metadata.go`, round-trip
+covered by `TestSyncMetadataInstantRoundTrip_NoDrift`.
+
+**The remaining fields mapped cleanly, nothing was left unset by guesswork.** `sourceIdentifier`
+turned out to already exist in `model.Snapshot`/`model.TableChange` under that exact name and
+meaning (the source-side commit version/instant) — Java's `TableSyncMetadata.sourceIdentifier` is
+the same value, just also carried into the sync watermark; `model.TableSyncMetadata` grew a field
+for it. `instantsToConsiderForNextSync` has no polytable equivalent (no pending-commit tracking
+exists yet) and is honestly written as an always-present empty JSON array, matching the fixture and
+avoiding a null Java's own `TableFormatSync.isChangeApplicableForLastSyncMetadata` would NPE on.
+`version` is written as the constant `0`, matching Java's `CURRENT_VERSION`, and is read but not
+acted on.
+
+**Malformed `XTABLE_METADATA` falls back to the flat keys** (or to "no metadata" if those are absent
+too) rather than failing the sync — a corrupted copy of the optional, richer property should not be
+worse than never having written it, and `pkg/conversion/controller.go` already refuses to trust a
+non-positive `LastInstantSynced`, so this can never manufacture a zero-instant incremental resume.
+
+**Read-path differences across targets, discovered rather than assumed:** Delta, Iceberg and Paimon
+all keep sync metadata in ordinary table properties, but Hudi does not — Java's own
+`HudiConversionTarget#getExtraMetadata` writes `XTABLE_METADATA` into the *commit file's*
+`extraMetadata`, not into `hoodie.properties`, and reads it back from there. polytable's Hudi target
+previously read only `hoodie.properties`. `GetTableMetadata` now checks the latest commit's
+`extraMetadata` first (where a real Java-Hudi-synced table's state actually lives) and falls back to
+`hoodie.properties` (polytable's own convenience copy, written alongside on every commit). Parquet
+has no equivalent at all: Java XTable does not target Parquet, and polytable's Parquet target
+already serializes the whole `TableSyncMetadata` struct as its own JSON file rather than flat table
+properties, so `XTABLE_METADATA` does not apply there and was left untouched.
+
+**Verified against the live fixture**, not only inferred from the Java source: fetched
+`abfss://xtable-pr897@polytable410464.dfs.core.windows.net/src/delta_small/metadata/v3.metadata.json`
+directly (`az storage fs file download`) and confirmed its `properties` block matches this task's
+evidence exactly, byte for byte. That block, trimmed to the properties relevant here, is committed
+as `pkg/model/testdata/java_xtable_iceberg_properties.json` and exercised by
+`TestReadSyncMetadataFromProperties_JavaFixture` and `TestParseXTableMetadataJSON_RealJavaSample`, so
+the acceptance criterion is pinned by a committed fixture rather than the live copy. A synthetic
+end-to-end case — one Delta commit synced to Iceberg, its target metadata then rewritten to carry
+only `XTABLE_METADATA` (no flat keys at all) — reports `NO_OP` on the next sync
+(`TestController_RecognizesJavaOnlyShapedSyncState`, `pkg/conversion/t60_test.go`).
+
+**Not verified: the reverse direction.** Java recognizing a polytable-synced table still needs the
+JVM lane in T30; this task only confirmed polytable reads Java's shape, and that Java's own round
+trip on its own tables works (a third sync of an unchanged source produced no new metadata version).
+
 ---
 
 ## T61 — The catalog's `namespace-separator` is ignored
