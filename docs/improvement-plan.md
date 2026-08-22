@@ -1778,7 +1778,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T54 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
@@ -2631,6 +2631,63 @@ attempt against a read-only catalog fails with a message naming that as the reas
 needs a Fabric workspace — see `docs/azure-test-environment.md`.
 
 **Commit:** `fix: negotiate the Iceberg REST catalog prefix before addressing tables`
+
+---
+
+## T54 — ADLS Gen2 directories are reported as files ✅ COMPLETED
+
+Found while planning the Azure test work, by reasoning about what the emulator cannot cover rather
+than by a failing test — which is the point: **no test in this repository can catch it**, because
+Azurite has no hierarchical namespace.
+
+`AzureStorage.List` (`pkg/io/azure.go`) sets `IsDir: strings.HasSuffix(name, "/")`. That is the
+Blob Storage convention, where a directory is not an object and appears only as a name prefix. On an
+**ADLS Gen2 account — one with the hierarchical namespace enabled, which is what an `abfss://` path
+means and what `docs/azure-test-environment.md` provisions** — directories are real objects, and
+`NewListBlobsFlatPager` returns them as blob items whose names do not end in `/`. Every directory on
+a real ADLS Gen2 account is therefore reported as a zero-byte file.
+
+The SDK carries the signal twice, and both are in `azblob@v1.8.0`'s
+`internal/generated/zz_models.go`: `BlobItem.Properties.ResourceType` is `"directory"`, and
+`BlobItem.Metadata["hdi_isfolder"]` is `"true"`. The second is only populated when the listing asks
+for metadata, which the current call does not.
+
+**Why it has not bitten yet, and why that is not reassuring.** `pkg/formats/parquet/source.go:185`
+filters on a `.parquet` suffix, and the Delta and Hudi listings filter on their own suffixes, so a
+directory usually falls out on its name rather than on `IsDir`. The exposure is a directory whose
+name matches one of those filters, and T45 — which will replace suffix filtering with proper
+metadata-directory exclusion — makes `IsDir` load-bearing rather than incidental.
+
+**Acceptance:** an item carrying `ResourceType: "directory"`, one carrying only `hdi_isfolder`, and
+one with a trailing slash are all reported as directories; an ordinary blob is not; the check is
+nil-safe on `Properties`, `Metadata` and the `*string` values; the Azurite suite still passes,
+proving the Blob-convention path is unchanged.
+
+**Commit:** `fix: report ADLS Gen2 directories as directories`
+
+### Outcome ✅
+
+`isDirectory(name, item)` in `pkg/io/azure.go` replaces the trailing-slash test, checking
+`Properties.ResourceType == "directory"` and `Metadata["hdi_isfolder"] == "true"` (both
+case-insensitively and nil-safe) before falling back to the Blob-Storage convention, and `List` now
+sets `Include: azblob.ListBlobsInclude{Metadata: true}` — without which the second signal is never
+populated. The helper takes `*container.BlobItem`: `azblob` does not re-export `BlobItem` at the top
+level, only `container.BlobItem`.
+
+**The test is proven non-vacuous**, which matters more than usual here because no emulator can
+exercise the path. `pkg/io/azure_list_test.go` drives `List` against an `httptest` server returning
+a hand-written Azure `ListBlobs` XML body, with five cases: a directory by `ResourceType`, one by
+`hdi_isfolder` alone, one by trailing slash, an ordinary blob, and one with no `<Properties>`
+element at all. Stashing just the `azure.go` change makes exactly the two ADLS Gen2 subtests fail
+and the other three pass; restoring it makes all five pass.
+
+One branch is deliberately untested: a nil `*string` inside `Metadata`. The SDK's own
+`additionalProperties.UnmarshalXML` always wraps values with `to.Ptr`, so it cannot produce one —
+the guard is defensive against a hand-constructed item, and the test says so rather than contorting
+to reach it.
+
+Verified: `go test -race ./pkg/io/` clean, `golangci-lint` 0 issues, `js/wasm` build clean, and the
+Azurite suite still passes — the Blob-convention path is unchanged.
 
 ---
 

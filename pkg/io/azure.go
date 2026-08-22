@@ -32,6 +32,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
 )
 
 // AzureStorage provides a zero-JVM native Azure Blob Storage implementation, reached through
@@ -213,6 +214,9 @@ func (s *AzureStorage) List(ctx context.Context, prefix string) ([]FileInfo, err
 	var results []FileInfo
 	pager := s.client.NewListBlobsFlatPager(container, &azblob.ListBlobsFlatOptions{
 		Prefix: &blobPath,
+		// Metadata must be requested explicitly: it is how isDirectory recognizes an ADLS Gen2
+		// directory that carries hdi_isfolder instead of a ResourceType.
+		Include: azblob.ListBlobsInclude{Metadata: true},
 	})
 
 	for pager.More() {
@@ -241,12 +245,34 @@ func (s *AzureStorage) List(ctx context.Context, prefix string) ([]FileInfo, err
 				Path:    fullPath,
 				Size:    size,
 				ModTime: modTime,
-				IsDir:   strings.HasSuffix(name, "/"),
+				IsDir:   isDirectory(name, item),
 			})
 		}
 	}
 
 	return results, nil
+}
+
+// isDirectory reports whether item represents a directory rather than a data file. Three checks,
+// not one: this code runs against both a flat Blob Storage account and an ADLS Gen2 account (a
+// storage account with the hierarchical namespace enabled, which is what an abfss:// URI implies),
+// and the two disagree about what a directory looks like. On ADLS Gen2 a directory is a real
+// object, returned with Properties.ResourceType set to "directory" or, on older behavior,
+// identified only by the hdi_isfolder metadata key — metadata is present here only because List
+// asks for it. On plain Blob Storage there is no such object at all; a "directory" is inferred
+// from a trailing slash on the name, the long-standing convention. Azurite, used by this
+// package's dockertest suite, implements neither ADLS Gen2 signal, so that suite exercises only
+// the trailing-slash path; the two ADLS Gen2 checks are covered instead by a unit test that feeds
+// List a hand-written ListBlobs response over httptest.
+func isDirectory(name string, item *container.BlobItem) bool {
+	if item.Properties != nil && item.Properties.ResourceType != nil &&
+		strings.EqualFold(*item.Properties.ResourceType, "directory") {
+		return true
+	}
+	if v, ok := item.Metadata["hdi_isfolder"]; ok && v != nil && strings.EqualFold(*v, "true") {
+		return true
+	}
+	return strings.HasSuffix(name, "/")
 }
 
 // Exists checks if a blob exists in Azure Blob Storage.
