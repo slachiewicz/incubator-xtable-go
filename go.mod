@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.3
 	github.com/aws/smithy-go v1.27.8
 	github.com/google/uuid v1.6.0
-	github.com/hamba/avro/v2 v2.31.0
+	github.com/iskorotkov/avro/v2 v2.34.0 // maintained fork of archived hamba/avro; fixes GO-2026-5046/5047/5048
 	github.com/ory/dockertest/v3 v3.12.0
 	github.com/parquet-go/parquet-go v0.32.0
 	github.com/spf13/cobra v1.10.2

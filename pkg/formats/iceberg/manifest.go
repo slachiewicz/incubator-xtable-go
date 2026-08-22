@@ -39,8 +39,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hamba/avro/v2"
-	"github.com/hamba/avro/v2/ocf"
+	"github.com/iskorotkov/avro/v2"
+	"github.com/iskorotkov/avro/v2/ocf"
 
 	"github.com/slachiewicz/polytable/pkg/model"
 )
