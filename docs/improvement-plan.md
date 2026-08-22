@@ -3232,8 +3232,21 @@ returns 401 unauthenticated and no static token was supplied, so the exchange de
 its log shows the token request. Since **Snowflake Open Catalog is Polaris** — its endpoint path is
 literally `/polaris/api/catalog` — this covers the protocol Snowflake serves.
 
-**Unmet:** that run was manual. The dockertest suite this task asks for does not exist, so nothing
-stops the behavior regressing. **Snowflake itself is unreached** — no account — so its hostname
+**Now pinned** by `test/dockertest_polaris_test.go`, which boots `apache/polaris:latest` and drives
+the real thing. Two of its subtests matter more than the happy path: a wrong secret must fail with a
+*named* authentication error and yield no identifiers, since a test that only proves success passes
+equally against an auth path that silently degrades; and the prefixed path must appear in a recorded
+request while the unprefixed form never does.
+
+Two facts the suite establishes that the manual run did not. Creating a namespace returns **200**,
+not the 201 that catalog creation returns. And a full round trip through the catalog **cannot** be
+tested this way: Polaris's INTERNAL catalog tries to resolve an AWS region to write the initial
+metadata file under the dummy `s3://` location and fails with a 500 naming the region-provider
+chain. Supplying `AWS_REGION` only moves the failure to `AssumeRole` against the dummy role, so the
+subtest skips with that reason stated rather than being weakened. **Its read-back assertions have
+therefore never executed** — treat them as unwritten until real storage backs a Polaris container.
+
+**Unmet:** **Snowflake itself is unreached** — no account — so its hostname
 handling, its `/v1/config`, and any auth it layers on top are assumed by software identity rather
 than verified. `docs/snowflake.md` says so.
 
