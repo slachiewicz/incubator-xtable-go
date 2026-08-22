@@ -22,9 +22,10 @@
 This page sets direction; the execution queue with acceptance criteria stays in
 [the improvement plan](improvement-plan.md), and the upstream facts this
 direction rests on are in [the upstream watch](upstream-watch.md), dated
-2026-08-22. As of 2026-08-22 every item below is scheduled there as a numbered
-task — T38–T52 — so this page states why the work matters and the plan states
-what "done" means for it. Positioning in one sentence: upstream Java XTable is spending its
+2026-08-22. As of 2026-08-22 every actionable item below is scheduled there as
+a numbered task — T38–T52 — so this page states why the work matters and the
+plan states what "done" means for it. The last two sections are deliberately
+not tasks. Positioning in one sentence: upstream Java XTable is spending its
 next two releases on JVM-toolchain migration (Delta Kernel, Spark 4/Scala
 2.13/Java 17) while discussing a Spark-free runtime — converging on polytable's
 founding premise — so polytable's window is to close format-version and
@@ -152,5 +153,5 @@ DuckLake (#726), Parquet Variant and geospatial types (#803, #804 — gated on
 codec support in `parquet-go`), cross-format indexing (#887), and upstream's
 Spark-free runtime thread — the one to watch closest, since its API shape is
 the convergence point between the two projects. OneLake and Fabric left this
-list on 2026-08-22: they are a stated requirement now, scheduled as T51 and
-T52 below.
+list on 2026-08-22: they are a stated requirement now, scheduled as T51 and T52
+in [the improvement plan](improvement-plan.md).
