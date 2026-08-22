@@ -1,0 +1,27 @@
+{
+  "commit_count": 2,
+  "engine": {
+    "jdk": "17",
+    "pyspark": "3.5"
+  },
+  "format": "HUDI",
+  "notes": [
+    "Written by Apache Hudi 1.2.0 through Spark 3.5; polytable has never touched this directory.",
+    "hoodie.table.version=9 with the timeline under .hoodie/timeline/ - the 1.x layout polytable",
+    "cannot read yet (docs/improvement-plan.md T37). The fixture pins the loud refusal.",
+    "Regenerate with test/fixtures/generate_hudi_1x.py: needs JDK 17 (Spark 3.5 does not run on",
+    "newer JDKs), pip install 'pyspark==3.5.*', and network access for spark.jars.packages to",
+    "fetch the Hudi bundle. Run it, then copy its hudi-1.2/trips output over this table_dir."
+  ],
+  "partition_columns": [
+    "city"
+  ],
+  "table_dir": "trips",
+  "table_name": "trips",
+  "table_version": 9,
+  "timeline_layout_version": 2,
+  "writer": {
+    "library": "org.apache.hudi:hudi-spark3.5-bundle_2.12",
+    "version": "1.2.0"
+  }
+}

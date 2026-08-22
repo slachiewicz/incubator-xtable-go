@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -38,9 +39,34 @@ const (
 	PropTableSchema       = "hoodie.table.schema"
 )
 
+// MaxReadableTableVersion is the newest hoodie.table.version this reader understands. Hudi 1.x
+// stamps version 8 or 9 and moves the timeline into .hoodie/timeline with completion-time instant
+// names; reading such a table with the 0.x logic silently yields an empty snapshot, so every read
+// refuses past this floor instead.
+const MaxReadableTableVersion = 6
+
 // TableProperties represents parsed key-value pairs from .hoodie/hoodie.properties.
 type TableProperties struct {
 	Properties map[string]string
+}
+
+// AssertReadableVersion rejects tables newer than MaxReadableTableVersion. A missing or
+// unparseable version does not block: the table may predate the property, and the timeline read
+// still decides.
+func (p *TableProperties) AssertReadableVersion() error {
+	raw := strings.TrimSpace(p.Get(PropTableVersion))
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil
+	}
+	if v > MaxReadableTableVersion {
+		return fmt.Errorf("hoodie.table.version %d is a Hudi 1.x table, which polytable cannot read yet (supported: version %d and older)",
+			v, MaxReadableTableVersion)
+	}
+	return nil
 }
 
 // NewTableProperties initializes a TableProperties map.

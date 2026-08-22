@@ -58,7 +58,14 @@ func (s *Source) ReadProperties(ctx context.Context) (*TableProperties, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read hoodie.properties at %s: %w", propsPath, err)
 	}
-	return ParseProperties(data)
+	props, err := ParseProperties(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := props.AssertReadableVersion(); err != nil {
+		return nil, err
+	}
+	return props, nil
 }
 
 // ListCompletedCommits finds all completed commit/deltacommit instants in the timeline.

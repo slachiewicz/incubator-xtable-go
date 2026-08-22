@@ -20,6 +20,7 @@ package hudi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -64,7 +65,12 @@ func (t *Target) Init(_ context.Context, targetTable *model.Table) error {
 func (t *Target) GetTableMetadata(ctx context.Context) (*model.TableSyncMetadata, error) {
 	props, err := t.source.ReadProperties(ctx)
 	if err != nil {
-		return nil, nil
+		// A table with no properties yet has no metadata; an unreadable one (a Hudi 1.x table,
+		// storage failure) must stop the sync rather than masquerade as a fresh target.
+		if errors.Is(err, io.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
 	syncMeta := &model.TableSyncMetadata{
@@ -148,8 +154,14 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 
 	// 5. Update hoodie.properties
 	props := NewTableProperties()
-	if existingProps, err := t.source.ReadProperties(ctx); err == nil {
+	existingProps, err := t.source.ReadProperties(ctx)
+	switch {
+	case err == nil:
 		props = existingProps
+	case !errors.Is(err, io.ErrNotFound):
+		// Overwriting properties that exist but cannot be read (a Hudi 1.x table, a storage
+		// failure) would destroy them; only a genuinely absent file starts fresh.
+		return fmt.Errorf("refusing to overwrite unreadable hoodie.properties: %w", err)
 	}
 
 	props.Set(PropTableName, snapshot.Table.Name)
