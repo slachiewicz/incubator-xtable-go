@@ -36,8 +36,10 @@ var (
 	ErrPathNotUnderBase = errors.New("path is not under the base path")
 )
 
-// uriSchemes are the URI prefixes the storage layer recognizes. JoinPath, RelativizePath and
-// NewStorageForPathWithOptions all key off this list.
+// uriSchemes are the URI prefixes the path helpers (JoinPath, TrimScheme, RelativizePath)
+// recognize. It is deliberately broader than the schemes NewStorageForPathWithOptions can back
+// with a client: gs:// parses, because foreign metadata may carry such paths, but has no storage
+// backend here and is rejected at storage selection.
 var uriSchemes = []string{"s3://", "s3a://", "gs://", "mem://", "file://"}
 
 // FileInfo represents metadata for an object or file in storage.
@@ -165,6 +167,13 @@ func NewStorageForPathWithOptions(ctx context.Context, path string, optFns ...fu
 	}
 	if strings.HasPrefix(path, "mem://") {
 		return NewMemoryStorage(), nil
+	}
+	// Any other URI scheme must fail here rather than fall through: local storage would treat
+	// "gs://bucket/table" as a relative directory and create a literal "gs:" directory on the
+	// first write.
+	if scheme, _, found := strings.Cut(path, "://"); found && scheme != "file" {
+		return nil, fmt.Errorf("%w: no storage backend for scheme %q (supported: s3://, s3a://, mem://, file://, or a plain local path)",
+			ErrInvalidPath, scheme+"://")
 	}
 	return NewLocalStorage(), nil
 }

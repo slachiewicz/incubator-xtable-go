@@ -156,6 +156,10 @@ Do not treat these as intended behavior; fix them when touching the surrounding 
 - ~~`Schema.FieldByPath` case handling~~ — **fixed**: an exact match now wins at each level, with the
   case-insensitive fallback kept only for when no exact match exists (format metadata does not always
   agree with the schema on case). A schema holding both `Name` and `name` now resolves predictably.
+- ~~`NewStorageForPath` misrouting unknown schemes~~ — **fixed**: a path whose scheme has no backend
+  (`gs://`, `abfss://`, `hdfs://`, …) now fails with `ErrInvalidPath` instead of falling through to
+  local storage, which treated `gs://bucket/table` as a relative directory and created a literal
+  `gs:` directory on first write.
 
 ## Testing
 
@@ -166,3 +170,8 @@ e2e suites in `test/` do not, and the two `dockertest_*` files must not.
 `github.com/stretchr/testify` (`assert` + `require`) is the only test-assertion dependency, but it is not
 the module's only dependency: `go.mod` also has aws-sdk-go-v2 (s3, glue), `parquet-go`, `cobra`, `uuid`,
 `yaml.v3` and `ory/dockertest`.
+
+Tool versions named in the guides must track what actually runs: `docs/how-to.md` states the DuckDB
+version it was verified with, and `integration.yml` pins `DUCKDB_VERSION` — when bumping the CI pin,
+re-run the how-to flow and update the doc's claim in the same change. (Upstream let its doc pins
+drift for years; apache/incubator-xtable#904 is the cleanup.)
