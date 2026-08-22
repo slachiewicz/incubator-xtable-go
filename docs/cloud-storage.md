@@ -127,7 +127,8 @@ datasets:
 This MinIO configuration is exercised against a real MinIO container by the
 repository's integration suite (`make test-containers`). The same keys apply
 to other S3-compatible stores, such as Ceph RGW or Cloudflare R2, but no tests
-exercise those stores — treat them as unverified.
+exercise those stores — treat them as unverified. For Cloudflare R2 specifically,
+including its R2 Data Catalog beta, see [Cloudflare R2 and R2 Data Catalog](cloudflare.md).
 
 ## Sync a table in Azure
 
@@ -284,3 +285,5 @@ under [Sync a table in Azure](#sync-a-table-in-azure) above.
 - [Azure Data Lake Storage and OneLake](azure.md) for the extended Azure
   reference: full credential chain, endpoint derivation, worked configs, and
   Azurite.
+- [Cloudflare R2 and R2 Data Catalog](cloudflare.md) for R2 as an
+  S3-compatible store and R2 Data Catalog's Iceberg REST endpoint.

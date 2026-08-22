@@ -243,6 +243,7 @@ Step-by-step guides:
 - 🪣 [Amazon S3 and AWS Glue](docs/aws.md) — the extended AWS reference: the credential chain, region/endpoint resolution, worked configs, Glue registration and discovery, and AWS's Iceberg REST endpoints
 - 🔷 [Azure Data Lake Storage and OneLake](docs/azure.md) — the extended Azure reference: URI shapes, the Entra ID credential chain, endpoints, worked configs, catalogs, and Azurite
 - 🧪 [Set up an Azure test environment](docs/azure-test-environment.md) — a disposable subscription sandbox for exercising the Azure paths, with teardown
+- 🟧 [Cloudflare R2 and R2 Data Catalog](docs/cloudflare.md) — R2 as S3-compatible storage, the R2 Data Catalog beta, and its account-scoped token
 - 🔍 [Query a synced table](docs/query-engines.md) — DuckDB (verified), Spark, Trino, Athena, Redshift, BigQuery, Snowflake, StarRocks, Fabric
 - ⚖️ [Features and limitations](docs/features-and-limitations.md) — the honest capability reference and known issues
 - 🧪 [How polytable is tested](docs/testing.md) — foreign fixtures, engine verification, and the coverage bar

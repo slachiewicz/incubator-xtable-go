@@ -117,6 +117,13 @@ usual. Explicitly set dataset fields win over resolved ones.
   serve a conversion source but never accept a registration, and no request
   has yet reached a live workspace — see
   [Azure and OneLake](azure.md#catalogs-on-azure).
+- Cloudflare R2 Data Catalog: the endpoint is
+  `https://catalog.cloudflarestorage.com/<account_id>/<bucket>`, with a
+  `warehouse` property of `<account_id>_<bucket>` and a plain R2 API token in
+  `properties.token` — no `auth` mode needed. The catalog token is scoped to
+  the whole account, not the one bucket; see
+  [Cloudflare R2 and R2 Data Catalog](cloudflare.md) for the enablement steps
+  and that account-scope warning in full.
 
 These endpoint shapes come from the respective vendors' documentation; only the
 `tabulario/iceberg-rest` image is exercised by this repository's integration
