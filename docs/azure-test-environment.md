@@ -576,6 +576,60 @@ A `200` with an `overrides.prefix` field confirms the workspace, the token
 audience and the endpoint all work, and gives you the prefix value T53 will
 negotiate automatically.
 
+## Wire GitHub Actions to the sandbox
+
+`.github/workflows/azure-live.yml` runs the live test on a nightly schedule and
+on demand, authenticating with a federated (OIDC) credential. No client secret
+exists, and none should ever be created for this app.
+
+Create the app registration, its service principal, and a role assignment
+scoped to the one storage account rather than the resource group or the
+subscription:
+
+```shell
+APPID=$(az ad app create --display-name polytable-gha-azure-live --query appId -o tsv)
+az ad sp create --id "$APPID"
+SPID=$(az ad sp show --id "$APPID" --query id -o tsv)
+az role assignment create --role "Storage Blob Data Contributor"   --assignee-object-id "$SPID" --assignee-principal-type ServicePrincipal   --scope "$(az storage account show -n "$STORAGE_ACCOUNT" -g "$RG" --query id -o tsv)"
+```
+
+Then add a federated credential whose subject matches what GitHub actually
+presents, and this is the step that catches people out. GitHub may present an
+**immutable** subject claim, which embeds the numeric owner and repository IDs:
+
+```
+repo:<owner>@<ownerID>/<repo>@<repoID>:ref:refs/heads/main
+```
+
+rather than the classic `repo:<owner>/<repo>:ref:refs/heads/main`. A credential
+registered for the classic form fails with `AADSTS700213: No matching federated
+identity record found for presented assertion subject`, and the error names the
+subject GitHub sent — copy it from there rather than guessing:
+
+```shell
+az ad app federated-credential create --id "$APPID" --parameters '{
+  "name": "github-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "<the subject from the AADSTS700213 error>",
+  "audiences": ["api://AzureADTokenExchange"]
+}'
+```
+
+Registering both forms is harmless and survives GitHub changing which it sends.
+
+Finally, set the four repository secrets the workflow reads:
+
+```shell
+gh secret set AZURE_CLIENT_ID --body "$APPID"
+gh secret set AZURE_TENANT_ID --body "$(az account show --query tenantId -o tsv)"
+gh secret set AZURE_SUBSCRIPTION_ID --body "$(az account show --query id -o tsv)"
+gh secret set AZURE_STORAGE_ACCOUNT --body "$STORAGE_ACCOUNT"
+```
+
+Pin the federated credential to a branch ref, never to a wildcard, and keep the
+workflow off `pull_request` and `pull_request_target`. On a public repository
+either trigger would hand a fork-authored run the token exchange.
+
 ## Teardown
 
 **Storage side—one command, because everything above lives in `$RG`:**

@@ -2189,6 +2189,26 @@ is repository size, so keep each table small.
 it; the generator pins its writer versions and the pins match what the manifests record; no scenario
 is claimed in `docs/testing.md` that has no fixture behind it.
 
+**Delta half landed, Iceberg half still open.** `test/testdata/fixtures/delta-rs-deletes/returns`
+(`DeltaTable.delete()`: a whole-partition delete and a single-row delete that forces a rewrite) and
+`delta-rs-compaction/clicks` (`optimize.compact()`, and the tree's first unpartitioned Delta fixture)
+close the deletes and compaction rows of the table above on the Delta side.
+`test/foreign_fixtures_test.go`'s `TestForeignFixtures_DeltaDeletes` and
+`TestForeignFixtures_DeltaCompaction` assert the per-commit `FilesRemoved`/`FilesAdded` against a
+`commits` array the generator reads straight out of `_delta_log`, not merely that it is non-empty —
+both pass, so `GetChangesSince` and `changeFromCommit` (`pkg/formats/delta/source.go`) already
+handle `remove` actions correctly; this had never been exercised by a fixture before. **Column
+rename under column mapping is unreachable, not merely undone**: `deltalake` 1.6.3, the writer these
+fixtures are pinned to, refuses `delta.columnMapping.mode` at `CREATE TABLE` and at
+`SET TBLPROPERTIES` alike (`_internal.DeltaError: Column mapping is not supported for write
+operation … yet`), and exposes no rename API anywhere in the package — so no fixture at this writer
+version can exercise #711's trap. The trap is real regardless: `DeltaJSONToSchema`
+(`pkg/formats/delta/schema.go:176`) discards `DeltaStructField.Metadata` outright, so
+`delta.columnMapping.id`/`physicalName` can never reach `model.Field.FieldID` for a Delta source —
+found by reading the code, not by a fixture, and still open. Time travel, concurrent writes, a
+readable upsert, and every Iceberg-side row of the table above (deletes, compaction/replace) remain
+unaddressed.
+
 **Commit:** `test: extend the fixture matrix to deletes, compaction, rename and time travel`
 
 ---
@@ -2483,6 +2503,18 @@ genuine ADLS Gen2 hierarchical namespace, seeded with the `delta-rs-checkpoint` 
   directories and 10 files, each `IsDir` correct. Before T54 all six would have been zero-byte
   *files*, and `region=east` and its siblings would have been crawled as data. This is the failure
   the emulator structurally cannot produce, now observed and closed.
+
+**It now runs in CI on every night.** `.github/workflows/azure-live.yml` authenticates with a
+federated OIDC credential — no client secret exists — scoped to `refs/heads/main` and to one
+storage account with `Storage Blob Data Contributor` and nothing else. First run green:
+`SyncOverAbfss`, `ReSyncIsNoOp`, `HierarchicalNamespaceDirectories` and `ExistsSemantics` all pass
+against the real account. So the real-Azure coverage is continuous rather than a one-off.
+
+One gotcha cost a run and is written up in `docs/azure-test-environment.md`: GitHub presented an
+**immutable** subject claim embedding numeric owner and repository IDs
+(`repo:owner@6705942/polytable@1332162500:ref:refs/heads/main`), not the classic
+`repo:owner/repo:ref:...`. A credential registered for the classic form fails with `AADSTS700213`,
+and the error names the subject GitHub actually sent.
 
 **Why this is still ⚠️ and not ✅ — two acceptance criteria remain unmet:**
 
