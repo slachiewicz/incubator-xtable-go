@@ -58,6 +58,14 @@ type SyncResult struct {
 	// instant, so nothing was written. StatusCode is still SUCCESS in that case; NoOp is what
 	// lets a caller distinguish "nothing to do" from "did real work" without inspecting timings.
 	NoOp bool `json:"noOp,omitempty"`
+	// FellBackToFullSync reports that an incremental sync was requested but the controller ran a
+	// full snapshot sync instead, because the source's IsIncrementalSyncSafeFrom check reported
+	// the resume point unsafe or could not be evaluated. FallbackReason names which. Both fields
+	// are always the zero value together: a fallback with no reason, or a reason with no
+	// fallback, would each be a caller-visible contradiction.
+	FellBackToFullSync bool `json:"fellBackToFullSync,omitempty"`
+	// FallbackReason explains why FellBackToFullSync is true. Empty when it is false.
+	FallbackReason string `json:"fallbackReason,omitempty"`
 }
 
 // SyncVerdict is a coarse, agent-legible outcome for a single target sync: exactly one of

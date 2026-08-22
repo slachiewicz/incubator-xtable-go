@@ -1,0 +1,119 @@
+{
+  "current_snapshot_id": "8516776299182084410",
+  "data_file_count": 2,
+  "data_files": [
+    {
+      "partition_values": {
+        "category": "alpha"
+      },
+      "path": "data/category=alpha/00000-0-20d93814-0fd5-4452-918a-2af4fc5fe732.parquet",
+      "record_count": 2,
+      "size_bytes": 1332
+    },
+    {
+      "partition_values": {
+        "category": "beta"
+      },
+      "path": "data/category=beta/00000-0-26f14270-814a-465c-ba26-49fb235513de.parquet",
+      "record_count": 2,
+      "size_bytes": 1327
+    }
+  ],
+  "format": "ICEBERG",
+  "format_version": 2,
+  "iceberg_snapshots": [
+    {
+      "added": [
+        "data/category=alpha/00000-0-d12ef3a5-adb8-457d-91a8-c097574cf8d7.parquet"
+      ],
+      "operation": "APPEND",
+      "removed": [],
+      "snapshot_id": "4347237418248752552"
+    },
+    {
+      "added": [
+        "data/category=beta/00000-0-0f7dff71-8d4b-43ed-818e-59cdff7a78e9.parquet"
+      ],
+      "operation": "APPEND",
+      "removed": [],
+      "snapshot_id": "199960209407644728"
+    },
+    {
+      "added": [],
+      "operation": "DELETE",
+      "removed": [
+        "data/category=beta/00000-0-0f7dff71-8d4b-43ed-818e-59cdff7a78e9.parquet"
+      ],
+      "snapshot_id": "5991483370706592075"
+    },
+    {
+      "added": [
+        "data/category=beta/00000-0-26f14270-814a-465c-ba26-49fb235513de.parquet"
+      ],
+      "operation": "APPEND",
+      "removed": [],
+      "snapshot_id": "6470053792549788318"
+    },
+    {
+      "added": [
+        "data/category=alpha/00000-0-20d93814-0fd5-4452-918a-2af4fc5fe732.parquet"
+      ],
+      "operation": "OVERWRITE",
+      "removed": [
+        "data/category=alpha/00000-0-d12ef3a5-adb8-457d-91a8-c097574cf8d7.parquet"
+      ],
+      "snapshot_id": "8516776299182084410"
+    }
+  ],
+  "latest_metadata_version": 4,
+  "manifest_encoding": "avro",
+  "metadata_versions": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "notes": [
+    "Written by pyiceberg; polytable has never touched this directory.",
+    "manifest-list and manifest files are Avro OCF, which is what the Iceberg spec mandates and what every real writer emits.",
+    "File paths inside the Avro manifests are the generation-time absolute paths and are not relocatable.",
+    "table.overwrite() committed as two snapshots here (a pure delete then a pure append) rather than one; table.delete() on a non-aligned predicate committed as a single remove+add rewrite. iceberg_snapshots records what pyiceberg actually did, not what generate_iceberg_deletes assumed it would do."
+  ],
+  "partition_columns": [
+    "category"
+  ],
+  "partition_values": [
+    "alpha",
+    "beta"
+  ],
+  "path_placeholder": "file:///__POLYTABLE_FIXTURE_ROOT__",
+  "schema": [
+    {
+      "field_id": 1,
+      "name": "id",
+      "nullable": false,
+      "type": "LONG"
+    },
+    {
+      "field_id": 2,
+      "name": "category",
+      "nullable": false,
+      "type": "STRING"
+    },
+    {
+      "field_id": 3,
+      "name": "value",
+      "nullable": true,
+      "type": "DOUBLE"
+    }
+  ],
+  "snapshot_count": 5,
+  "table_dir": "returns",
+  "table_name": "returns",
+  "total_rows": 4,
+  "writer": {
+    "library": "pyiceberg",
+    "version": "0.11.1"
+  }
+}

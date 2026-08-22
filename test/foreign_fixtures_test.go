@@ -46,6 +46,7 @@ import (
 
 	"github.com/slachiewicz/polytable/pkg/conversion"
 	"github.com/slachiewicz/polytable/pkg/formats"
+	"github.com/slachiewicz/polytable/pkg/formats/delta"
 	"github.com/slachiewicz/polytable/pkg/io"
 	"github.com/slachiewicz/polytable/pkg/model"
 	"github.com/slachiewicz/polytable/pkg/spi"
@@ -86,6 +87,18 @@ type fixtureCommit struct {
 	Removed   []string `json:"removed"`
 }
 
+// fixtureIcebergSnapshot is one Iceberg snapshot as generate_iceberg_deletes's `iceberg_snapshots`
+// read it back: the snapshot's complete live file set diffed against its parent's, both relative
+// to the table directory, computed in Python from pyiceberg's own file listing rather than
+// inferred from the summary counters — ground truth the Go reader is checked against, not a
+// literal either side could quietly agree on by coincidence.
+type fixtureIcebergSnapshot struct {
+	SnapshotID string   `json:"snapshot_id"`
+	Operation  string   `json:"operation"`
+	Added      []string `json:"added"`
+	Removed    []string `json:"removed"`
+}
+
 // fixtureManifest is the record generate.py leaves beside each fixture.
 type fixtureManifest struct {
 	ManifestEncoding  string                   `json:"manifest_encoding"`
@@ -115,6 +128,9 @@ type fixtureManifest struct {
 	} `json:"delete_commits"`
 	// CompactionCommit names, for the compaction fixture, which commit is the optimize.compact() run.
 	CompactionCommit string `json:"compaction_commit"`
+	// IcebergSnapshots is populated only by the pyiceberg-deletes fixture: the per-snapshot add/remove
+	// paths generate_iceberg_deletes computed from pyiceberg's own file listing, in snapshot order.
+	IcebergSnapshots []fixtureIcebergSnapshot `json:"iceberg_snapshots,omitempty"`
 	SchemaEvolution  struct {
 		AddedColumn   string `json:"added_column"`
 		AddedAtCommit string `json:"added_at_commit"`
@@ -784,6 +800,126 @@ func TestForeignFixtures_ReadIcebergSnapshot(t *testing.T) {
 		assert.InDelta(t, expected.Min, actual.Min, 1e-9, "minimum of %s", name)
 		assert.InDelta(t, expected.Max, actual.Max, 1e-9, "maximum of %s", name)
 	}
+}
+
+// icebergSnapshotsByID indexes a fixture's per-snapshot record by snapshot id, the same string a
+// TableChange's SourceIdentifier carries for an Iceberg source.
+func icebergSnapshotsByID(snapshots []fixtureIcebergSnapshot) map[string]fixtureIcebergSnapshot {
+	byID := make(map[string]fixtureIcebergSnapshot, len(snapshots))
+	for _, snap := range snapshots {
+		byID[snap.SnapshotID] = snap
+	}
+	return byID
+}
+
+// TestForeignFixtures_IcebergDeletes reads pyiceberg's own overwrite() and delete(): T40's evidence
+// that the Iceberg source could not report a removal at all — GetTableChangeForCommit ignored its
+// argument and returned every live file as an add with FilesRemoved always nil, and GetChangesSince
+// never walked snapshot history, collapsing an arbitrary number of source commits into at most one
+// change. This fixture carries three distinct commit shapes in one history: a pure add (both
+// initial appends and the overwrite's replacement file), a pure remove (the overwrite's delete of
+// the superseded file, with no compensating add — pyiceberg 0.11.1 commits overwrite() as two
+// snapshots, not one), and a single-commit remove+add rewrite (the row-level delete, which
+// pyiceberg cannot express without rewriting the file it touches).
+func TestForeignFixtures_IcebergDeletes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	tableDir, manifest := loadFixture(t, "pyiceberg-deletes")
+	require.NotEmpty(t, manifest.IcebergSnapshots, "manifest is missing iceberg_snapshots")
+
+	source, err := formats.NewSource(model.TableFormatIceberg, io.NewLocalStorage(), tableDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = source.Close() })
+
+	// The current snapshot has to reflect every operation: only the replacement beta file and the
+	// rewritten, two-row alpha file survive.
+	snapshot, err := source.GetCurrentSnapshot(ctx)
+	require.NoError(t, err)
+	assertFileListMatchesManifest(t, model.TableFormatIceberg, tableDir, manifest, snapshot.DataFiles)
+
+	changes, err := source.GetChangesSince(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, changes.TableChanges, manifest.SnapshotCount,
+		"one TableChange per source snapshot, not one change for the whole table's history")
+	require.Len(t, changes.TableChanges, len(manifest.IcebergSnapshots))
+
+	byID := icebergSnapshotsByID(manifest.IcebergSnapshots)
+	var sawPureRemove, sawRewrite, sawPureAdd bool
+	var lastInstant int64
+	for _, change := range changes.TableChanges {
+		expected, ok := byID[change.SourceIdentifier]
+		require.True(t, ok, "no manifest snapshot record for %s", change.SourceIdentifier)
+
+		addedPaths := relativeFilePathSet(t, tableDir, change.FilesDiff.FilesAdded)
+		assert.Equal(t, pathSet(expected.Added), addedPaths,
+			"snapshot %s (%s): added files", change.SourceIdentifier, expected.Operation)
+
+		removedPaths := relativeFilePathSet(t, tableDir, change.FilesDiff.FilesRemoved)
+		assert.Equal(t, pathSet(expected.Removed), removedPaths,
+			"snapshot %s (%s): removed files", change.SourceIdentifier, expected.Operation)
+
+		switch {
+		case len(expected.Removed) > 0 && len(expected.Added) == 0:
+			sawPureRemove = true
+		case len(expected.Removed) > 0 && len(expected.Added) > 0:
+			sawRewrite = true
+		case len(expected.Removed) == 0 && len(expected.Added) > 0:
+			sawPureAdd = true
+		}
+
+		// The controller persists the last change's CommitTime as the next incremental sync's
+		// fromInstant, so a tie or a regression here would silently drop or replay a commit on the
+		// following sync — the hazard advanceCommitTime exists to close off.
+		assert.Greater(t, change.CommitTime, lastInstant,
+			"snapshot %s: CommitTime did not strictly increase over the previous change", change.SourceIdentifier)
+		lastInstant = change.CommitTime
+	}
+	assert.True(t, sawPureRemove, "no snapshot in this fixture reported a pure removal")
+	assert.True(t, sawRewrite, "no snapshot in this fixture reported a remove+add rewrite")
+	assert.True(t, sawPureAdd, "no snapshot in this fixture reported a pure add")
+
+	// A single commitID lookup has to agree with the equivalent entry out of the backlog above:
+	// GetTableChangeForCommit must honor its argument rather than always describing the current
+	// snapshot (T40's other defect).
+	last := changes.TableChanges[len(changes.TableChanges)-1]
+	singleChange, err := source.GetTableChangeForCommit(ctx, last.SourceIdentifier)
+	require.NoError(t, err)
+	assert.Equal(t, relativeFilePathSet(t, tableDir, last.FilesDiff.FilesAdded),
+		relativeFilePathSet(t, tableDir, singleChange.FilesDiff.FilesAdded))
+	assert.Equal(t, relativeFilePathSet(t, tableDir, last.FilesDiff.FilesRemoved),
+		relativeFilePathSet(t, tableDir, singleChange.FilesDiff.FilesRemoved))
+
+	// This is T40's acceptance criterion: replaying the source's incremental backlog into a Delta
+	// target produces one target commit per source snapshot, and the rewrite's removal survives
+	// the conversion rather than only the Iceberg-native read checked above.
+	storage := io.NewLocalStorage()
+	deltaDir := t.TempDir()
+	deltaTable := *changes.CurrentTable
+	deltaTable.BasePath = deltaDir
+	deltaTable.TableFormat = model.TableFormatDelta
+
+	deltaTarget := delta.NewTarget(storage)
+	require.NoError(t, deltaTarget.Init(ctx, &deltaTable))
+	require.NoError(t, deltaTarget.CommitChanges(ctx, changes))
+
+	deltaSource := delta.NewSource(storage, deltaDir)
+	deltaChanges, err := deltaSource.GetChangesSince(ctx, 0)
+	require.NoError(t, err)
+	require.Len(t, deltaChanges.TableChanges, len(changes.TableChanges),
+		"one Delta commit per Iceberg source snapshot")
+
+	// CommitChanges wrote the Delta versions in changes.TableChanges's order, starting at 0.
+	for i, sourceChange := range changes.TableChanges {
+		deltaChange := changeForVersion(deltaChanges.TableChanges, strconv.Itoa(i))
+		require.NotNil(t, deltaChange, "no Delta commit at version %d for Iceberg snapshot %s", i, sourceChange.SourceIdentifier)
+		assert.Len(t, deltaChange.FilesDiff.FilesAdded, len(sourceChange.FilesDiff.FilesAdded), "version %d: added file count", i)
+		assert.Len(t, deltaChange.FilesDiff.FilesRemoved, len(sourceChange.FilesDiff.FilesRemoved), "version %d: removed file count", i)
+	}
+
+	deltaSnapshot, err := deltaSource.GetCurrentSnapshot(ctx)
+	require.NoError(t, err)
+	assertFileListMatchesManifest(t, model.TableFormatDelta, tableDir, manifest, deltaSnapshot.DataFiles)
 }
 
 // foldColumnBounds reduces the per-file bounds of a snapshot to table-wide ones.

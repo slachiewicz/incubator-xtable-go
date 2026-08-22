@@ -687,6 +687,203 @@ def generate_iceberg(out_dir: Path) -> dict:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def generate_iceberg_deletes(out_dir: Path) -> dict:
+    """Write an Iceberg table with real removals: T40's evidence that GetTableChangeForCommit and
+    GetChangesSince invented a target with no removal path at all (`model.NewFilesDiff(snap.DataFiles,
+    nil)` — every live file reported as an add, `FilesRemoved` always nil).
+
+    `table.overwrite(df, overwrite_filter=...)` turns out, in pyiceberg 0.11.1, not to be one
+    snapshot: it commits a pure delete of the overwritten partition's old file first and the
+    replacement as a separate append second. `table.delete()` on a predicate that does not align
+    with a whole file's rows takes the other shape, a single copy-on-write snapshot that removes the
+    old file and adds its rewritten replacement in the same commit. Both shapes matter to T40 and
+    this fixture is not written to prefer one over the other; it takes whichever pyiceberg produces
+    and records it.
+
+    Every operation here is asserted copy-on-write (`total-delete-files` stays "0" throughout): a
+    positional- or equality-delete file would not appear as a removed data file at all under
+    `model.DiffFiles`'s current-generation scope, and a fixture that silently used merge-on-read
+    instead would stop exercising the removal path T40 exists to fix.
+    """
+    import pyiceberg
+    from pyiceberg.catalog.sql import SqlCatalog
+    from pyiceberg.partitioning import PartitionField, PartitionSpec
+    from pyiceberg.schema import Schema
+    from pyiceberg.transforms import IdentityTransform
+    from pyiceberg.types import DoubleType, LongType, NestedField, StringType
+
+    _rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+
+    staging = Path(tempfile.mkdtemp(prefix="polytable-pyiceberg-deletes-"))
+    try:
+        warehouse = staging / "warehouse"
+        warehouse.mkdir()
+        catalog = SqlCatalog(
+            "fixture",
+            **{
+                "uri": f"sqlite:///{staging / 'catalog.db'}",
+                "warehouse": f"file://{warehouse}",
+            },
+        )
+        catalog.create_namespace("lake")
+
+        schema = Schema(
+            NestedField(field_id=1, name="id", field_type=LongType(), required=True),
+            NestedField(field_id=2, name="category", field_type=StringType(), required=True),
+            NestedField(field_id=3, name="value", field_type=DoubleType(), required=False),
+        )
+        spec = PartitionSpec(
+            PartitionField(
+                source_id=2, field_id=1000, transform=IdentityTransform(), name="category"
+            )
+        )
+        table = catalog.create_table("lake.returns", schema=schema, partition_spec=spec)
+
+        arrow_schema = pa.schema(
+            [
+                pa.field("id", pa.int64(), nullable=False),
+                pa.field("category", pa.string(), nullable=False),
+                pa.field("value", pa.float64(), nullable=True),
+            ]
+        )
+
+        # Snapshot 1: append the alpha partition (3 rows, one file).
+        table.append(
+            pa.table(
+                {"id": [1, 2, 3], "category": ["alpha", "alpha", "alpha"], "value": [1.0, 2.0, 3.0]},
+                schema=arrow_schema,
+            )
+        )
+        # Snapshot 2: append the beta partition (3 rows, one file).
+        table.append(
+            pa.table(
+                {"id": [4, 5, 6], "category": ["beta", "beta", "beta"], "value": [4.0, 5.0, 6.0]},
+                schema=arrow_schema,
+            )
+        )
+        # Snapshots 3-4: overwrite the whole beta partition with different rows. pyiceberg commits
+        # this as a pure delete of the old beta file followed by a pure append of the new one.
+        table.overwrite(
+            pa.table(
+                {"id": [7, 8], "category": ["beta", "beta"], "value": [7.0, 8.0]}, schema=arrow_schema
+            ),
+            overwrite_filter="category == 'beta'",
+        )
+        # Snapshot 5: delete one row out of the three-row alpha file. Because the predicate does not
+        # align with a whole file, pyiceberg rewrites: the old alpha file is removed and a
+        # two-row replacement is added, both in this one commit.
+        table.delete("id = 2")
+
+        table.refresh()
+        files = sorted(table.inspect.files().to_pylist(), key=lambda f: f["file_path"])
+        snapshots = table.snapshots()
+        current = table.current_snapshot()
+
+        table_location = table.location()
+
+        def _relative(path: str) -> str:
+            return path.removeprefix(table_location).lstrip("/")
+
+        # Ground truth for the per-commit add/remove assertion: each snapshot's complete live file
+        # set, diffed against the previous snapshot's. This is read straight out of pyiceberg's own
+        # accounting (table.inspect.files(snapshot_id=...)) rather than inferred from the summary
+        # counters, so it does not depend on the Go reader agreeing with itself.
+        snapshot_records = []
+        previous_paths: set[str] = set()
+        for snap in snapshots:
+            snap_files = table.inspect.files(snapshot_id=snap.snapshot_id).to_pylist()
+            current_paths = {f["file_path"] for f in snap_files}
+            added = sorted(_relative(p) for p in current_paths - previous_paths)
+            removed = sorted(_relative(p) for p in previous_paths - current_paths)
+            operation = str(snap.summary.operation).removeprefix("Operation.")
+            if snap.summary.additional_properties.get("total-delete-files", "0") != "0":
+                raise RuntimeError(
+                    f"snapshot {snap.snapshot_id} ({operation}) wrote delete files; this fixture "
+                    "requires copy-on-write throughout so every removal is a missing data file"
+                )
+            snapshot_records.append(
+                {
+                    "snapshot_id": str(snap.snapshot_id),
+                    "operation": operation,
+                    "added": added,
+                    "removed": removed,
+                }
+            )
+            previous_paths = current_paths
+
+        if not any(r["removed"] and not r["added"] for r in snapshot_records):
+            raise RuntimeError("fixture must carry a snapshot that removes files without adding any")
+        if not any(r["removed"] and r["added"] for r in snapshot_records):
+            raise RuntimeError("fixture must carry a snapshot that both adds and removes files")
+        if not any(not r["removed"] and r["added"] for r in snapshot_records):
+            raise RuntimeError("fixture must carry a snapshot that only adds files")
+
+        source_dir = Path(table_location.removeprefix("file://"))
+        target_dir = out_dir / "returns"
+        shutil.copytree(source_dir, target_dir)
+
+        for metadata_file in sorted(target_dir.glob("metadata/*.metadata.json")):
+            text = metadata_file.read_text(encoding="utf-8")
+            metadata_file.write_text(text.replace(table_location, PATH_PLACEHOLDER), encoding="utf-8")
+
+        metadata_versions = sorted(
+            int(p.name.split("-", 1)[0]) for p in target_dir.glob("metadata/*.metadata.json")
+        )
+
+        manifest = {
+            "format": "ICEBERG",
+            "table_name": "returns",
+            "table_dir": "returns",
+            "writer": {"library": "pyiceberg", "version": pyiceberg.__version__},
+            "path_placeholder": PATH_PLACEHOLDER,
+            "format_version": table.format_version,
+            "snapshot_count": len(snapshots),
+            "metadata_versions": metadata_versions,
+            "latest_metadata_version": metadata_versions[-1],
+            "current_snapshot_id": str(current.snapshot_id),
+            "total_rows": sum(f["record_count"] for f in files),
+            "data_file_count": len(files),
+            "schema": [
+                {
+                    "name": field.name,
+                    "type": ICEBERG_TYPE_NAMES[str(field.field_type)],
+                    "nullable": not field.required,
+                    "field_id": field.field_id,
+                }
+                for field in table.schema().fields
+            ],
+            "partition_columns": ["category"],
+            "partition_values": sorted({f["partition"]["category"] for f in files}),
+            "data_files": [
+                {
+                    "path": _relative(f["file_path"]),
+                    "record_count": f["record_count"],
+                    "size_bytes": f["file_size_in_bytes"],
+                    "partition_values": {"category": f["partition"]["category"]},
+                }
+                for f in files
+            ],
+            "iceberg_snapshots": snapshot_records,
+            "manifest_encoding": "avro",
+            "notes": [
+                "Written by pyiceberg; polytable has never touched this directory.",
+                "manifest-list and manifest files are Avro OCF, which is what the Iceberg spec"
+                " mandates and what every real writer emits.",
+                "File paths inside the Avro manifests are the generation-time absolute paths and"
+                " are not relocatable.",
+                "table.overwrite() committed as two snapshots here (a pure delete then a pure"
+                " append) rather than one; table.delete() on a non-aligned predicate committed as"
+                " a single remove+add rewrite. iceberg_snapshots records what pyiceberg actually"
+                " did, not what generate_iceberg_deletes assumed it would do.",
+            ],
+        }
+        _write_manifest(out_dir, manifest)
+        return manifest
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 # Every fixture this script can write, keyed by the name `main`'s optional filter argument
 # selects. Each generator mints its own table UUIDs, file names and timestamps per run, so running
 # an entry that is not being worked on churns a fixture already committed to the tree for no reason
@@ -697,6 +894,7 @@ FIXTURES = {
     "delta-rs-deletes": lambda out_root: generate_delta_deletes(out_root / "delta-rs-deletes"),
     "delta-rs-compaction": lambda out_root: generate_delta_compaction(out_root / "delta-rs-compaction"),
     "pyiceberg": lambda out_root: generate_iceberg(out_root / "pyiceberg"),
+    "pyiceberg-deletes": lambda out_root: generate_iceberg_deletes(out_root / "pyiceberg-deletes"),
 }
 
 

@@ -209,10 +209,21 @@ func (c *Controller) syncToTarget(
 
 	canSyncIncrementally := false
 	var lastSyncedInstant int64
+	// fallbackReason is set only when an incremental sync was actually on the table (SyncModeFull
+	// was not requested and a prior sync exists) and the safety check then said no: either it
+	// reported the resume point unsafe, or it could not be evaluated at all. Recorded here and
+	// attached to whichever result the full-sync path below returns, so "fell back" and "errored"
+	// stop being indistinguishable from a SUCCESS with no history — the defect this fixes.
+	var fallbackReason string
 	if meta != nil && meta.LastInstantSynced > 0 && cfg.SyncMode != spi.SyncModeFull {
 		lastSyncedInstant = meta.LastInstantSynced
 		isSafe, err := source.IsIncrementalSyncSafeFrom(ctx, lastSyncedInstant)
-		if err == nil && isSafe {
+		switch {
+		case err != nil:
+			fallbackReason = fmt.Sprintf("could not verify incremental sync safety from instant %d: %v", lastSyncedInstant, err)
+		case !isSafe:
+			fallbackReason = fmt.Sprintf("incremental sync from instant %d is not safe: the source no longer retains history back to that point", lastSyncedInstant)
+		default:
 			canSyncIncrementally = true
 		}
 	}
@@ -242,16 +253,34 @@ func (c *Controller) syncToTarget(
 	// Full snapshot sync
 	snapshot, err := source.GetCurrentSnapshot(ctx)
 	if err != nil {
-		return spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to extract current snapshot: %w", err), time.Since(startTime))
+		result := spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to extract current snapshot: %w", err), time.Since(startTime))
+		applyFallbackReason(result, fallbackReason)
+		return result
 	}
 
 	if !dryRun {
 		if err := target.CommitSnapshot(ctx, snapshot); err != nil {
-			return spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to commit snapshot: %w", err), time.Since(startTime))
+			result := spi.NewErrorSyncResult(targetFormat, fmt.Errorf("failed to commit snapshot: %w", err), time.Since(startTime))
+			applyFallbackReason(result, fallbackReason)
+			return result
 		}
 	}
 
-	return spi.NewSuccessSyncResult(targetFormat, snapshot.Table.LatestCommitTime, time.Since(startTime))
+	result := spi.NewSuccessSyncResult(targetFormat, snapshot.Table.LatestCommitTime, time.Since(startTime))
+	applyFallbackReason(result, fallbackReason)
+	return result
+}
+
+// applyFallbackReason records on result that the controller ran a full snapshot sync in place of
+// the incremental sync it was actually asked for. A no-op when reason is empty: an ordinary first
+// sync (no prior target metadata) or an explicit SyncModeFull request never sets one, and neither
+// is a fallback.
+func applyFallbackReason(result *spi.SyncResult, reason string) {
+	if reason == "" {
+		return
+	}
+	result.FellBackToFullSync = true
+	result.FallbackReason = reason
 }
 
 func (c *Controller) createSource(format model.TableFormat, basePath string) (spi.ConversionSource, error) {

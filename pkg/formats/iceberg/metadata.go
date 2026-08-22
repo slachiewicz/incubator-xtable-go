@@ -71,23 +71,34 @@ type TableSnapshot struct {
 	SchemaID         *int              `json:"schema-id,omitempty"`
 }
 
+// SnapshotLogEntry records one entry of the `snapshot-log` array: an audit trail of which snapshot
+// was current at a point in time. Unlike `snapshots`, entries here are not guaranteed to be dropped
+// when the snapshot they name expires — implementations vary on whether they trim the log to match
+// — so `snapshot-log` is not itself a reliable test of snapshot retention. `Snapshots` is: see
+// Source.IsIncrementalSyncSafeFrom, which deliberately reads that field instead.
+type SnapshotLogEntry struct {
+	SnapshotID  int64 `json:"snapshot-id"`
+	TimestampMs int64 `json:"timestamp-ms"`
+}
+
 // TableMetadata matches the Apache Iceberg v2/v3 metadata.json specification.
 type TableMetadata struct {
-	FormatVersion      int               `json:"format-version"`
-	TableUUID          string            `json:"table-uuid"`
-	Location           string            `json:"location"`
-	LastSequenceNumber int64             `json:"last-sequence-number"`
-	LastUpdatedMs      int64             `json:"last-updated-ms"`
-	LastColumnID       int               `json:"last-column-id"`
-	CurrentSchemaID    int               `json:"current-schema-id"`
-	Schemas            []*TableSchema    `json:"schemas"`
-	DefaultSpecID      int               `json:"default-spec-id"`
-	PartitionSpecs     []*PartitionSpec  `json:"partition-specs"`
-	LastPartitionID    int               `json:"last-partition-id"`
-	DefaultSortOrderID int               `json:"default-sort-order-id"`
-	Properties         map[string]string `json:"properties,omitempty"`
-	CurrentSnapshotID  *int64            `json:"current-snapshot-id,omitempty"`
-	Snapshots          []*TableSnapshot  `json:"snapshots,omitempty"`
+	FormatVersion      int                 `json:"format-version"`
+	TableUUID          string              `json:"table-uuid"`
+	Location           string              `json:"location"`
+	LastSequenceNumber int64               `json:"last-sequence-number"`
+	LastUpdatedMs      int64               `json:"last-updated-ms"`
+	LastColumnID       int                 `json:"last-column-id"`
+	CurrentSchemaID    int                 `json:"current-schema-id"`
+	Schemas            []*TableSchema      `json:"schemas"`
+	DefaultSpecID      int                 `json:"default-spec-id"`
+	PartitionSpecs     []*PartitionSpec    `json:"partition-specs"`
+	LastPartitionID    int                 `json:"last-partition-id"`
+	DefaultSortOrderID int                 `json:"default-sort-order-id"`
+	Properties         map[string]string   `json:"properties,omitempty"`
+	CurrentSnapshotID  *int64              `json:"current-snapshot-id,omitempty"`
+	Snapshots          []*TableSnapshot    `json:"snapshots,omitempty"`
+	SnapshotLog        []*SnapshotLogEntry `json:"snapshot-log,omitempty"`
 }
 
 // The manifest types below carry no struct tags: manifests are Avro, not JSON, and their field
