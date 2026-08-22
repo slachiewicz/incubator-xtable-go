@@ -1471,8 +1471,10 @@ survives the Delta round trip.
 
 ## T30 — Java XTable interop nightly (unscheduled until T28/T29 land)
 
-The sharpest claim: tables move between polytable and Apache XTable without resync (shared
-`xtable_*` keys). A `workflow_dispatch` + nightly job pulls the upstream bundled jar, syncs a
+The sharpest claim was that tables move between polytable and Apache XTable without resync via
+shared `xtable_*` keys. **That claim is false** — see T60, which disproves it against a real
+Java-synced table. This job is still worth building, but its purpose changes from confirming
+interop to measuring it. A `workflow_dispatch` + nightly job pulls the upstream bundled jar, syncs a
 fixture with Java XTable, continues **incrementally** with polytable, and the reverse — asserting
 the second tool reports incremental, not a snapshot fallback. Never gates PRs (bench.yml
 philosophy: failures prompt investigation, not red builds). This job is also where Spark-written
@@ -1783,7 +1785,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T57 |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T57, T59, T60 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -3053,6 +3055,102 @@ and 404s every Iceberg path. Nessie's releases moved to `ghcr.io/projectnessie/n
 current server returns a non-empty prefix under `defaults`.
 
 **Commit:** `fix: read the Iceberg REST prefix from defaults and stop escaping it`
+
+---
+
+## T59 — REST catalog auth: OAuth2 client-credentials and SigV4
+
+`restHTTPClient` (`pkg/catalog/rest_auth.go`) recognizes two `auth` modes: a static bearer token,
+and Entra ID. That leaves polytable unable to authenticate to several catalogs it can otherwise
+address correctly — the protocol work T53 and T58 did is wasted on them.
+
+**OAuth2 client-credentials** is the Iceberg REST specification's own mechanism, exchanged at
+`POST /v1/oauth/tokens` with a client id and secret. Apache Polaris uses it natively, and so does
+Snowflake Open Catalog, which is Polaris — its endpoint path is literally
+`https://<org>-<account>.snowflakecomputing.com/polaris/api/catalog`. A user pointing polytable at
+either today has to fetch a token out of band and paste it in as a static `token`, which then
+expires mid-sync exactly the way T52's Entra work fixed for OneLake.
+
+**SigV4** is what both of AWS's native Iceberg REST endpoints require: Glue's at
+`https://glue.<region>.amazonaws.com/iceberg` (warehouse is the account id) and S3 Tables' at
+`https://s3tables.<region>.amazonaws.com/iceberg` (warehouse is the table bucket ARN). Neither is
+reachable with a bearer token. The endpoints and their warehouse shapes come from AWS's
+documentation, cited in `docs/aws.md`; **the predicted failure has not been reproduced against a
+live account**, so confirm it before building the fix.
+
+Both fit the shape T52 established: an `http.RoundTripper` selected by `auth`, so neither leaks into
+the call sites. SigV4 can reuse the AWS SDK's signer, which `go.mod` already carries — but it must
+stay behind `//go:build !js` like the rest of the AWS code, and the `js` stub needs the same
+treatment `entra_js.go` got.
+
+**Decide the naming here**: `auth: oauth2` and `auth: sigv4` alongside `entra`, with credentials
+from the environment rather than config fields, matching the rule the Azure work settled.
+
+**Acceptance:** polytable authenticates to a local Polaris container using client-credentials
+without a hand-fetched token, pinned by a dockertest suite; the token is refreshed rather than
+presented until it expires; a SigV4 request to Glue's endpoint is signed correctly, verified against
+a live account or explicitly recorded as unverified; `GOOS=js GOARCH=wasm go list -deps
+./cmd/polytable-wasm | grep -ci azure` stays 0 and no AWS package enters the wasm build either.
+
+**Commit:** `feat: authenticate REST catalogs with OAuth2 client credentials and SigV4`
+
+---
+
+## T60 — polytable and Java XTable do not recognize each other's sync state
+
+**T30's headline claim is false, and this is the evidence.** That task says the sharpest claim is
+"tables move between polytable and Apache XTable without resync (shared `xtable_*` keys)". They do
+not, and the keys are not shared.
+
+Read from a real Iceberg table that the Java jar synced from Delta, sitting in Azure at
+`abfss://xtable-pr897@polytable410464.dfs.core.windows.net/src/delta_small`, courtesy of the session
+testing upstream PR #897:
+
+```
+XTABLE_METADATA = {"lastInstantSynced":"2026-08-22T16:10:52Z","instantsToConsiderForNextSync":[],
+                   "version":0,"sourceTableFormat":"DELTA","sourceIdentifier":"1"}
+```
+
+polytable writes and reads something with no overlap at all (`pkg/model/metadata.go`):
+`xtable_last_instant_synced`, holding **epoch milliseconds**, and `xtable_source_format`. Java
+writes **one** property holding **JSON**, with an **ISO-8601** instant inside it.
+
+Different property names, different cardinality, different value types. So:
+
+- polytable does not recognize a Java-synced table and resyncs it in full.
+- Java does not recognize a polytable-synced table and will do the same.
+
+**Confirmed empirically, not inferred.** Copying that table and running `polytable sync` on it
+reports `"verdict": "SUCCESS"` with a fresh `lastInstantSynced`, where a recognized sync state would
+report `NO_OP`. The comment in `pkg/model/metadata.go` asserting that the `xtable_` spelling "is the
+on-disk contract with Java-XTable-synced tables" was simply wrong; it is corrected in the same commit
+that files this.
+
+**This reaches further than the interop nightly.** Microsoft Fabric exposes Delta as Iceberg through
+Apache XTable, and its table responses carry the same `XTABLE_METADATA` property. So polytable
+cannot recognize a Fabric-synced table either, which makes this a OneLake correctness issue and not
+only an upstream-compatibility nicety.
+
+**What is genuinely shared**, and worth keeping in view: polytable reads the Java jar's Iceberg
+output correctly — Avro manifests, schema, all eight data files — and reads the delta-spark 3.2.0
+source table too, which is a writer no fixture in this repository had covered. The formats
+interoperate. Only the sync bookkeeping does not.
+
+**Decide first, because the compatible spelling is a choice with consequences.** Reading
+`XTABLE_METADATA` is straightforward and strictly additive. *Writing* it is the real decision: emit
+Java's shape so upstream recognizes polytable's output, emit both, or keep ours and accept one-way
+compatibility. Emitting both is the only option that lets either tool continue the other's work, and
+it costs one extra property. Note `instantsToConsiderForNextSync` and `sourceIdentifier` have no
+polytable equivalent and their semantics need reading out of the Java source before anything is
+written into them.
+
+**Acceptance:** polytable syncing a Java-synced table reports `NO_OP` or an incremental sync rather
+than a full snapshot, pinned by a committed fixture rather than by the live Azure copy; the
+ISO-8601-versus-epoch conversion round-trips without drift; and whatever is decided about writing is
+recorded here with its reason. The reverse direction — Java recognizing polytable's output — needs
+the JVM lane in T30 to verify.
+
+**Commit:** `fix: read Java XTable's XTABLE_METADATA sync state`
 
 ---
 

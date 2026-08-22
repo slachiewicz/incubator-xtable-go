@@ -240,6 +240,7 @@ Step-by-step guides:
 - 🗄️ [Sync to the AWS Glue Data Catalog](docs/glue-catalog.md) — registration, table discovery, and source resolution
 - 🧊 [Sync to an Iceberg REST catalog](docs/iceberg-rest-catalog.md) — Nessie, Polaris, Unity Catalog
 - ☁️ [Cloud storage](docs/cloud-storage.md) — S3 credentials and IAM, MinIO and S3-compatible stores, GCS status
+- 🪣 [Amazon S3 and AWS Glue](docs/aws.md) — the extended AWS reference: the credential chain, region/endpoint resolution, worked configs, Glue registration and discovery, and AWS's Iceberg REST endpoints
 - 🔷 [Azure Data Lake Storage and OneLake](docs/azure.md) — the extended Azure reference: URI shapes, the Entra ID credential chain, endpoints, worked configs, catalogs, and Azurite
 - 🧪 [Set up an Azure test environment](docs/azure-test-environment.md) — a disposable subscription sandbox for exercising the Azure paths, with teardown
 - 🔍 [Query a synced table](docs/query-engines.md) — DuckDB (verified), Spark, Trino, Athena, Redshift, BigQuery, Snowflake, StarRocks, Fabric

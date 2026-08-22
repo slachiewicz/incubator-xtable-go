@@ -33,8 +33,12 @@ type TableSyncMetadata struct {
 
 const (
 	// MetadataPropertyPrefix is the key prefix for sync metadata stored in table properties. The
-	// "xtable_" spelling is deliberate: it is the on-disk contract with Java-XTable-synced tables
-	// and renaming it would break round-tripping against upstream.
+	// "xtable_" spelling is deliberate, but it is NOT the contract Java XTable writes -- that claim
+	// was here and is false. Java writes a single property, XTABLE_METADATA, holding JSON with an
+	// ISO-8601 lastInstantSynced and a sourceTableFormat; these flat keys with an epoch-millis
+	// value share nothing with it, so neither implementation recognizes the other's sync state and
+	// both resync in full. Verified against a table synced by the Java jar. T60 tracks the fix; do
+	// not rename these until it decides what the compatible spelling is.
 	MetadataPropertyPrefix = "xtable_"
 	// KeyLastInstantSynced is the property key for the last synced instant.
 	KeyLastInstantSynced = "xtable_last_instant_synced"

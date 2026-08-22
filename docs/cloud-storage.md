@@ -48,6 +48,11 @@ A path with any other scheme is rejected before the sync starts; see
 
 ## Sync a table in Amazon S3
 
+This section covers the quick path — the scheme, a minimal config, credentials, and IAM. For the
+full credential chain, region and endpoint resolution, worked configs including Glue registration,
+the Glue Data Catalog, and AWS's Iceberg REST endpoints, see
+[Amazon S3 and AWS Glue](aws.md).
+
 To sync a table that lives in S3, point the dataset's `tableBasePath` key at an
 `s3://` URI:
 
@@ -273,6 +278,9 @@ under [Sync a table in Azure](#sync-a-table-in-azure) above.
   table in Glue or discover tables to sync from it.
 - [Sync to an Iceberg REST catalog](iceberg-rest-catalog.md) such as Nessie,
   Polaris, or Unity Catalog.
+- [Amazon S3 and AWS Glue](aws.md) for the extended AWS reference: the full
+  credential chain, region/endpoint resolution, worked configs, Glue
+  registration and discovery, and AWS's Iceberg REST endpoints.
 - [Azure Data Lake Storage and OneLake](azure.md) for the extended Azure
   reference: full credential chain, endpoint derivation, worked configs, and
   Azurite.
