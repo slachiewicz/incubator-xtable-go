@@ -20,11 +20,12 @@
 # Improvement plan
 
 **T1–T9** were the original structural plan, written against commit `ec2fd7e`. **T10–T12** were
-added from the review of commits `d34ed36..ddd157a` — T10 was a release blocker. **T13–T15** are
-parity gaps against Java XTable: unscheduled, and each needs a maintainer decision before it becomes
-work. **T16–T19** came out of later reviews and are all resolved. **T20–T26** come from the
-2026-08-21 upstream survey and are the current work queue — each one is written to be picked up cold
-by an agent, with the evidence, the scope and the acceptance criteria in the task itself.
+added from the review of commits `d34ed36..ddd157a` — T10 was a release blocker. **T13–T15** were
+parity gaps against Java XTable; T14 and T15 have since landed under other numbers, and T13 stays
+unscheduled by decision. **T16–T19** came out of later reviews and are all resolved. **T20–T37** come
+from the 2026-08-21 upstream survey and the reviews after it. **T38–T50** turn `docs/roadmap.md`
+into work. Every task from T20 on is written to be picked up cold by an agent, with the evidence, the
+scope and the acceptance criteria in the task itself.
 
 Every file path, line number, signature and command output below was read out of the tree or run
 against it, not recalled. Where a task is marked ✅ but its acceptance criteria were not met, that is
@@ -767,29 +768,51 @@ Full scope, for whoever picks it up: sync client, schema extractor, partition sy
 per-format table builders, a Thrift dependency, and an HMS container for integration tests. Start
 from `beltran/gohive`. See the T5 evaluation for why not gometastore.
 
-## T14 — Catalog conversion sources (read side)
+## T14 — Catalog conversion sources (read side) ✅ LANDED UNDER T23
 
-Go's `catalog.SyncClient` is **write-only**: `CatalogType`, `CreateOrUpdateTable`, `DropTable`,
+Go's `catalog.SyncClient` was **write-only**: `CatalogType`, `CreateOrUpdateTable`, `DropTable`,
 `Close`. Java additionally has `GlueCatalogConversionSource` and `HMSCatalogConversionSource` behind
 `CatalogConversionFactory`, which resolve a table **from a catalog identifier** rather than a base
 path — i.e. `--catalog glue --table db.customers` instead of `--basePath s3://…`.
 
-This is a user-visible capability the Go port simply does not have, and it is the natural companion to
-T2. Scope it only after T2 lands, since it shares the config surface.
+**Delivered by T23**, which was scoped as its extension and overtook it: `catalog.ConversionSource`
+with `GetSourceTable` and `ListTables` (`pkg/catalog/conversion.go:115`, `:120`),
+`GlueConversionSource` (`pkg/catalog/glue_conversion.go`), `IcebergRESTConversionSource`
+(`pkg/catalog/rest_conversion.go`), `conversion.DiscoverDatasets` (`pkg/conversion/discovery.go`),
+and `polytable sync --catalog glue --database <db>`. Read T23's outcome for what was checked. The
+identifier form this task asked for — resolving one named table rather than scanning a database —
+is `GetSourceTable`; the CLI exposes the scan, not the single-table lookup, which is the one piece
+of the original scope still open and is not worth its own task until someone asks for it.
 
-## T15 — Catalog partition synchronization
+Two limits of the delivered read side are recorded as later tasks rather than here: the Iceberg
+REST source discards the catalog's `metadata-location` pointer (T39), and `ListTables` on the
+Iceberg REST catalog yields `ErrCatalogNotImplemented` by design.
+
+## T15 — Catalog partition synchronization ⚠️ LANDED, NOT VERIFIED AGAINST A REAL GLUE CATALOG
 
 Java has `CatalogPartitionSyncTool`, `CatalogPartitionSyncOperations`, `CatalogPartition`,
-`CatalogPartitionEvent` and a 13.3K `GlueCatalogPartitionSyncOperations`. Go has **none of it** — the
-Go `SyncClient` registers a table but never its partitions.
+`CatalogPartitionEvent` and a 13.3K `GlueCatalogPartitionSyncOperations`. Go had **none of it** — the
+Go `SyncClient` registered a table but never its partitions.
 
-Consequence: for Hive-style partitioned tables registered in Glue, engines that resolve partitions
-through the catalog will not see them. `HMSCatalogConfig` shows the shape this takes at scale —
-`maxPartitionsPerRequest = 1000` implies batching, and `CatalogPartitionEvent` implies diffing
-existing partitions rather than re-registering blindly.
+Consequence, and the reason it was worth doing: for Hive-style partitioned tables registered in
+Glue, engines that resolve partitions through the catalog do not see them.
 
-Verify the actual impact against a real Glue table before scheduling; it may be less severe for
-Iceberg/Delta targets, whose partition data lives in their own metadata rather than the catalog.
+**The code landed** without this task being updated. `pkg/catalog/partition.go` holds
+`PartitionSyncOperations` (`:68`) and `SyncPartitions` (`:167`), which diffs desired against
+existing and batches every action — Java's `CatalogPartitionEvent` shape;
+`pkg/catalog/glue_partition.go` implements it over Glue and is embedded into
+`GlueCatalogSyncClient` (`pkg/catalog/glue.go:43`) so the four methods promote onto it;
+`Config.MaxPartitionsPerRequest` (`pkg/catalog/catalog.go:60`) is the batch cap, defaulting to
+`DefaultMaxPartitionsPerRequest`. It is wired into the sync path at
+`pkg/conversion/controller.go:158`, whose `syncPartitions` (`:173`) type-asserts the client and
+no-ops for a catalog that tracks partitions itself.
+
+**What is not done is the verification this task asked for**, which is why the status is ⚠️ and not
+✅: "verify the actual impact against a real Glue table". Every test drives a fake. Until a real
+Glue catalog — or LocalStack, noted as a follow-up under T30 — has registered a partitioned table
+this way and an engine has resolved partitions through it, the claim is untested end to end. That
+check is the remaining work, and it belongs with T30's integration lane rather than as new code
+here.
 
 ---
 
@@ -1089,16 +1112,16 @@ Deletion-vector code exists only in `pkg/formats/delta/{source,target}.go` and `
 `pkg/formats/iceberg` and `pkg/formats/hudi` contain none.
 
 The README overclaimed this — the format matrix marked Iceberg "✅ (Equality/Positional)" and Hudi
-"✅" — and was corrected on 2026-08-21 to `—` for both, in the same spirit as T9. `SPEC.md:178` was
+"✅" — and was corrected on 2026-08-21 to `—` for both, in the same spirit as T9. `SPEC.md:183` was
 already accurate, scoping the claim to the Delta adapter.
 
 That correction makes the docs honest; it does not close the gap. Upstream tracks the real work as
 #345 and #346 (read Delta and Iceberg deletion vectors into the internal representation), #347 and
 #348 (write them to the Delta and Iceberg targets), #640 (the snapshot case) and open PR #661.
 
-The decision to make first: `SPEC.md:335` records INV-1 — deletion vectors are translated as
-descriptors, never decoded, because decoding would mean reading data files. Iceberg positional
-deletes are a *separate Parquet file of row positions*, not a bitmap descriptor, so
+The decision to make first: `SPEC.md:384` records the INV-1 consequence — deletion vectors are
+translated as descriptors, never decoded, because decoding would mean reading data files. Iceberg
+positional deletes are a *separate Parquet file of row positions*, not a bitmap descriptor, so
 Delta↔Iceberg deletion-vector translation may not be expressible without violating INV-1. Resolve
 that before writing code. If it is not expressible, the outcome of this task is #657's flag — warn
 and continue when the target cannot represent the source's deletes — plus a line in `SPEC.md`
@@ -1755,34 +1778,35 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
-| 📋 Unscheduled | T13 (HMS), T14 (catalog read side), T15 (partition sync) — parity gaps, need a decision before becoming work |
-| 🎯 Open queue | T24 (deletion vectors — decide first), T30 (Java interop nightly), T34 (Paimon real-spec: Avro manifests + engine verification) |
+| 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
+| 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
+| 🎯 Open queue | T24, T30, T34, T37, and T38–T50 from the roadmap |
 
-**Picking up the queue.** Suggested value order is T34, then T30.
-T24 is a decision before it is code — read `SPEC.md:335` first and do not start writing an Iceberg
-deletion-vector translator until the INV-1 question in the task is answered.
-before it is code — read `SPEC.md:335` first and do not start writing an Iceberg deletion-vector
-translator until the INV-1 question in the task is answered.
+**Picking up the queue.** By value: **T40** first — the Iceberg source has no incremental sync at
+all, which is a correctness defect rather than a gap — then T45 (the Parquet source crawls other
+formats' metadata as data), then T37's 1.x timeline, then T34.
 
-Gate at review time: `make check` green, `go test -short -race ./pkg/...` clean, 28 commits unpushed
-(`d34ed36..3162cf3`), working tree clean. Pushing is safe; **tagging is not until T17 is proven**.
+Three tasks are decisions before they are code, and each says so in its own text: T24 (read
+`SPEC.md:384` first, and do not start an Iceberg deletion-vector translator until the INV-1 question
+is answered), T42 (whether a rollback is expressible across formats at all) and T49 (where a
+per-target catalog identifier lives).
+
+**Standing chore, not a task.** Re-sweep upstream at each of their cutoffs — 0.5.0 on 2026-09-30,
+0.6.0 on 2026-11-15 — and refresh `docs/upstream-watch.md`.
+
+Gate at review time: `make check` green, `go test -short -race ./pkg/...` clean, working tree clean.
+T17 proved the release workflow, so tagging is no longer blocked.
 
 ```
-T16 ─────> T18-catalog ──> T14   (fixes catalog sync; its tests also lift pkg/catalog coverage)
-T17 ─────> unblocks T7 — nothing can be tagged until the release job runs green
-T18 ─────> measure after T16; do not chase a coverage number
-T13, T15 ─ unscheduled parity gaps
-
-T16 and T17 are independent of each other — do them in either order, or in parallel.
+T40 ─────> T46-deletes  (a real incremental reader needs a fixture that removes files)
+T45 ─────> T48          (auto-detection must not point a Parquet source at a Delta table)
+T44 ─────> T40          (pin path canonicalization before a second reader can diverge from it)
+T31/T34 ─ share the Avro codec; T34 reuses it for Paimon manifests
+T13 ────── unscheduled by decision, not by omission
 ```
-
-**Do T10 and T11 first.** Both are small, and until T10 lands the release process is decorative.
-
-Do **not** batch T1 with anything. It touches six files across four entrypoints and needs to be
-revertable on its own.
 
 ## T36 — Delta source: read Parquet checkpoints ✅
 
@@ -1825,6 +1849,461 @@ Related upstream context noted while here: #810 asks for a OneLake/Fabric catalo
 read API is Iceberg-REST-compatible, so `pkg/catalog/rest.go` is the eventual entry point, but
 any OneLake work is blocked on an Azure/`abfss://` storage backend either way (see Non-goals).
 
+---
+
+## Roadmap queue — T38–T50
+
+`docs/roadmap.md` sets direction; these are its items turned into work, with the evidence read out
+of the tree on 2026-08-22. Three roadmap bullets became no task: the doc-version guard is already
+CLAUDE.md policy, the upstream re-sweep at each cutoff is a standing chore recorded under Ordering,
+and the "watching, not building" list is explicitly not work. T13 keeps its unscheduled status
+because the roadmap's answer for HMS is to keep the explicit refusal until a consumer with a
+concrete deployment appears.
+
+## T38 — Delta v2 checkpoints: sidecars and the `v2Checkpoint` reader feature
+
+T36 landed classic checkpoints and drew the line explicitly: `pkg/formats/delta/checkpoint.go:157`
+rejects a checkpoint whose protocol lists the `v2Checkpoint` reader feature, with
+`"delta checkpoint %s declares the v2Checkpoint reader feature, which is not supported yet"`
+(`:158`). Delta 4.0 makes v2 the default, and upstream's 0.6.0 engine baseline (#902) moves to
+Spark 4 with Delta 4.0 — so this rejection turns from a documented limit into the common case
+inside one upstream release.
+
+What v2 adds over what `checkpoint.go` already does: the checkpoint file is a *manifest* holding a
+`checkpointMetadata` action and `sidecar` actions, and the `add`/`remove` actions live in separate
+sidecar Parquet files under `_delta_log/_sidecars/`. `readLastCheckpoint` (`:107`) and
+`checkpointPartFiles` (`:127`) already handle the `_last_checkpoint` pointer and the classic
+single- and multi-part naming; the v2 work is a third shape, not a rewrite.
+
+**Fixture first, per ground rule 10.** No fixture in the tree has v2 checkpoints —
+`test/testdata/fixtures/delta-rs-checkpoint/` is a classic single-file v1 checkpoint
+(`_last_checkpoint` is `{"version":2,"size":7,…}` with no `v2Checkpoint`, `sidecar` or
+`checkpointMetadata` key anywhere; its manifest's `checkpoint_version: 2` means table version 2,
+not checkpoint format v2). Generate one with a delta-rs or Spark writer that enables the feature,
+alongside the existing generator at `test/fixtures/generate.py`.
+
+**Acceptance:** a real-engine-written table with v2 checkpoints and expired pre-checkpoint commits
+loads its schema and full file list; `pkg/formats/delta/checkpoint_test.go`'s v2-rejection pin is
+replaced by a positive assertion rather than deleted; a sidecar referenced but missing is a hard
+error, matching T36's treatment of a truncated log.
+
+**Commit:** `feat: read Delta v2 checkpoints and their sidecar files`
+
+---
+
+## T39 — Iceberg metadata resolution: unparseable names vanish, the catalog pointer is discarded
+
+Upstream's most user-visible bug family (#431, #287, #504, #354): path loading assumes the Hadoop
+`version-hint.text` convention, catalog-writing engines never create it, and Snowflake names
+metadata `v<nanoseconds>.metadata.json`, which overflows an int32 version parse.
+
+**Half of this the port already gets right, and that is worth recording before anyone "fixes" it.**
+`listMetadataFiles` (`pkg/formats/iceberg/source.go:86`) *is* the resolution mechanism — it lists
+`metadata/` and takes the highest parsed version (`:130`, `:216`). `version-hint.text` is write-only
+here (`pkg/formats/iceberg/target.go:325`); no read path consults it. `MetadataFileVersion`
+(`:63`) returns a plain `int`, 64-bit on every platform this builds for, so a Snowflake epoch-nanos
+token parses. Do not introduce a version-hint fast path: that is the upstream bug.
+
+**What is actually wrong:**
+
+1. **A filename that does not parse is silently skipped** — `source.go:96`, `if !ok { continue }`.
+   A metadata directory whose newest file uses an unrecognized convention resolves to an *older*
+   table state with no warning: silent staleness, the worst failure mode available. It must warn,
+   or fail when nothing parses for a reason other than "not a metadata file".
+2. **Same-version collisions are broken by lexical name order** (`:100`), which is a guess.
+3. **The catalog's metadata pointer is thrown away.** `rest_conversion.go:47` decodes
+   `metadata-location`, but `:129` uses it only when `metadata.location` is blank, and only to
+   derive a base path by trimming `/metadata/<file>` (`baseFromMetadataLocation`, `:170`). It is
+   not stored on `SourceTable` (`:149`) nor copied into `Properties` (`:143`), and
+   `Controller.createSource` (`pkg/conversion/controller.go:257`) constructs the Iceberg source
+   from `(storage, basePath)` alone (`pkg/formats/iceberg/source.go:43`). So a catalog-managed
+   table is re-resolved by listing even when the catalog said exactly which file is current —
+   upstream #504's failure, reachable here.
+4. **Column stats are not a panic risk, but one field is dropped.** `avroKVInt64`
+   (`pkg/formats/iceberg/manifest.go:710`) returns nil for absent maps and every consumer in
+   `stats.go:222` reads through a possibly-nil map, which is legal Go — the #641/#667 NPE class
+   does not exist here, and the task should say so rather than re-checking it forever.
+   `column_sizes` is parsed (`manifest.go:552`) and written (`:443`) but never reaches the model:
+   `model.ColumnStat` (`pkg/model/stats.go:45`) has no size field.
+
+**Acceptance:** the source takes a metadata pointer when the catalog supplies one and lists only
+when it does not; an unparseable newest file produces a diagnostic, never silent staleness; a
+fixture with a Snowflake-style `v<epoch-nanos>.metadata.json` name resolves to that file. Whether
+`column_sizes` earns a model field is a decision inside this task, not an assumption.
+
+**Commit:** `fix: resolve Iceberg metadata from the catalog pointer and diagnose unparseable names`
+
+---
+
+## T40 — The Iceberg source has no incremental sync: every change is a full re-add
+
+The sharpest correctness defect found while scheduling the roadmap, and larger than the
+expired-snapshot fallback (#147) the roadmap asked for.
+
+- `GetTableChangeForCommit` (`pkg/formats/iceberg/source.go:298`) ignores `commitID` for content.
+  It re-reads the current snapshot and returns `model.NewFilesDiff(snap.DataFiles, nil)` (`:304`):
+  every live file as an add, `FilesRemoved` always nil. The Iceberg source cannot report a deletion.
+- `GetChangesSince` (`:312`) never walks the snapshot history. It calls `GetCurrentSnapshot` and, if
+  `snap.Table.LatestCommitTime > fromInstant` (`:323`), emits exactly one change covering the whole
+  table. Ten source commits become one.
+- The history is not even modeled: `TableMetadata` (`pkg/formats/iceberg/metadata.go:75`) has no
+  `snapshot-log`, and `TableSnapshot.ParentSnapshotID` (`:66`) is never traversed on the read path.
+- Consequently an expired starting snapshot is *invisible* rather than detected — there is no lookup
+  to fail, so nothing triggers a fallback. The only safety check,
+  `IsIncrementalSyncSafeFrom` (`:338`), compares the oldest surviving **metadata file**'s
+  `LastUpdatedMs`, which is metadata-file retention, not snapshot retention: expiring snapshots
+  while keeping metadata files reports safe and syncs wrong.
+- `Controller` (`pkg/conversion/controller.go:212`) swallows the error from that call —
+  `if err == nil && isSafe` — so "unsafe" and "errored" both fall silently through to a full
+  snapshot sync. That silence is correct in outcome and wrong in reporting; T22's per-table verdict
+  should say a fallback happened.
+
+**Scope:** model `snapshots` and `snapshot-log`; walk parent links from the requested snapshot to
+the current one; per commit, diff the manifests of that snapshot against its parent so removals are
+real; make `IsIncrementalSyncSafeFrom` test snapshot retention; surface the fallback in the sync
+result instead of swallowing it.
+
+**Acceptance:** a pyiceberg fixture with an append, an overwrite and a delete syncs incrementally
+to Delta with one target commit per source snapshot, and the overwrite's removals appear as
+removals; expiring the starting snapshot makes `IsIncrementalSyncSafeFrom` report unsafe and the
+sync report a snapshot fallback rather than staying quiet.
+
+**Commit:** `fix: walk the Iceberg snapshot history during incremental sync`
+
+---
+
+## T41 — Iceberg partition specs are resolved table-current, and every transform is flattened
+
+Upstream #126: partition specs must be resolved per-manifest by `spec-id`, not from the table's
+current spec. Confirmed here, with a second defect on top.
+
+- The manifest's own spec id is decoded (`pkg/formats/iceberg/manifest.go:511` into
+  `ManifestListEntry.PartitionSpecID`, `metadata.go:130`) and read only on the write path
+  (`target.go:233`, `manifest.go:464`). The manifest Avro header carries `partition-spec` and
+  `partition-spec-id` on write (`manifest.go:404`), but `readAvroContainer` (`:594`) returns records
+  and discards header metadata, so the spec cannot be recovered on read even if someone wanted it.
+- The source always builds `PartitioningFields` from `meta.DefaultSpecID`
+  (`pkg/formats/iceberg/source.go:185`), then matches partition values **by name** against those
+  current fields (`:367`, `if val, ok := mdf.Partition[pf.SourceField.Name]; ok`) with no else
+  branch. A manifest written under an older spec whose field names differ has its partition values
+  silently dropped — the same name-not-id trap as #711.
+- **Every transform is flattened to identity on read**: `source.go:198` hardcodes
+  `TransformType: model.PartitionTransformValue` regardless of the spec's `Transform` string
+  (`metadata.go:44`). A table partitioned by `days(ts)` or `bucket(16, id)` is reported as
+  partitioned by the raw column. The write path hardcodes `SpecID: 0` and `DefaultSpecID: 0`
+  (`target.go:172`, `:306`).
+
+**Acceptance:** a pyiceberg fixture that evolves its partition spec mid-history converts with each
+manifest's values resolved under the spec that wrote it; a table partitioned by a non-identity
+transform reports that transform, or is refused with a message naming it — not silently reported as
+identity.
+
+**Commit:** `fix: resolve Iceberg partition values under the manifest's own spec`
+
+---
+
+## T42 — Rollbacks and restores degrade into bare file removals
+
+Upstream #40: a source rollback or restore reaches the target as plain removes and adds, so target
+history diverges from source history. Confirmed absent here — a repo-wide search for
+`rollback|restore|savepoint` across non-test files under `pkg/` returns nothing.
+
+The information is parsed and then dropped:
+
+- `pkg/formats/delta/actions.go:89` has `CommitInfoAction.Operation`, but
+  `pkg/formats/delta/source.go:165` reads only `Timestamp` from it, and `changeFromCommit` (`:379`)
+  builds the change purely from `Add` and `Remove` actions. A Delta `RESTORE` is indistinguishable
+  from an overwrite.
+- `pkg/formats/iceberg/metadata.go:53` has `SnapshotSummary.Operation` — commented
+  "append, replace, overwrite, delete" — and no code path reads it.
+- `pkg/model` has nowhere to put it. `TableChange` (`pkg/model/changes.go:21`) is
+  `FilesDiff`/`TableAsOfChange`/`SourceIdentifier`/`CommitTime`; `FilesDiff` (`pkg/model/diff.go:23`)
+  is adds and removes. Every target hardcodes an operation string instead:
+  `paimon/target.go:113` and `:158` (OVERWRITE for snapshots, APPEND for every change whatever it
+  contains), `delta/target.go:158`/`:228`, `hudi/target.go:142`, and `iceberg/target.go:279`, which
+  writes `"operation": "replace"` even on the incremental path.
+
+**Decide before writing code, as with T24.** Either `model.TableChange` gains an operation kind and
+targets stamp it, or the honest answer is that a rollback is not expressible across formats and the
+outcome is a documented divergence plus the #657-style warning. Upstream has not resolved this
+either, so there is no reference implementation to copy.
+
+**Acceptance:** a Delta table rolled back with `RESTORE` reaches an Iceberg target with a snapshot
+summary that says what happened, or the sync warns that it cannot express the rollback and `SPEC.md`
+records the limit. The fixture is written by a real engine (delta-rs `restore`), per ground rule 10.
+
+**Commit:** `feat: carry the source operation kind through TableChange`
+
+---
+
+## T43 — Target commits are last-writer-wins: no optimistic concurrency anywhere
+
+Upstream #124 reports the Delta target committing without optimistic-concurrency handling. All five
+targets here have the same hole, and `pkg/io` has no primitive to close it with.
+
+Each target picks a version by listing, then writes unconditionally:
+
+| Target | Version choice | Write |
+| :--- | :--- | :--- |
+| Delta | `listCommitFiles()` last `+ 1` (`target.go:102`); **the list error is discarded**, so a failed listing silently commits version 0 | `%020d.json` (`:256`) |
+| Iceberg | `listMetadataFiles()` last `+ 1` (`:104`), list error discarded | `v%d.metadata.json` (`:315`) plus `metadata/version-hint.text` (`:326`) |
+| Hudi | no listing — the instant is `time.Now()` at millisecond resolution (`target.go:94`–`:95`, `timeline.go:32`) | `.hoodie/<instant>.commit` (`:150`) |
+| Paimon | `nextSnapshotID` lists `snapshot-*` and adds 1 (`target.go:389`) | `snapshot/snapshot-<id>` (`:264`), `LATEST` rewritten each commit (`:276`) |
+| Parquet | no versioning at all | fixed `_polytable_metadata/manifest.json` (`:112`) |
+
+`pkg/io`'s `Storage` interface (`pkg/io/storage.go:54`) is `Read/Write/List/Exists/Delete/Close` —
+no put-if-absent, no CAS, no conditional headers. `pkg/io/local.go:85` is `os.Rename`, which
+clobbers; `pkg/io/s3.go:114` is a plain `PutObject` with no `IfNoneMatch`. `ErrAlreadyExists`
+(`pkg/io/storage.go:33`) is declared and never returned or checked anywhere in the module. No target
+calls `Exists` before writing, and `iceberg/target.go:242` says so outright: "polytable never
+retries a commit, so it is always zero."
+
+Two writers — polytable racing itself, or racing a foreign writer between the snapshot read and the
+commit — therefore overwrite one another's version file. Hudi is worst: two commits inside the same
+millisecond collide on the instant name.
+
+**Scope, in order.** (1) Give `Storage` a conditional write — `WriteIfAbsent` returning
+`ErrAlreadyExists`, `O_EXCL` locally and `If-None-Match: *` on S3, so the declared error finally has
+a producer. (2) Make each target's commit retry: re-read the log, recompute the version, re-apply,
+bounded attempts. (3) Stop discarding the listing error in the Delta and Iceberg version choice — a
+failed listing must abort the commit, never restart numbering at zero.
+
+**Acceptance:** a test drives two concurrent commits at one table per format and asserts both land
+at distinct versions with no lost update; a `Storage` stub whose `List` fails makes the commit fail
+instead of writing version 0; the S3 conditional write is exercised against MinIO in the existing
+dockertest matrix.
+
+**Commit:** `fix: commit target metadata conditionally and retry on conflict`
+
+---
+
+## T44 — One property test: snapshot and incremental must agree on every path
+
+Upstream #586: on a 7M-file table, alternate snapshots emitted spurious add/remove pairs because
+state diffs key on data-file paths and two code paths canonicalized them differently.
+
+**This is preventive here, and the survey says why in a way that matters.** For Iceberg, Hudi,
+Paimon and Parquet the two paths cannot disagree because the incremental entry point *is* the
+snapshot one: `iceberg/source.go:299` and `:317`, `hudi/source.go:297` and `:311`,
+`paimon/source.go:330` and `:344`, `parquet/source.go:248` and `:262` all call
+`GetCurrentSnapshot`. The identity holds vacuously, not by construction — nothing structural would
+hold a real incremental reader (T40's, for one) to the snapshot's string form. Delta, the only
+format with an independent incremental reader, does agree: snapshot (`delta/source.go:326`, `:337`)
+and incremental (`:385`, `:389`) both go through `resolveDataPath` (`:554`).
+
+So the deliverable is the test, plus two real inconsistencies it should be written against:
+
+1. `resolveDataPath`'s pass-through scheme list (`delta/source.go:555`) is `s3://`, `gs://`,
+   `mem://`, `file://` and a leading `/` — it omits `s3a://`, which `io.uriSchemes`
+   (`pkg/io/storage.go:43`) does recognize and which `io.RelativizePath` treats as equal to `s3://`.
+   An `s3a://` add path is therefore joined onto the base path instead of passed through. Use
+   `io.TrimScheme`/`uriSchemes` rather than a second private list.
+2. Delta-protocol paths are percent-encoded, and nothing under `pkg/formats` ever unescapes them —
+   no `url.PathUnescape` call exists. A file with a space or `#` in its name has one spelling in the
+   log and another on disk.
+
+Worth recording while here: `model.DiffFiles` (`pkg/model/diff.go:46`) has **no non-test caller**.
+Every source builds `model.NewFilesDiff` from already-separated sets, so the path-keyed diff that
+upstream's bug lives in is currently exercised only by `pkg/model/model_test.go`. That makes the
+property test the only thing standing between this repo and #586.
+
+**Acceptance:** for each format, one table read both ways yields byte-identical `PhysicalPath`
+strings for the same file, asserted as a property over a generated table rather than a fixed list;
+the `s3a://` and percent-encoded cases are in it and pass.
+
+**Commit:** `test: pin snapshot and incremental path canonicalization`
+
+---
+
+## T45 — The Parquet source crawls other formats' metadata as data
+
+Upstream #813 and #814: Hudi partition discovery treated `_delta_log/` — which holds checkpoint
+Parquet — as a Hudi partition, so synced tables self-corrupted on round trip. polytable is more
+exposed than upstream, not less: a polytable-synced directory always holds every target's metadata
+side by side, by design.
+
+`pkg/formats/parquet/source.go:185` is the entire filter:
+`!f.IsDir && strings.HasSuffix(f.Path, ".parquet") && !strings.HasPrefix(filepath.Base(f.Path), ".")`.
+Only the file's own base name is consulted; directory names are never inspected, and a leading `_`
+is not excluded at all. The listing above it (`:178`) is `s.storage.List(ctx, s.basePath)` with no
+pruning, and `pkg/io`'s three backends return everything — `local.go:112` walks recursively with no
+filter, `memory.go:76` and `s3.go:132` are raw prefix matches.
+
+So `<base>/_delta_log/00000000000000000010.checkpoint.parquet` satisfies the predicate — `.parquet`
+suffix, base name without a leading dot — and is admitted as a data file. `metadata/` (Iceberg
+statistics files), `_metadata/`, Paimon's directories and `_temporary/` are the same. The partition
+parser does not save it either: `pkg/formats/parquet/partition.go:41` silently skips segments
+without `=`, so `_delta_log` contributes no partition and the file is still counted as data.
+
+**Hudi is clean, for a structural reason worth recording** so nobody "fixes" it: Hudi data files
+come from `meta.PartitionToWriteStats` in the commit JSON (`pkg/formats/hudi/source.go:256`), not
+from a listing. Its only listing is the timeline (`:73`), already filtered to `.commit`,
+`.deltacommit` and `.replacecommit`. Delta's log listing (`delta/source.go:65`) filters to
+`<digits>.json`.
+
+**Scope:** one exclusion helper in `pkg/io` — the format metadata directory names plus the
+`_`/`.`-prefixed convention — since the next directory-crawling source will need it, and a single
+list is the only way the set stays in sync with the format registry.
+
+**Acceptance:** a Parquet source pointed at a directory that also holds `_delta_log/`, `metadata/`,
+`.hoodie/`, `_polytable_metadata/` and `_temporary/` reports only the real data files; the test
+builds that directory by running actual syncs into it, not by hand-placing files.
+
+**Commit:** `fix: exclude other formats' metadata directories from Parquet file discovery`
+
+---
+
+## T46 — Widen the fixture matrix beyond insert-only
+
+The coverage bar recorded under T30 is upstream's `ITConversionController` scenario list. The
+fixture inventory says how far short the tree is: four fixtures, and between them they cover
+appends, Hive and identity partitioning, one added column each, and one classic Delta checkpoint.
+
+| Fixture | Writer | What it covers |
+| :--- | :--- | :--- |
+| `test/testdata/fixtures/delta-rs/sales` | deltalake 1.6.2 | 3 appends, partitioned by `region`, adds `discount` mid-history. Zero `remove` actions. |
+| `test/testdata/fixtures/delta-rs-checkpoint/orders` | deltalake 1.6.3 | classic v1 single-file checkpoint with v0–v1 commits deleted by `cleanup_metadata()` |
+| `test/testdata/fixtures/pyiceberg/events` | pyiceberg 0.11.1 | format-version 2, identity partition, 3 appends, adds `label` mid-history, real Avro manifests |
+| `test/testdata/fixtures/hudi-1.x/trips` | hudi-spark3.5-bundle 1.2.0, PySpark 3.5, JDK 17 | contains a genuine upsert — but polytable refuses to read it (T37), so the only assertion is the refusal |
+
+Missing outright: **deletes** (no `remove` action anywhere; no Iceberg positional or equality
+deletes), **compaction or replace** (no `REPLACE`/`OPTIMIZE` commit, no Iceberg `replace` snapshot,
+no Hudi compaction instant), **column rename under Delta column mapping**
+(`grep -rl columnMapping test/testdata/fixtures/` is empty — only column *addition* is covered, and
+#711's field-id trap needs a rename), **time travel** (every fixture test reads
+`GetCurrentSnapshot`/`GetCurrentTable`), and **a readable upsert** (the one that exists is behind
+T37's refusal).
+
+**Version diversity is part of this task, not a separate one.** `test/fixtures/generate.py` pins
+nothing — its docstring says `pip install deltalake pyarrow 'pyiceberg[sql-sqlite]'` and the
+versions are recorded post-hoc in each `manifest.json`'s `writer` field, which is how the two Delta
+fixtures ended up on 1.6.2 and 1.6.3. `generate_hudi_1x.py` does pin
+(`pyspark==3.5.*`, `hudi-spark3.5-bundle_2.12:1.2.0`). Pin the generator, and add a deliberately old
+delta-rs protocol version alongside the current one. Adding fixtures freely is authorized; the cost
+is repository size, so keep each table small.
+
+**Acceptance:** every scenario above has a fixture written by a real engine and a test that reads
+it; the generator pins its writer versions and the pins match what the manifests record; no scenario
+is claimed in `docs/testing.md` that has no fixture behind it.
+
+**Commit:** `test: extend the fixture matrix to deletes, compaction, rename and time travel`
+
+---
+
+## T47 — Round-trip pair testing: A→B→A equivalence
+
+Open upstream since the beginning (#24, #113, dead #252) with no implementation on either side —
+ground to lead on rather than follow.
+
+Exactly one true round trip exists today: `TestE2E_PaimonDeltaRoundTrip`
+(`test/e2e_paimon_roundtrip_test.go:65`), which seeds Parquet → Delta, then runs `DeltaToPaimon`
+(`:104`) and `PaimonToDelta` (`:135`), comparing the final Delta snapshot against the original on
+file record counts and schema field types. It exists because T32 found the Paimon target writing a
+layout its own source could not read, and no suite crossed the two. There is no Delta↔Iceberg,
+Delta↔Hudi or Iceberg↔Hudi round trip.
+
+Do not count these as coverage, though their names suggest it: the per-format `Test*_SchemaRoundTrip`
+cases are schema *serialization* round trips inside one format;
+`pkg/formats/paimon/roundtrip_test.go:32` is Paimon-write then Paimon-read;
+`test/e2e_column_stats_test.go:242` names a variable `roundTripped` but only checks that a second
+sync wrote a new metadata version.
+
+**Scope:** a table-driven matrix over ordered format pairs, each converting A→B→A and comparing the
+recovered table to the original on a stated equivalence — schema (names, types, nullability,
+field ids where the format carries them), file set by relativized path, record counts, partition
+fields, and column statistics where both formats express them. The equivalence must be explicit
+about what is *not* preserved, per pair, rather than comparing only what happens to survive. The
+`readBackError` field already on `convertExpectation` (`test/foreign_fixtures_test.go:606`) is the
+existing idiom for pinning a leg that stops short — currently unarmed, since no target sets it.
+
+**Acceptance:** every ordered pair of implemented formats has a round-trip case that either passes
+the stated equivalence or carries a named pin for exactly what it loses; a pin that starts passing
+fails the suite rather than being ignored.
+
+**Commit:** `test: assert A→B→A equivalence for every format pair`
+
+---
+
+## T48 — Detect the source format from the table directory
+
+Upstream #830, and the cheapest usability win on the list. Every entry point requires the format to
+be stated:
+
+- `polytable sync` has no format flag at all (`cmd/polytable/main.go:139`–`160`). It comes from the
+  config file's `sourceFormat` (`pkg/conversion/config.go:43`, propagated at
+  `cmd/polytable/main.go:280`) or from catalog properties (`pkg/conversion/config.go:114` via
+  `catalog.TableFormatFromProperties`), and `DatasetConfig.Validate` (`pkg/conversion/config.go:159`)
+  refuses an empty one.
+- `polytable inspect` takes `-f/--format` (`cmd/polytable/main.go:446`), parsed at `:383`.
+- The daemon requires `sourceFormat` (`pkg/daemon/types.go:30`, used at `pkg/daemon/server.go:123`),
+  and `spec/rest-service-open-api.yaml` lists it first in `ConvertTableRequest`'s `required` array.
+
+Nothing anywhere probes the directory: a search for detection across `cmd/` and `pkg/` returns no
+non-test hits.
+
+**Scope:** one probe — `_delta_log/`, `metadata/`, `.hoodie/`, Paimon's `schema/` + `snapshot/`,
+else Parquet — behind an explicit opt-in, with the stated format always winning when present. Two
+constraints: an ambiguous directory (a synced table holds several) must report every format it found
+and refuse rather than pick, and the probe must not be the thing that makes T45's exposure worse by
+teaching the CLI to point a Parquet source at a Delta table.
+
+**Acceptance:** each of the five formats is detected from a table this repo's own targets wrote; a
+directory synced to three formats is refused with all three named; an explicit format is never
+overridden; the flag is documented in `docs/how-to.md`.
+
+**Commit:** `feat: detect the source format from the table directory`
+
+---
+
+## T49 — Catalog fan-out: one table into many catalogs, one identifier per target
+
+Upstream RFC-1 (XCatalogSync) syncs a single table into several catalogs, each with its own table
+identifier. polytable needs the same shape for a reason already recorded as a defect rather than a
+future requirement: `docs/features-and-limitations.md:74` says "a catalog entry registers each
+target format under the same table name, so registering multiple target formats overwrites the
+previous registration."
+
+The mechanism: `syncTargetToCatalogs` (`pkg/conversion/controller.go:132`) runs once per target
+format and calls `client.CreateOrUpdateTable(ctx, snapshot.Table, snapshot)` (`:151`);
+`GlueCatalogSyncClient` takes the name straight off that table — `tableName := table.Name`
+(`pkg/catalog/glue.go:97`). So the Delta and Iceberg targets of one dataset land on the same Glue
+entry and the second overwrites the first. `catalog.Config` (`pkg/catalog/catalog.go:52`) carries
+`Type`, `CatalogID`, `DatabaseName`, `URI`, `Properties` and `MaxPartitionsPerRequest` — there is
+nowhere to put a per-target identifier.
+
+**Decide before code, as with T24 and T42.** Does the identifier belong to the catalog entry (one
+`catalog.Config` per target, each naming its table) or to the dataset (one config holding a
+format-to-identifier map)? RFC-1 puts it on the sync target. Whichever is chosen must leave the
+existing single-target configuration working, which names no table at all and infers it from the
+source.
+
+**Acceptance:** a dataset with two target formats and one Glue catalog produces two distinct
+registrations; the existing one-target configuration keeps working with no new required field;
+`docs/features-and-limitations.md` loses the overwrite limitation instead of restating it.
+
+**Commit:** `feat: register each target format under its own catalog identifier`
+
+---
+
+## T50 — Diff the vendored REST spec against upstream PR #715
+
+A standing watch item with a fixed, small shape. Upstream #715 carries approved-but-unmerged changes
+to the XTable REST service spec; `spec/rest-service-open-api.yaml` is OpenAPI 3.0.3 with four
+operations — `getHealth` (`:50`), `convertTable` (`:64`), `getConversionStatus` (`:106`) and
+`inspectTable` (`:136`) — and the server types are generated from it by `oapi-codegen` through
+`spec/Makefile`.
+
+The point is not to adopt #715: it is unmerged, and unmerged upstream mechanisms are intent rather
+than spec. The point is to know where the two have diverged before the divergence is expensive, and
+to record each difference as deliberate or accidental.
+
+**Acceptance:** a written diff of the two specs, each difference marked as adopted, deliberately
+divergent, or an accidental drift to fix; anything adopted regenerates through `spec/Makefile` in
+the same commit; `docs/upstream-watch.md`'s #715 line updates to name the outcome.
+
+**Commit:** `docs: record the REST spec divergence from upstream #715`
+
+
 ## Non-goals
 
 - **Renaming stuttering identifiers** (`delta.DeltaCommit` → `Commit`, `catalog.CatalogType` → `Type`).
@@ -1833,6 +2312,10 @@ any OneLake work is blocked on an Azure/`abfss://` storage backend either way (s
 - **Fixing the three known model defects** (`ParseTableFormat` mixed case, `DiffFiles` map ordering and
   `PhysicalPath`-only keying, `FieldByPath` case-insensitivity). They are documented in `CLAUDE.md`;
   fix them when touching the surrounding code, not as a campaign.
-- **GCS/Azure storage backends.** T3 first — the existing S3 configuration path is not reachable from
-  config, and adding backends before fixing that repeats the mistake.
+- ~~**GCS/Azure storage backends.**~~ — **withdrawn 2026-08-22 by maintainer decision.** The
+  condition this non-goal set has been met: T3's storage-options gap was closed by T12, so a new
+  backend now has a configuration path to hang off. Azure is scheduled as **T51** (ADLS Gen2 and
+  OneLake storage) and **T52** (the OneLake catalog), and Azure support is a stated requirement
+  rather than an extension. GCS stays unscheduled — nobody has asked for it — but the reason
+  recorded here no longer applies to it either.
 - **Changing `go.mod`'s Go directive.**

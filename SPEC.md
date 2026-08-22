@@ -173,6 +173,11 @@ type Storage interface {
 ### 6.1 Delta Lake Adapter (`pkg/formats/delta`)
 - **Protocol**: Protocol action reader/writer (`minReaderVersion: 1`, `minWriterVersion: 2`).
 - **Log Management**: Sequential atomic `(N+1).json` commits inside `_delta_log/`.
+- **Checkpoints**: Every read path is seeded from `_last_checkpoint` and the classic single- or
+  multi-part checkpoint Parquet, then replays the JSON commits strictly after it, so a table whose
+  early commits were expired by log retention still reads. A truncated log with no checkpoint is a
+  hard error rather than a partial snapshot. v2 checkpoints — sidecars, the `v2Checkpoint` reader
+  feature — are refused with a message naming the reason.
 - **Schema Translation**: Bidirectional conversion between `model.Schema` and Spark StructType JSON.
 - **Actions**: Protocol, MetaData, AddFile, RemoveFile, CommitInfo.
 - **Deletion Vectors**: Reads and writes Roaring Bitmap descriptors (`storageType: "u"`).
@@ -181,8 +186,14 @@ type Storage interface {
 
 ### 6.2 Apache Iceberg Adapter (`pkg/formats/iceberg`)
 - **Metadata Specification**: Iceberg Table Metadata v2/v3 (`metadata/v{N}.metadata.json`).
-- **Manifests**: Manifest list files (`snap-<snapshot_id>-<uuid>.json`) and manifest files (`<uuid>-m0.json`).
-- **Version Hinting**: Atomic `metadata/version-hint.text` updates.
+- **Manifests**: Avro OCF manifest lists (`snap-<snapshot_id>-<attempt>-<uuid>.avro`) and manifest
+  files (`<uuid>-m0.avro`), as the Iceberg specification requires. Earlier revisions of this
+  document said JSON; that was true of the implementation until it was corrected, and no engine
+  could read the result.
+- **Version Hinting**: `metadata/version-hint.text` is written but never read. The current metadata
+  file is resolved by listing `metadata/` and taking the highest version, which is deliberate: the
+  hint file is a Hadoop-catalog convention that catalog-writing engines do not create, and trusting
+  it is the cause of a long-standing upstream defect family.
 - **Schema Mapping**: Deterministic assignment and preservation of Iceberg field IDs.
 - **Column Statistics**: Manifest `lower_bounds`/`upper_bounds`/`value_counts`/`null_value_counts` map to and from `model.ColumnStat`, keyed by field ID so names survive renames. Bounds are base64 of Iceberg's single-value binary serialization; float/double zero bounds are widened (`-0.0` lower, `0.0` upper) to respect Iceberg's total ordering. Decimal and nested-column bounds are omitted rather than encoded wrong.
 
@@ -190,6 +201,10 @@ type Storage interface {
 - **Table Properties**: Reader and serializer for `.hoodie/hoodie.properties` (`COPY_ON_WRITE` / `MERGE_ON_READ`).
 - **Timeline Engine**: Parses and writes commit files (`.hoodie/<instant>.commit`) with `HoodieCommitMetadata` and `HoodieWriteStat` payloads.
 - **Schema Mapping**: Bidirectional mapping between `model.Schema` and Avro Schema JSON (`.hoodie/.schema/<instant>.avsc`).
+- **Table Version Floor**: Reading requires `hoodie.table.version >= 6`. Hudi 1.x tables — version 9,
+  timeline under `.hoodie/timeline/` — are refused loudly on every read path, because the 0.x
+  timeline parser silently returned an empty table for them. The target continues to write version
+  6, which 1.x readers consume, so the floor is a read limit only.
 
 ### 6.4 Raw Parquet Crawler (`pkg/formats/parquet`)
 - **Directory Crawler**: Discovers unmanaged Parquet files across nested folder structures.
@@ -318,7 +333,7 @@ Phases 4 and 5 have shipped. This section previously listed them as future work.
 | :--- | :--- |
 | Catalog sync clients — AWS Glue, Iceberg REST | `pkg/catalog/{glue,rest}.go`, reached from `DatasetConfig.Catalogs` |
 | Catalog conversion sources — resolve a table as `db.table` instead of a path | `pkg/catalog/{glue,rest}_conversion.go`, reached from `DatasetConfig.SourceCatalog` |
-| Catalog partition synchronization | `pkg/catalog/partition.go` + `glue_partition.go`, applied automatically for Hive-style catalogs |
+| Catalog partition synchronization | `pkg/catalog/partition.go` + `glue_partition.go`, applied automatically for Hive-style catalogs. Tested against fakes only — no run against a real Glue catalog yet (T15) |
 | Continuous daemon and REST service | `pkg/daemon`, `cmd/polytable-service`, contract in `spec/rest-service-open-api.yaml` |
 | C-shared libraries for Python, Rust, DuckDB, C++ | `bindings/c`, built with `make bindings-c` |
 | Python SDK | `bindings/python` (`polytable`) |
@@ -328,6 +343,14 @@ Phases 4 and 5 have shipped. This section previously listed them as future work.
 
 ### 10.2 Outstanding
 
+The work queue itself lives in `docs/improvement-plan.md`; `docs/roadmap.md` sets the direction it
+comes from, and `docs/upstream-watch.md` carries the dated upstream evidence both rest on. T38–T50
+schedule the roadmap: Delta v2 checkpoints, Iceberg metadata resolution and incremental sync,
+per-manifest partition specs, rollback semantics, commit concurrency, path canonicalization,
+foreign-metadata exclusion, the fixture matrix, round-trip pairs, source-format detection, catalog
+fan-out and REST-spec drift. The table below holds only the gaps that are decisions rather than
+scheduled work.
+
 | Gap | Notes |
 | :--- | :--- |
 | **Hive Metastore** | `CatalogTypeHMS` is a declared constant that returns `ErrCatalogNotImplemented`. Java's `xtable-hive-metastore` carries a sync client, schema extractor, partition sync operations and three per-format table builders; a create-tables-only port would misrepresent itself as supported. Requires a Thrift dependency and an HMS container for integration testing. |
@@ -335,7 +358,26 @@ Phases 4 and 5 have shipped. This section previously listed them as future work.
 | ~~Performance harness~~ | **Done.** `make bench` plus `make bench-footprint`; §9 carries measured figures only, and `.github/workflows/bench.yml` compares each pull request against its merge base with `benchstat`. |
 | **Released versions** | No tags exist. The module path and repository name were settled only recently, and Go module tags are immutable, so tagging is deliberately deferred. |
 
-### 10.3 Deliberately not planned
+### 10.3 Where polytable exceeds Java XTable
+
+Capability only. §9.3 stands: no performance comparison has been run, and nothing here is one. The
+dated evidence, with upstream issue numbers, is in `docs/upstream-watch.md` under "Where polytable
+is ahead" — that file is the authority and this table is a pointer to it, not a second copy.
+
+| Capability | Standing here | Upstream |
+| :--- | :--- | :--- |
+| Apache Paimon | Source and target ship | Still recruiting contributors (#275) |
+| Python bindings | `bindings/python` ships — **built in CI but never executed there**, a gap T30 tracks | Requested, not implemented (#253) |
+| Raw Parquet source | Footer merge across files plus the Hive partition column | The single-footer schema bug is open (#901); the parquet-source effort is in flight (#553, #592) |
+| Delta checkpoints under log retention | Closed by T36 — checkpoint state seeds every read path | The failure class is open (#779) |
+| Runtime | No JVM, no Spark, one static binary | Shedding jar weight (#896/#897, 1.1 GB → 423 MB) and discussing a Spark-free runtime |
+
+Two qualifiers, because this project has published overclaims before and corrected them (T9, and the
+deletion-vector row of the README): Paimon interop is verified polytable↔polytable only until T34
+puts a real Paimon reader in the loop, and the C ABI, Python wheel and WebAssembly artifact are
+built but not exercised in CI.
+
+### 10.4 Deliberately not planned
 
 | Item | Reason |
 | :--- | :--- |

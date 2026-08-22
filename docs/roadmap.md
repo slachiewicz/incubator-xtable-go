@@ -22,7 +22,9 @@
 This page sets direction; the execution queue with acceptance criteria stays in
 [the improvement plan](improvement-plan.md), and the upstream facts this
 direction rests on are in [the upstream watch](upstream-watch.md), dated
-2026-08-22. Positioning in one sentence: upstream Java XTable is spending its
+2026-08-22. As of 2026-08-22 every item below is scheduled there as a numbered
+task — T38–T52 — so this page states why the work matters and the plan states
+what "done" means for it. Positioning in one sentence: upstream Java XTable is spending its
 next two releases on JVM-toolchain migration (Delta Kernel, Spark 4/Scala
 2.13/Java 17) while discussing a Spark-free runtime — converging on polytable's
 founding premise — so polytable's window is to close format-version and
@@ -50,6 +52,25 @@ here exists because that baseline makes it load-bearing:
   listing `metadata/*.metadata.json`, treat version tokens as opaque, take the
   metadata pointer from a configured catalog, and treat per-column stats maps
   as optional everywhere (#641/#667 NPE class).
+
+## Now: Azure, end to end
+
+A stated requirement rather than an extension, and the one direction on this
+page that is not driven by upstream: polytable must work against Azure storage
+and Azure catalogs, OneLake included. Nothing else on this page is blocked on
+it, and it is blocked on nothing.
+
+- **Azure storage backend** (T51): `abfss://` and ADLS Gen2, with the OneLake
+  path shape on top of it. Today `NewStorageForPathWithOptions` refuses the
+  scheme outright, which is the correct failure but a failure nonetheless.
+  Credential coverage is the real scope — Entra ID workload identity, managed
+  identity, service principal, SAS and account key — since a backend that only
+  accepts one of them is not deployable.
+- **OneLake and Fabric catalog** (T52): the read API is Iceberg-REST
+  compatible, so `pkg/catalog/rest.go` is the entry point rather than a new
+  client, but Entra ID authentication and Fabric's workspace/lakehouse
+  identifier shape are new surface. Upstream tracks the same idea as #810 and
+  has not built it; there is no reference implementation to follow.
 
 ## Next: incremental-sync correctness
 
@@ -119,14 +140,17 @@ method, exceeded in engine diversity, behind in scenarios (see
 Zero-JVM footprint (13.9 MiB binary, millisecond start), the embeddings the
 JVM cannot offer (C ABI, Python, WASM, REST sidecar), Paimon support, the raw
 Parquet source, and spec-first format implementations verified by foreign
-engines. Every roadmap decision above defers to these: parity work must not
+engines. The Azure work above is held to the same bar: an Azure SDK must stay
+out of the WebAssembly build the way the AWS SDK now does, behind the same
+build tags. Every roadmap decision above defers to these: parity work must not
 add a runtime dependency that erodes them.
 
 ## Watching, not building
 
 Hudi RFC-93 (write-time Iceberg metadata, which routes around post-hoc sync),
 DuckLake (#726), Parquet Variant and geospatial types (#803, #804 — gated on
-codec support in `parquet-go`), OneLake/Fabric (#810, blocked on an Azure
-storage backend either way), cross-format indexing (#887), and upstream's
+codec support in `parquet-go`), cross-format indexing (#887), and upstream's
 Spark-free runtime thread — the one to watch closest, since its API shape is
-the convergence point between the two projects.
+the convergence point between the two projects. OneLake and Fabric left this
+list on 2026-08-22: they are a stated requirement now, scheduled as T51 and
+T52 below.

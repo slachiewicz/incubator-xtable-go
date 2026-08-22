@@ -133,12 +133,17 @@ Apache XTable — see its
 [Creating your first interoperable table](https://xtable.apache.org/docs/how-to)
 guide, which covers both stores.
 
-Interest in Microsoft OneLake and Fabric is tracked upstream in
-[apache/incubator-xtable#810](https://github.com/apache/incubator-xtable/issues/810).
-Any future OneLake read path in polytable would go through the
-Iceberg REST-compatible endpoint — see
-[Sync to an Iceberg REST catalog](iceberg-rest-catalog.md) — but nothing is
-implemented.
+Azure support is planned, and is a requirement rather than an extension: an
+ADLS Gen2 and OneLake storage backend is scheduled as T51 in
+[the improvement plan](improvement-plan.md), and the OneLake and Fabric catalog
+as T52. Until both land, this section describes what happens today. Google
+Cloud Storage remains unscheduled.
+
+The OneLake read path goes through the Iceberg REST-compatible endpoint — see
+[Sync to an Iceberg REST catalog](iceberg-rest-catalog.md) — rather than a
+separate catalog client. Upstream tracks the same idea as
+[apache/incubator-xtable#810](https://github.com/apache/incubator-xtable/issues/810)
+and has not implemented it either.
 
 ## Storage configuration reference
 
