@@ -106,10 +106,12 @@ usual. Explicitly set dataset fields win over resolved ones.
   token in `properties.token`.
 - Nessie: the Iceberg REST endpoint is served under `/iceberg` on the Nessie
   server, for example `http://localhost:19120/iceberg`.
-- Microsoft OneLake and Fabric: set `auth: entra` and leave `scope` at its
-  default. Listing tables is not available for REST catalogs, so
-  `polytable sync --catalog ... --database ...` does not scan a Fabric
-  workspace.
+- Microsoft OneLake and Fabric: not usable yet. The endpoint is
+  `https://onelake.table.fabric.microsoft.com/iceberg`, and it requires prefix
+  negotiation that polytable does not implement — see
+  [Azure and OneLake](azure.md#catalogs-on-azure) and T53 in
+  [the improvement plan](improvement-plan.md). It is also read-only, so it can
+  serve a conversion source but never accept a registration.
 
 These endpoint shapes come from the respective vendors' documentation; only the
 `tabulario/iceberg-rest` image is exercised by this repository's integration

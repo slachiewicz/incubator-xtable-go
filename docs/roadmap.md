@@ -67,11 +67,19 @@ it, and it is blocked on nothing.
   Credential coverage is the real scope — Entra ID workload identity, managed
   identity, service principal, SAS and account key — since a backend that only
   accepts one of them is not deployable.
-- **OneLake and Fabric catalog** (T52): the read API is Iceberg-REST
-  compatible, so `pkg/catalog/rest.go` is the entry point rather than a new
-  client, but Entra ID authentication and Fabric's workspace/lakehouse
-  identifier shape are new surface. Upstream tracks the same idea as #810 and
-  has not built it; there is no reference implementation to follow.
+- **OneLake and Fabric catalog** (T52 landed, T53 open): the read API is
+  Iceberg-REST compatible, so `pkg/catalog/rest.go` is the entry point rather
+  than a new client. Entra ID authentication landed as T52. What remains is
+  protocol conformance: the endpoint requires the `GET /v1/config` prefix
+  negotiation the client skips, and it is read-only, so it can serve a
+  conversion source but never accept a registration. Upstream tracks the same
+  idea as #810 and has not built it.
+
+  Worth knowing while planning this: Fabric's own Iceberg responses carry an
+  `XTABLE_METADATA` property naming `sourceTableFormat: DELTA`. Fabric exposes
+  Delta as Iceberg through Apache XTable, so the shared-key compatibility
+  behind the interop nightly is load-bearing for Fabric rather than
+  theoretical.
 
 ## Next: incremental-sync correctness
 

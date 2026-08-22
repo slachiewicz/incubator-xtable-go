@@ -126,6 +126,13 @@ exercise those stores — treat them as unverified.
 
 ## Sync a table in Azure
 
+This section covers the quick path — the scheme, a minimal config, and the
+credential order. For URI shapes in full (including the OneLake mapping and
+its GUID workspace form), every credential source in the Entra ID chain, all
+four endpoint-override cases, worked configs for workload identity, a shared
+key, OneLake, and Azurite, catalog support, and Azure-specific
+troubleshooting, see [Azure Data Lake Storage and OneLake](azure.md).
+
 To sync a table in Azure Data Lake Storage, point the dataset's
 `tableBasePath` key at an `abfss://` URI. The container comes first, then the
 storage account host after an `@`, then the path within the container:
@@ -244,3 +251,6 @@ reaches polytable only through the `AZURE_STORAGE_SAS_TOKEN` and
   table in Glue or discover tables to sync from it.
 - [Sync to an Iceberg REST catalog](iceberg-rest-catalog.md) such as Nessie,
   Polaris, or Unity Catalog.
+- [Azure Data Lake Storage and OneLake](azure.md) for the extended Azure
+  reference: full credential chain, endpoint derivation, worked configs, and
+  Azurite.

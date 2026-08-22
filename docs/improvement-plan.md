@@ -1783,7 +1783,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, and T38–T50 from the roadmap |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T53 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -2547,7 +2547,7 @@ all three Entra spellings, an unknown value, and a nil `Properties` map. ~20 con
 through one client are clean under `-race`, which matters because the cached token is shared mutable
 state. `make check` green.
 
-**Why ⚠️ — three criteria unmet, one of them the headline:**
+**Why ⚠️ — four criteria unmet, and one of them was only discovered after the code landed:**
 
 1. **No Fabric lakehouse table has been resolved or converted.** Everything above is unit-level. The
    acceptance criterion needs a Fabric workspace, and none was available.
@@ -2558,7 +2558,18 @@ state. `make check` green.
    endpoint. `scope` stays configurable because a non-OneLake REST catalog behind Entra ID may want
    a different audience.
 
-3. **Listing is still unavailable**, so the acceptance clause "resolves as a conversion source by
+3. **The endpoint needs prefix negotiation polytable does not do, and this is the finding that
+   matters.** Microsoft publishes OneLake's Iceberg REST endpoint at
+   `https://onelake.table.fabric.microsoft.com/iceberg`. A client first calls
+   `GET /v1/config?warehouse=<Workspace>/<DataItem>`, and the response's `overrides.prefix` goes
+   into every later path as `/v1/{prefix}/namespaces/...`. polytable builds `/v1/namespaces/...`
+   with no prefix segment (`pkg/catalog/rest.go:110`, `:128`, `:179`;
+   `pkg/catalog/rest_conversion.go:98`), so **every request would miss regardless of
+   authentication**. Scheduled as **T53**. The same page settles two other things: the endpoint is
+   read-only — its advertised operations are `GET` and `HEAD` only — so the sync client can never
+   register a table into a Fabric workspace through it, and the sample configuration requests
+   `https://storage.azure.com/.default`, confirming `DefaultOneLakeScope` exactly.
+4. **Listing is still unavailable**, so the acceptance clause "resolves as a conversion source by
    identifier" is met only for `GetSourceTable`. `docs/iceberg-rest-catalog.md` now documents the
    `auth`, `token` and `scope` properties, the OneLake mode and this listing limit, which closes
    the documentation half of the acceptance.
@@ -2567,6 +2578,59 @@ Also still true and not part of this task: `ListTables` yields `ErrCatalogNotImp
 catalogs (`pkg/catalog/rest_conversion.go`), so T23's `--catalog … --database` discovery does not
 reach a OneLake workspace. Whether Fabric supports listing, and whether a workspace maps onto
 `DatabaseName`, stays open.
+
+---
+
+## T53 — Iceberg REST: negotiate the catalog prefix before addressing anything
+
+Found while documenting T52, by reading Microsoft's OneLake table-API guide rather than the code.
+It is a general Iceberg REST conformance gap that happens to block OneLake completely.
+
+The REST catalog specification has clients call `GET /v1/config?warehouse=<warehouse>` first. The
+response carries `overrides.prefix`, and every later path is `/v1/{prefix}/namespaces/...`.
+polytable never makes that call and hardcodes the prefix-less form in four places:
+`pkg/catalog/rest.go:110` (create), `:128` (commit), `:179` (drop) and
+`pkg/catalog/rest_conversion.go:98` (load). A catalog that returns an empty prefix — Nessie and the
+`tabulario/iceberg-rest` image the test suite uses — works by accident, which is why this has gone
+unnoticed.
+
+OneLake does not return an empty prefix. Its warehouse is `<WorkspaceID>/<DataItemID>` or
+`<WorkspaceName>/<DataItemName>.<DataItemType>`, and the config response's prefix is "usually the
+same as the warehouse". So every polytable request to a Fabric workspace misses, whatever the
+credentials are.
+
+Two related facts from the same source, which shape the scope:
+
+- **The OneLake endpoint is read-only.** It advertises `GET` and `HEAD` over namespaces and tables
+  and nothing else. `IcebergRESTCatalogClient.CreateOrUpdateTable` can therefore never succeed
+  against it. The reachable half is `IcebergRESTConversionSource` — reading a Fabric table as a
+  conversion source. A target that cannot register must fail with a message saying the catalog is
+  read-only, not with a bare 404 or 405.
+- **`ListTables` becomes implementable.** The endpoint advertises
+  `GET /v1/{prefix}/namespaces` and `GET /v1/{prefix}/namespaces/{namespace}/tables`, so the
+  `ErrCatalogNotImplemented` that `pkg/catalog/rest_conversion.go` returns today is a gap rather
+  than a protocol limit. It is what would let `polytable sync --catalog ... --database ...` scan a
+  Fabric workspace.
+
+**A `warehouse` property is needed**, since `catalog.Config` has `URI`, `DatabaseName` and
+`Properties` but nothing that carries a warehouse. `DatabaseName` maps to the Iceberg namespace —
+`dbo` in Fabric's examples — so it cannot double as the warehouse.
+
+**Worth recording for its own sake:** the sample `GET /v1/{prefix}/namespaces/{ns}/tables/{table}`
+response in Microsoft's guide carries an `XTABLE_METADATA` table property and the same key in the
+snapshot summary, holding `lastInstantSynced` and `sourceTableFormat: DELTA`. Fabric is exposing
+Delta tables as Iceberg through Apache XTable itself. That makes the shared-key claim behind T30
+directly load-bearing for Fabric interop rather than a theoretical nicety: a table Fabric published
+carries the metadata polytable reads, and vice versa.
+
+**Acceptance:** a config call resolves the prefix once per client and every subsequent path uses
+it; a catalog returning no prefix behaves exactly as today, pinned by the existing
+`tabulario/iceberg-rest` dockertest suite so this is provably not a regression; a `warehouse`
+property reaches the config call; `ListTables` is implemented for REST catalogs; and a write
+attempt against a read-only catalog fails with a message naming that as the reason. The OneLake leg
+needs a Fabric workspace — see `docs/azure-test-environment.md`.
+
+**Commit:** `fix: negotiate the Iceberg REST catalog prefix before addressing tables`
 
 ---
 
