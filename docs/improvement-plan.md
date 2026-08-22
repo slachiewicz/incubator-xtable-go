@@ -1780,12 +1780,12 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T45, T53, T54, T55, T56, T58 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T15 (via moto), T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T40, T45, T53, T54, T55, T56, T58 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T44, T46–T50 from the roadmap, and T57, T59, T60, T61, T62, T63 |
+| 🎯 Open queue | T24, T30, T34, T37, T38, T39, T41–T44, T46–T50 from the roadmap, and T57, T59 (OAuth2 half), T60, T61, T62 (size), T63, T64 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -3353,6 +3353,45 @@ still convert unchanged; and a fuzz or table test covers at least the nested-gro
 triggered this.
 
 **Commit:** `fix: return an error instead of panicking on an unmappable Parquet schema`
+
+---
+
+## T64 — Catalogs that vend storage credentials
+
+Found by running Cloudflare R2's Data Catalog. Its `GET /v1/config` response carries
+`overrides["s3.signer.uri"]`, and its advertised endpoints include
+`GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials`.
+
+R2 **vends per-table storage credentials through the catalog**. So does AWS S3 Tables, and the
+Iceberg REST specification defines the mechanism generally: a client asks the catalog for the
+table, and the catalog returns short-lived, scoped credentials for the storage under it, rather than
+the client holding long-lived keys for the whole bucket.
+
+polytable resolves storage entirely separately from the catalog. `Controller.createSource`
+(`pkg/conversion/controller.go`) builds a `Storage` from the dataset's own `StorageConfig` and the
+path scheme; nothing in `pkg/catalog` ever influences it. So a user pointing polytable at a
+credential-vending catalog must independently configure credentials broad enough to cover every
+table it might resolve — which is exactly what vending exists to avoid.
+
+**This is a design gap, not a bug.** Nothing is broken today: supply the storage credentials
+yourself and it works. What is missing is the safer path, and it becomes more pressing as managed
+catalogs become the normal deployment.
+
+**The shape of the work.** `catalog.SourceTable` would carry optional credentials, and the
+conversion path would prefer them over the dataset's `StorageConfig` when present. That crosses a
+boundary the code currently keeps clean — `pkg/catalog` has never influenced `pkg/io` — so the
+decision is whether that separation is worth keeping. Note the credentials are short-lived, so
+whatever carries them needs a refresh story, not a one-shot fetch, and `Storage` has no notion of
+re-authenticating today.
+
+**Related but distinct:** T59's SigV4 and OAuth2 work is about authenticating *to the catalog*. This
+is about the catalog authenticating you *to the storage*. Do not conflate them.
+
+**Acceptance:** a table resolved from a credential-vending catalog is readable using only the
+credentials that catalog returned, with no bucket-wide credentials configured; the credentials
+refresh before expiry on a long sync; and a catalog that vends nothing behaves exactly as today.
+
+**Commit:** `feat: use storage credentials vended by the catalog`
 
 ---
 
