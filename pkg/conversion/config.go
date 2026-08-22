@@ -28,6 +28,8 @@ import (
 )
 
 // StorageConfig carries optional object-store overrides (custom endpoint, path-style addressing).
+// Its top-level fields configure S3 and are named without a prefix for backward compatibility; the
+// Azure block is nested.
 type StorageConfig struct {
 	// Region is the AWS region for S3 storage (e.g., "us-west-2").
 	Region string `json:"region,omitempty" yaml:"region,omitempty"`
@@ -35,6 +37,24 @@ type StorageConfig struct {
 	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	// UsePathStyle enables path-style addressing for S3 (default is virtual-hosted style).
 	UsePathStyle bool `json:"usePathStyle,omitempty" yaml:"usePathStyle,omitempty"`
+	// Azure carries Azure Data Lake Storage and OneLake overrides.
+	Azure *AzureStorageConfig `json:"azure,omitempty" yaml:"azure,omitempty"`
+}
+
+// AzureStorageConfig carries Azure Data Lake Storage and OneLake overrides.
+//
+// It holds no credentials on purpose, matching S3: secrets reach the process through the
+// environment or the Entra ID credential chain, never through a configuration file that gets
+// committed, logged or POSTed to the REST service.
+type AzureStorageConfig struct {
+	// Endpoint overrides the blob service URL derived from the path's host. Azurite needs it, and
+	// so does any deployment whose blob host is not derivable from its abfss:// host.
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	// AccountName overrides the storage account parsed from the path's host. Azurite needs it:
+	// its service URL carries the account in the path rather than the host.
+	AccountName string `json:"accountName,omitempty" yaml:"accountName,omitempty"`
+	// Anonymous selects unauthenticated access, for a public container.
+	Anonymous bool `json:"anonymous,omitempty" yaml:"anonymous,omitempty"`
 }
 
 // DatasetConfig defines the synchronization configuration for a single table dataset.
@@ -126,29 +146,53 @@ func ResolveSourceCatalog(ctx context.Context, cfg *DatasetConfig, newSource Cat
 	return nil
 }
 
-// ToS3OptionFuncs converts StorageConfig to S3 option functions for storage initialization.
-func (c *StorageConfig) ToS3OptionFuncs() []func(*io.S3Options) {
+// ToOptionFuncs converts StorageConfig to storage option functions. It is the single place this
+// translation lives: the CLI, the daemon, the REST server and the C bindings all call it, and the
+// one that used to inline its own copy drifted.
+func (c *StorageConfig) ToOptionFuncs() []func(*io.Options) {
 	if c == nil {
 		return nil
 	}
 
-	optFns := make([]func(*io.S3Options), 0, 3)
+	optFns := make([]func(*io.Options), 0, 6)
 
 	if c.Region != "" {
-		optFns = append(optFns, func(opts *io.S3Options) {
-			opts.Region = c.Region
+		optFns = append(optFns, func(opts *io.Options) {
+			opts.S3.Region = c.Region
 		})
 	}
 
 	if c.Endpoint != "" {
-		optFns = append(optFns, func(opts *io.S3Options) {
-			opts.Endpoint = c.Endpoint
+		optFns = append(optFns, func(opts *io.Options) {
+			opts.S3.Endpoint = c.Endpoint
 		})
 	}
 
 	if c.UsePathStyle {
-		optFns = append(optFns, func(opts *io.S3Options) {
-			opts.UsePathStyle = true
+		optFns = append(optFns, func(opts *io.Options) {
+			opts.S3.UsePathStyle = true
+		})
+	}
+
+	if c.Azure == nil {
+		return optFns
+	}
+
+	if c.Azure.Endpoint != "" {
+		optFns = append(optFns, func(opts *io.Options) {
+			opts.Azure.Endpoint = c.Azure.Endpoint
+		})
+	}
+
+	if c.Azure.AccountName != "" {
+		optFns = append(optFns, func(opts *io.Options) {
+			opts.Azure.AccountName = c.Azure.AccountName
+		})
+	}
+
+	if c.Azure.Anonymous {
+		optFns = append(optFns, func(opts *io.Options) {
+			opts.Azure.Anonymous = true
 		})
 	}
 

@@ -69,17 +69,7 @@ func (s *Server) getStorage(ctx context.Context, path string, storageConfig *con
 		return s.storage, nil
 	}
 	if storageConfig != nil {
-		var optFns []func(*io.S3Options)
-		if storageConfig.Region != "" {
-			optFns = append(optFns, func(opts *io.S3Options) { opts.Region = storageConfig.Region })
-		}
-		if storageConfig.Endpoint != "" {
-			optFns = append(optFns, func(opts *io.S3Options) { opts.Endpoint = storageConfig.Endpoint })
-		}
-		if storageConfig.UsePathStyle {
-			optFns = append(optFns, func(opts *io.S3Options) { opts.UsePathStyle = true })
-		}
-		return io.NewStorageForPathWithOptions(ctx, path, optFns...)
+		return io.NewStorageForPathWithOptions(ctx, path, storageConfig.ToOptionFuncs()...)
 	}
 	return io.NewStorageForPath(ctx, path)
 }

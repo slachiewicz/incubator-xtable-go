@@ -33,83 +33,83 @@ import (
 	"github.com/slachiewicz/polytable/pkg/model"
 )
 
-func TestStorageConfig_ToS3OptionFuncs_NilConfig(t *testing.T) {
+func TestStorageConfig_ToOptionFuncs_NilConfig(t *testing.T) {
 	t.Parallel()
 
 	var config *conversion.StorageConfig
-	optFns := config.ToS3OptionFuncs()
+	optFns := config.ToOptionFuncs()
 
 	assert.Nil(t, optFns, "nil config should produce nil option functions")
 }
 
-func TestStorageConfig_ToS3OptionFuncs_EmptyConfig(t *testing.T) {
+func TestStorageConfig_ToOptionFuncs_EmptyConfig(t *testing.T) {
 	t.Parallel()
 
 	config := &conversion.StorageConfig{}
-	optFns := config.ToS3OptionFuncs()
+	optFns := config.ToOptionFuncs()
 
 	assert.NotNil(t, optFns, "empty config should produce non-nil slice")
 	assert.Empty(t, optFns, "empty config should produce empty slice")
 }
 
-func TestStorageConfig_ToS3OptionFuncs_RegionOnly(t *testing.T) {
+func TestStorageConfig_ToOptionFuncs_RegionOnly(t *testing.T) {
 	t.Parallel()
 
 	config := &conversion.StorageConfig{
 		Region: "us-west-2",
 	}
 
-	optFns := config.ToS3OptionFuncs()
+	optFns := config.ToOptionFuncs()
 
 	require.Len(t, optFns, 1, "region-only config should produce one option function")
 
-	opts := &io.S3Options{}
+	opts := &io.Options{}
 	optFns[0](opts)
 
-	assert.Equal(t, "us-west-2", opts.Region)
-	assert.Empty(t, opts.Endpoint)
-	assert.False(t, opts.UsePathStyle)
+	assert.Equal(t, "us-west-2", opts.S3.Region)
+	assert.Empty(t, opts.S3.Endpoint)
+	assert.False(t, opts.S3.UsePathStyle)
 }
 
-func TestStorageConfig_ToS3OptionFuncs_EndpointOnly(t *testing.T) {
+func TestStorageConfig_ToOptionFuncs_EndpointOnly(t *testing.T) {
 	t.Parallel()
 
 	config := &conversion.StorageConfig{
 		Endpoint: "http://localhost:9000",
 	}
 
-	optFns := config.ToS3OptionFuncs()
+	optFns := config.ToOptionFuncs()
 
 	require.Len(t, optFns, 1, "endpoint-only config should produce one option function")
 
-	opts := &io.S3Options{}
+	opts := &io.Options{}
 	optFns[0](opts)
 
-	assert.Empty(t, opts.Region)
-	assert.Equal(t, "http://localhost:9000", opts.Endpoint)
-	assert.False(t, opts.UsePathStyle)
+	assert.Empty(t, opts.S3.Region)
+	assert.Equal(t, "http://localhost:9000", opts.S3.Endpoint)
+	assert.False(t, opts.S3.UsePathStyle)
 }
 
-func TestStorageConfig_ToS3OptionFuncs_UsePathStyleOnly(t *testing.T) {
+func TestStorageConfig_ToOptionFuncs_UsePathStyleOnly(t *testing.T) {
 	t.Parallel()
 
 	config := &conversion.StorageConfig{
 		UsePathStyle: true,
 	}
 
-	optFns := config.ToS3OptionFuncs()
+	optFns := config.ToOptionFuncs()
 
 	require.Len(t, optFns, 1, "path-style-only config should produce one option function")
 
-	opts := &io.S3Options{}
+	opts := &io.Options{}
 	optFns[0](opts)
 
-	assert.Empty(t, opts.Region)
-	assert.Empty(t, opts.Endpoint)
-	assert.True(t, opts.UsePathStyle)
+	assert.Empty(t, opts.S3.Region)
+	assert.Empty(t, opts.S3.Endpoint)
+	assert.True(t, opts.S3.UsePathStyle)
 }
 
-func TestStorageConfig_ToS3OptionFuncs_AllOptions(t *testing.T) {
+func TestStorageConfig_ToOptionFuncs_AllOptions(t *testing.T) {
 	t.Parallel()
 
 	config := &conversion.StorageConfig{
@@ -118,21 +118,21 @@ func TestStorageConfig_ToS3OptionFuncs_AllOptions(t *testing.T) {
 		UsePathStyle: true,
 	}
 
-	optFns := config.ToS3OptionFuncs()
+	optFns := config.ToOptionFuncs()
 
 	require.Len(t, optFns, 3, "all options should produce three option functions")
 
-	opts := &io.S3Options{}
+	opts := &io.Options{}
 	for _, fn := range optFns {
 		fn(opts)
 	}
 
-	assert.Equal(t, "eu-west-1", opts.Region)
-	assert.Equal(t, "https://minio.example.com", opts.Endpoint)
-	assert.True(t, opts.UsePathStyle)
+	assert.Equal(t, "eu-west-1", opts.S3.Region)
+	assert.Equal(t, "https://minio.example.com", opts.S3.Endpoint)
+	assert.True(t, opts.S3.UsePathStyle)
 }
 
-func TestStorageConfig_ToS3OptionFuncs_PartialOptions(t *testing.T) {
+func TestStorageConfig_ToOptionFuncs_PartialOptions(t *testing.T) {
 	t.Parallel()
 
 	config := &conversion.StorageConfig{
@@ -140,18 +140,18 @@ func TestStorageConfig_ToS3OptionFuncs_PartialOptions(t *testing.T) {
 		Endpoint: "http://s3-gateway.local",
 	}
 
-	optFns := config.ToS3OptionFuncs()
+	optFns := config.ToOptionFuncs()
 
 	require.Len(t, optFns, 2, "partial options should produce two option functions")
 
-	opts := &io.S3Options{}
+	opts := &io.Options{}
 	for _, fn := range optFns {
 		fn(opts)
 	}
 
-	assert.Equal(t, "ap-southeast-2", opts.Region)
-	assert.Equal(t, "http://s3-gateway.local", opts.Endpoint)
-	assert.False(t, opts.UsePathStyle)
+	assert.Equal(t, "ap-southeast-2", opts.S3.Region)
+	assert.Equal(t, "http://s3-gateway.local", opts.S3.Endpoint)
+	assert.False(t, opts.S3.UsePathStyle)
 }
 
 func TestDatasetConfig_StorageField(t *testing.T) {
@@ -165,7 +165,7 @@ func TestDatasetConfig_StorageField(t *testing.T) {
 	}
 
 	require.NotNil(t, config.Storage, "storage field should be set")
-	optFns := config.Storage.ToS3OptionFuncs()
+	optFns := config.Storage.ToOptionFuncs()
 
 	require.Len(t, optFns, 2, "dataset storage should produce option functions")
 }
@@ -176,6 +176,126 @@ func TestDatasetConfig_NilStorage(t *testing.T) {
 	config := &conversion.DatasetConfig{}
 
 	require.Nil(t, config.Storage, "storage field should be nil when not set")
+}
+
+func TestStorageConfig_ToOptionFuncs_AzureEndpointOnly(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Azure: &conversion.AzureStorageConfig{
+			Endpoint: "https://myaccount.blob.core.windows.net",
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 1, "Azure endpoint-only config should produce one option function")
+
+	opts := &io.Options{}
+	optFns[0](opts)
+
+	assert.Equal(t, "https://myaccount.blob.core.windows.net", opts.Azure.Endpoint)
+	assert.Empty(t, opts.Azure.AccountName)
+	assert.False(t, opts.Azure.Anonymous)
+}
+
+func TestStorageConfig_ToOptionFuncs_AzureAccountNameOnly(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Azure: &conversion.AzureStorageConfig{
+			AccountName: "myaccount",
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 1, "Azure account name-only config should produce one option function")
+
+	opts := &io.Options{}
+	optFns[0](opts)
+
+	assert.Empty(t, opts.Azure.Endpoint)
+	assert.Equal(t, "myaccount", opts.Azure.AccountName)
+	assert.False(t, opts.Azure.Anonymous)
+}
+
+func TestStorageConfig_ToOptionFuncs_AzureAnonymousOnly(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Azure: &conversion.AzureStorageConfig{
+			Anonymous: true,
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 1, "Azure anonymous-only config should produce one option function")
+
+	opts := &io.Options{}
+	optFns[0](opts)
+
+	assert.Empty(t, opts.Azure.Endpoint)
+	assert.Empty(t, opts.Azure.AccountName)
+	assert.True(t, opts.Azure.Anonymous)
+}
+
+func TestStorageConfig_ToOptionFuncs_AllFieldsS3AndAzure(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Region:       "us-west-2",
+		Endpoint:     "https://minio.example.com",
+		UsePathStyle: true,
+		Azure: &conversion.AzureStorageConfig{
+			Endpoint:    "https://myaccount.blob.core.windows.net",
+			AccountName: "myaccount",
+			Anonymous:   true,
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 6, "fully populated config should produce six option functions")
+
+	opts := &io.Options{}
+	for _, fn := range optFns {
+		fn(opts)
+	}
+
+	assert.Equal(t, "us-west-2", opts.S3.Region)
+	assert.Equal(t, "https://minio.example.com", opts.S3.Endpoint)
+	assert.True(t, opts.S3.UsePathStyle)
+	assert.Equal(t, "https://myaccount.blob.core.windows.net", opts.Azure.Endpoint)
+	assert.Equal(t, "myaccount", opts.Azure.AccountName)
+	assert.True(t, opts.Azure.Anonymous)
+}
+
+func TestStorageConfig_ToOptionFuncs_AzureZeroFields(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Region: "us-east-1",
+		Azure:  &conversion.AzureStorageConfig{
+			// All fields are zero-valued
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	// Only the Region field should contribute one function; zero-valued Azure fields should not
+	require.Len(t, optFns, 1, "Azure block with all zero fields should not contribute any functions")
+
+	opts := &io.Options{}
+	for _, fn := range optFns {
+		fn(opts)
+	}
+
+	assert.Equal(t, "us-east-1", opts.S3.Region)
+	assert.Empty(t, opts.Azure.Endpoint)
+	assert.Empty(t, opts.Azure.AccountName)
+	assert.False(t, opts.Azure.Anonymous)
 }
 
 // fakeConversionSource returns a canned catalog lookup. For discovery it also serves a canned table

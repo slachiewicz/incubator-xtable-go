@@ -1783,10 +1783,12 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T51–T52 for Azure |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T52 |
+| ⚠️ Landed, unverified against the real service | T51 (Azure storage — never run against Azurite or Azure); the task names its unmet criteria |
 
-**Picking up the queue.** **T51** is the one item with a stated external requirement behind it, so
-it outranks value ordering; **T52** follows it. Otherwise by value: **T40** first — the Iceberg
+**Picking up the queue.** **T52** is next — it is what makes T51 reachable from a Fabric workspace.
+T51 itself needs an environment rather than more work: a Docker host runs
+`test/dockertest_azurite_test.go`. Otherwise by value: **T40** first — the Iceberg
 source has no incremental sync at all, which is a correctness defect rather than a gap — then T45
 (the Parquet source crawls other formats' metadata as data), then T37's 1.x timeline, then T34.
 
@@ -2314,7 +2316,7 @@ the same commit; `docs/upstream-watch.md`'s #715 line updates to name the outcom
 
 ---
 
-## T51 — Azure storage: ADLS Gen2, `abfss://`, and the OneLake path shape
+## T51 — Azure storage: ADLS Gen2, `abfss://`, and the OneLake path shape ⚠️ LANDED, NOT RUN AGAINST AZURE
 
 **A stated requirement, not an extension** (maintainer decision, 2026-08-22), and the reason the
 GCS/Azure non-goal was withdrawn: its stated precondition — T3's unreachable storage configuration —
@@ -2370,6 +2372,85 @@ packages; `pkg/io/storage_scheme_test.go` still refuses `gs://`, `hdfs://` and `
 last is out of scope — and `wasbs://` is currently untested either way, so state which it is.
 
 **Commit:** `feat: add an Azure Data Lake Storage backend`
+
+### Outcome ⚠️ — the code is in and the gate is green; nothing has touched real Azure
+
+**The scheme-list fix came first and stands on its own.** `uriSchemes` (`pkg/io/storage.go`) now
+carries `abfss://`, `abfs://`, `wasbs://` and `wasb://`, with `azureSchemes` and `IsAzurePath`
+beside it. That is not preparation for the backend, it is a bug fix: `RelativizePath` treats a path
+with no recognized scheme as *already relative*, so before this change every Azure path handed to
+the helper T35 added to stop path mangling was silently mangled by it. Hadoop's ABFS driver spells
+one store four ways and foreign metadata carries whichever the writing engine used, so all four
+belong there whether or not a backend exists.
+
+**The option type was generalized, as the task required.**
+`NewStorageForPathWithOptions(ctx, path, ...func(*Options))` replaces the S3-specific signature;
+`Options` is `{S3 S3Options; Azure AzureOptions}`, because the router picks a backend from the path
+scheme, which the caller generally has not inspected. `StorageConfig.ToS3OptionFuncs` became
+`ToOptionFuncs`. All six call sites were swept, including the two the task named: `pkg/daemon/server.go`
+no longer inlines its own drifted copy of the translation, and `test/dockertest_minio_matrix_test.go`
+stopped re-implementing it too. `polytable inspect` gained `--storage-region`, `--storage-endpoint`,
+`--storage-path-style`, `--azure-endpoint`, `--azure-account` and `--azure-anonymous`: storage
+configuration was previously unreachable from that command at all.
+
+**azblob, not azdatalake — both are official Microsoft SDKs, and the choice is about API surface,
+not vendor support.** `sdk/storage/azdatalake` speaks the ADLS Gen2 (dfs) API and adds hierarchical
+operations: real directories, atomic directory rename, POSIX ACLs, recursive delete.
+`sdk/storage/azblob` speaks the Blob API against the same account and the same bytes — ADLS Gen2 is
+Blob Storage with a hierarchical-namespace flag, and both endpoints serve one store. polytable's
+`Storage` contract is flat read/write/list/exists/delete on single paths, so **not one of
+azdatalake's advantages is reachable through it**. Against that, Azurite — the only Azure emulator
+that can run in CI — implements the Blob API and not the dfs one (Azure/Azurite#409, #553, #909 are
+still open), so an azdatalake implementation would have had no executable test path at all. If the
+`Storage` interface ever grows directory rename or ACLs, that is when azdatalake earns its place.
+
+**Credentials are the scope, and they are not config fields.** `NewAzureStorage` selects, first match
+wins: SAS (`SASToken` or `AZURE_STORAGE_SAS_TOKEN`), shared key (`AccountKey` or `AZURE_STORAGE_KEY`),
+anonymous when configured, then `azidentity.NewDefaultAzureCredential` — the one call that covers
+workload identity, managed identity, an environment service principal and the Azure CLI.
+`AzureStorageConfig` exposes only `endpoint`, `accountName` and `anonymous`; secrets reach the
+process through the environment, never through a file that gets committed, logged or POSTed to the
+REST service. This mirrors `S3Options`, which has no credential fields either.
+
+**WASM stays clean.** `pkg/io/azure.go` is `//go:build !js` with an `azure_js.go` stub returning
+`ErrAzureUnsupported`, matching `ErrS3Unsupported` and `ErrGlueUnsupported`.
+`GOOS=js GOARCH=wasm go list -deps ./cmd/polytable-wasm | grep -ci azure` reports **0**.
+
+**Binary cost, measured on this machine with `-ldflags="-s -w"`:** 33.1 MiB before, 36.5 MiB after —
+**+3.4 MiB**, almost all of it `azidentity` and its MSAL dependency. Recorded as a delta because that
+is the comparable number; note `SPEC.md` §9.2's 13.9 MiB was measured in a different environment and
+is not rewritten from this one.
+
+**What was checked:** `make check` green, `go test -short -race ./pkg/...` clean, `abfss://`,
+`abfs://`, `wasbs://` and `wasb://` each route to `*io.AzureStorage`, and `ParseAzureURI` is
+table-tested including the OneLake workspace-as-container shape and the four malformed cases. The
+`storage_scheme_test.go` pin that asserted `abfss://` was refused is inverted rather than deleted,
+so it now proves the opposite.
+
+**Why this is ⚠️ and not ✅ — four acceptance criteria are unmet:**
+
+1. **The Azurite end-to-end suite has never executed.** `test/dockertest_azurite_test.go` is
+   written, compiles, and skips correctly under `-short`, but no Docker daemon was available here.
+   Nothing in this task has talked to a real blob endpoint, emulated or otherwise.
+2. **No credential mode is exercised.** The account-key path is what the unrun Azurite suite would
+   cover; SAS, anonymous and the Entra chain have no test at all.
+3. **No OneLake request has been made**, though the shapes are now sourced rather than guessed.
+   Microsoft documents the abfss form as
+   `abfs[s]://<workspace>@onelake.dfs.fabric.microsoft.com/<item>.<itemtype>/<path>/<fileName>`,
+   with "the account name is always `onelake`, the container name is your workspace name" — which
+   is exactly what `ParseAzureURI` produces — and documents `onelake.blob.fabric.microsoft.com`
+   as carrying the same compatibility as the ADLS endpoint, so the `.dfs.` → `.blob.` swap is the
+   documented pair. Three host shapes it cannot derive are what `Endpoint` is for, and all three
+   are now named in the code comment: the regional endpoint
+   `<region>-onelake.dfs.fabric.microsoft.com` (which OneLake recommends over the global one,
+   since resolving the global endpoint for an out-of-region workspace can move data across a
+   region boundary), a workspace private-link FQDN, and `api.onelake.fabric.microsoft.com`, which
+   contains neither `.dfs.` nor `.blob.` and passes through the swap untouched.
+4. **`wasbs://` and `wasb://` are routed and parse-tested but never run**, so the task's own
+   "state which it is" clause resolves to: in scope, untested.
+
+Closing this to ✅ needs a Docker host for item 1 and an Azure subscription for the rest. Until then
+`docs/features-and-limitations.md` says so, and the format matrix must not claim Azure interop.
 
 ---
 

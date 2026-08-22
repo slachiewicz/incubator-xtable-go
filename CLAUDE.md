@@ -59,9 +59,10 @@ under the toolchain you are using. `lint.yml` does exactly this, for the reason 
 The `js/wasm` vet is not redundant. `cmd/polytable-wasm` is behind `//go:build js && wasm`, so a plain
 `go build`/`go vet` never compiles it — a break there is invisible locally without that line.
 
-`-short` is not optional shorthand. `test/dockertest_minio_matrix_test.go` and
-`test/dockertest_iceberg_rest_test.go` gate on `testing.Short()` rather than a build tag, so a plain
-`go test ./...` spins up MinIO and Nessie via `ory/dockertest` and fails without a running Docker daemon.
+`-short` is not optional shorthand. `test/dockertest_minio_matrix_test.go`,
+`test/dockertest_iceberg_rest_test.go` and `test/dockertest_azurite_test.go` gate on `testing.Short()`
+rather than a build tag, so a plain `go test ./...` spins up MinIO, Nessie and Azurite via
+`ory/dockertest` and fails without a running Docker daemon.
 Run the unqualified command deliberately when you want that coverage.
 
 `gofmt -l .` is a separate step on purpose: `.golangci.yml` configures no formatter, so lint passing
@@ -157,7 +158,7 @@ Do not treat these as intended behavior; fix them when touching the surrounding 
   case-insensitive fallback kept only for when no exact match exists (format metadata does not always
   agree with the schema on case). A schema holding both `Name` and `name` now resolves predictably.
 - ~~`NewStorageForPath` misrouting unknown schemes~~ — **fixed**: a path whose scheme has no backend
-  (`gs://`, `abfss://`, `hdfs://`, …) now fails with `ErrInvalidPath` instead of falling through to
+  (`gs://`, `hdfs://`, …) now fails with `ErrInvalidPath` instead of falling through to
   local storage, which treated `gs://bucket/table` as a relative directory and created a literal
   `gs:` directory on first write.
 
@@ -165,11 +166,11 @@ Do not treat these as intended behavior; fix them when touching the surrounding 
 
 Tests live in an external `<pkg>_test` package (black-box) and are table-driven. Everything under `pkg/`
 calls `t.Parallel()` in both the parent test and its subtests — keep new unit tests in that style. The
-e2e suites in `test/` do not, and the two `dockertest_*` files must not.
+e2e suites in `test/` do not, and the three `dockertest_*` files must not.
 
 `github.com/stretchr/testify` (`assert` + `require`) is the only test-assertion dependency, but it is not
 the module's only dependency: `go.mod` also has aws-sdk-go-v2 (s3, glue), `parquet-go`, `cobra`, `uuid`,
-`yaml.v3` and `ory/dockertest`.
+`yaml.v3`, `ory/dockertest` and the Azure SDK (`azblob`, `azidentity`, `azcore`).
 
 Tool versions named in the guides must track what actually runs: `docs/how-to.md` states the DuckDB
 version it was verified with, and `integration.yml` pins `DUCKDB_VERSION` — when bumping the CI pin,

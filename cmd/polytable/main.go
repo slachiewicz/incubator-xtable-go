@@ -327,7 +327,7 @@ func syncOneDataset(ctx context.Context, ds *conversion.DatasetConfig, dryRun bo
 		return buildTableSyncOutput(ds, nil, rErr)
 	}
 
-	optFns := ds.Storage.ToS3OptionFuncs()
+	optFns := ds.Storage.ToOptionFuncs()
 	storage, err := xtio.NewStorageForPathWithOptions(datasetCtx, ds.TableBasePath, optFns...)
 	if err != nil {
 		_, _ = fmt.Fprintf(progress, "  ❌ Failed to initialize storage for %s: %v\n", ds.TableBasePath, err)
@@ -364,6 +364,8 @@ func newInspectCmd() *cobra.Command {
 	var basePath string
 	var formatStr string
 	var outputStr string
+	var storageCfg conversion.StorageConfig
+	var azureCfg conversion.AzureStorageConfig
 
 	cmd := &cobra.Command{
 		Use:   "inspect",
@@ -389,7 +391,13 @@ func newInspectCmd() *cobra.Command {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			storage, err := xtio.NewStorageForPath(ctx, basePath)
+			// inspect reads a table by path with no dataset configuration behind it, so its
+			// storage overrides come from flags. Without them a table on MinIO, Azurite or a
+			// private OneLake workspace was inspectable only by writing a config file for sync.
+			if azureCfg != (conversion.AzureStorageConfig{}) {
+				storageCfg.Azure = &azureCfg
+			}
+			storage, err := xtio.NewStorageForPathWithOptions(ctx, basePath, storageCfg.ToOptionFuncs()...)
 			if err != nil {
 				return fmt.Errorf("failed to initialize storage for %s: %w", basePath, err)
 			}
@@ -445,5 +453,11 @@ func newInspectCmd() *cobra.Command {
 	cmd.Flags().StringVar(&basePath, "path", "", "Alias for --basePath")
 	cmd.Flags().StringVarP(&formatStr, "format", "f", "", "Table format (DELTA, ICEBERG, HUDI, PARQUET, PAIMON)")
 	cmd.Flags().StringVarP(&outputStr, "output", "o", "text", `Output format: "text" or "json"`)
+	cmd.Flags().StringVar(&storageCfg.Region, "storage-region", "", "AWS region for s3:// paths")
+	cmd.Flags().StringVar(&storageCfg.Endpoint, "storage-endpoint", "", "Custom S3 endpoint URL, for example http://localhost:9000")
+	cmd.Flags().BoolVar(&storageCfg.UsePathStyle, "storage-path-style", false, "Use path-style S3 addressing (requires --storage-endpoint)")
+	cmd.Flags().StringVar(&azureCfg.Endpoint, "azure-endpoint", "", "Blob service URL overriding the one derived from an abfss:// host")
+	cmd.Flags().StringVar(&azureCfg.AccountName, "azure-account", "", "Storage account overriding the one parsed from an abfss:// host")
+	cmd.Flags().BoolVar(&azureCfg.Anonymous, "azure-anonymous", false, "Read Azure storage without credentials, for a public container")
 	return cmd
 }

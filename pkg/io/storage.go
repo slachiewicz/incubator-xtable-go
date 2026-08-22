@@ -40,7 +40,27 @@ var (
 // recognize. It is deliberately broader than the schemes NewStorageForPathWithOptions can back
 // with a client: gs:// parses, because foreign metadata may carry such paths, but has no storage
 // backend here and is rejected at storage selection.
-var uriSchemes = []string{"s3://", "s3a://", "gs://", "mem://", "file://"}
+//
+// The Azure schemes have to be here whether or not a backend exists, and that is the load-bearing
+// part: RelativizePath treats a path carrying no recognized scheme as already relative, so an
+// unlisted abfss:// path would be silently mangled by the very helper that exists to stop paths
+// being mangled.
+var uriSchemes = []string{"s3://", "s3a://", "gs://", "abfss://", "abfs://", "wasbs://", "wasb://", "mem://", "file://"}
+
+// azureSchemes are the subset of uriSchemes the Azure backend serves. Hadoop's ABFS driver spells
+// the same store four ways — TLS or not, Data Lake Storage Gen2 or the older Blob endpoint — and
+// foreign metadata carries whichever the writing engine was configured with.
+var azureSchemes = []string{"abfss://", "abfs://", "wasbs://", "wasb://"}
+
+// IsAzurePath reports whether a path addresses Azure storage.
+func IsAzurePath(p string) bool {
+	for _, scheme := range azureSchemes {
+		if strings.HasPrefix(p, scheme) {
+			return true
+		}
+	}
+	return false
+}
 
 // FileInfo represents metadata for an object or file in storage.
 type FileInfo struct {
@@ -50,7 +70,7 @@ type FileInfo struct {
 	IsDir   bool      `json:"isDir"`
 }
 
-// Storage defines the unified storage interface across Local FS, Amazon S3, Google GCS, Azure Blob, and Memory.
+// Storage defines the unified storage interface across Local FS, Amazon S3, Azure Data Lake Storage and Memory.
 type Storage interface {
 	// Read reads the entire content of the file at the specified path.
 	Read(ctx context.Context, path string) ([]byte, error)
@@ -160,10 +180,31 @@ func NewStorageForPath(ctx context.Context, path string) (Storage, error) {
 	return NewStorageForPathWithOptions(ctx, path)
 }
 
-// NewStorageForPathWithOptions automatically resolves and instantiates Storage with optional S3 configuration.
-func NewStorageForPathWithOptions(ctx context.Context, path string, optFns ...func(*S3Options)) (Storage, error) {
+// Options carries per-backend configuration for NewStorageForPathWithOptions.
+//
+// It is one struct rather than one option type per backend because the router picks the backend
+// from the path scheme, which the caller generally has not inspected: a caller fills in whatever it
+// was configured with and the router uses the half that applies.
+type Options struct {
+	// S3 configures the Amazon S3 and S3-compatible backend.
+	S3 S3Options
+	// Azure configures the Azure Data Lake Storage and OneLake backend.
+	Azure AzureOptions
+}
+
+// NewStorageForPathWithOptions automatically resolves and instantiates Storage with optional
+// backend configuration.
+func NewStorageForPathWithOptions(ctx context.Context, path string, optFns ...func(*Options)) (Storage, error) {
+	var opts Options
+	for _, fn := range optFns {
+		fn(&opts)
+	}
+
 	if strings.HasPrefix(path, "s3://") || strings.HasPrefix(path, "s3a://") {
-		return NewS3Storage(ctx, optFns...)
+		return NewS3Storage(ctx, func(o *S3Options) { *o = opts.S3 })
+	}
+	if IsAzurePath(path) {
+		return NewAzureStorage(ctx, path, func(o *AzureOptions) { *o = opts.Azure })
 	}
 	if strings.HasPrefix(path, "mem://") {
 		return NewMemoryStorage(), nil
@@ -172,7 +213,7 @@ func NewStorageForPathWithOptions(ctx context.Context, path string, optFns ...fu
 	// "gs://bucket/table" as a relative directory and create a literal "gs:" directory on the
 	// first write.
 	if scheme, _, found := strings.Cut(path, "://"); found && scheme != "file" {
-		return nil, fmt.Errorf("%w: no storage backend for scheme %q (supported: s3://, s3a://, mem://, file://, or a plain local path)",
+		return nil, fmt.Errorf("%w: no storage backend for scheme %q (supported: s3://, s3a://, abfss://, abfs://, wasbs://, wasb://, mem://, file://, or a plain local path)",
 			ErrInvalidPath, scheme+"://")
 	}
 	return NewLocalStorage(), nil

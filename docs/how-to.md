@@ -204,11 +204,13 @@ suite (`make test-containers` runs `test/dockertest_minio_matrix_test.go`).
 
 ## Storage support
 
-polytable supports local paths, `file://`, `s3://`, `s3a://`, and the in-memory
-scheme `mem://`. Google Cloud Storage (`gs://`) and Azure Data Lake Storage
-(`abfss://`) are not supported: a path with an unsupported scheme fails with a
-clear error instead of being misread as a local path. The upstream Java project
-covers those stores; use it if you need them today.
+polytable supports local paths, `file://`, `s3://`, `s3a://`, Azure Data Lake
+Storage and OneLake (`abfss://`, `abfs://`, `wasbs://`, `wasb://`), and the
+in-memory scheme `mem://`. See [Cloud storage](cloud-storage.md) for Azure
+credentials and configuration. Google Cloud Storage (`gs://`) is not
+supported: a path with an unsupported scheme fails with a clear error instead
+of being misread as a local path. The upstream Java project covers GCS; use it
+if you need that store today.
 
 ## Next steps
 

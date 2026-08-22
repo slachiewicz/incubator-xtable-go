@@ -22,8 +22,9 @@
 polytable reads a table's source metadata from storage and writes each target
 format's metadata back next to it, in the same location. The storage backend is
 selected from the URI scheme of the dataset's `tableBasePath` value. This page
-lists the supported schemes, explains how to configure Amazon S3 and
-S3-compatible object stores, and states plainly which stores have no backend.
+lists the supported schemes, explains how to configure Amazon S3,
+S3-compatible object stores, and Azure Data Lake Storage, and states plainly
+which stores have no backend.
 For a complete first sync, see
 [Create your first interoperable table](how-to.md).
 
@@ -36,10 +37,14 @@ polytable supports the following path forms:
   that record paths as URIs.
 - **`s3://` and `s3a://`**: Amazon S3 or an S3-compatible object store. The two
   spellings name the same store and are accepted interchangeably.
+- **`abfss://`, `abfs://`, `wasbs://`, and `wasb://`**: Azure Data Lake
+  Storage and Microsoft Fabric OneLake. The four spellings match the ones
+  Hadoop's ABFS driver accepts; foreign metadata carries whichever one the
+  writing engine was configured with.
 - **`mem://`**: an in-memory store for tests. Nothing is persisted.
 
 A path with any other scheme is rejected before the sync starts; see
-[Google Cloud Storage and Azure](#google-cloud-storage-and-azure).
+[Google Cloud Storage](#google-cloud-storage).
 
 ## Sync a table in Amazon S3
 
@@ -119,36 +124,91 @@ repository's integration suite (`make test-containers`). The same keys apply
 to other S3-compatible stores, such as Ceph RGW or Cloudflare R2, but no tests
 exercise those stores — treat them as unverified.
 
-## Google Cloud Storage and Azure
+## Sync a table in Azure
 
-Google Cloud Storage (`gs://`) and Azure Data Lake Storage, including OneLake
-(`abfss://`), have no storage backend in polytable. A `gs://` or `abfss://`
-path fails at storage selection with an error that names the unsupported
-scheme and lists the supported ones. The failure is deliberate: falling
-through to local storage would misread `gs://bucket/table` as a relative
-directory and create a literal `gs:` directory on the first write.
+To sync a table in Azure Data Lake Storage, point the dataset's
+`tableBasePath` key at an `abfss://` URI. The container comes first, then the
+storage account host after an `@`, then the path within the container:
 
-For a table that lives in GCS or ADLS, use the upstream Java implementation,
-Apache XTable — see its
+```yaml
+sourceFormat: DELTA
+targetFormats:
+  - ICEBERG
+datasets:
+  - tableBasePath: abfss://example-container@myaccount.dfs.core.windows.net/tables/people
+    tableName: people
+```
+
+For a table in Microsoft Fabric OneLake, the container is the workspace and
+the item path follows it, for example
+`abfss://myworkspace@onelake.dfs.fabric.microsoft.com/mylake.Lakehouse/Tables/sales`.
+`abfs://`, `wasbs://`, and `wasb://` address the same backend and are accepted
+too, since foreign metadata may record any of the four.
+
+### Credentials
+
+polytable selects Azure credentials in the following order, using the first
+one that is configured:
+
+1. A SAS token, from the `AZURE_STORAGE_SAS_TOKEN` environment variable.
+2. A shared account key, from the `AZURE_STORAGE_KEY` environment variable.
+3. Anonymous access, if the dataset's `storage.azure.anonymous` key is set to
+   `true`, for a public container.
+4. The Entra ID default credential chain (`DefaultAzureCredential`), which
+   covers workload identity, managed identity, an environment service
+   principal, and the Azure CLI, in that order.
+
+Credentials are never a configuration-file field. `storage.azure` carries
+only `endpoint`, `accountName`, and `anonymous`; a SAS token or an account key
+must reach polytable through the environment instead, because a config file
+gets committed, logged, and POSTed to the REST service.
+
+### The blob service endpoint
+
+polytable derives the blob service URL from the `abfss://` host by swapping
+the first `.dfs.` for `.blob.`. OneLake documents both endpoints and states
+that its blob endpoint carries the same compatibility as its ADLS endpoint, so
+the derivation matches the documented pair. No request from polytable has
+reached a Fabric workspace yet.
+
+Set `storage.azure.endpoint` to override the derived URL. Four cases need it:
+
+- Azurite, whose blob host isn't derivable this way.
+- A OneLake regional endpoint,
+  `https://<region>-onelake.dfs.fabric.microsoft.com`. Use it rather than the
+  global endpoint when data residency matters: resolving the global endpoint
+  for a workspace in another region can take data across a region boundary.
+- A workspace private-link FQDN.
+- The `api.onelake.fabric.microsoft.com` form, which contains neither `.dfs.`
+  nor `.blob.` and so passes through the swap unchanged.
+
+### WebAssembly
+
+The Azure backend is excluded from the WebAssembly build (`//go:build !js`),
+the same as the S3 and Glue backends. An Azure path in that build returns
+`ErrAzureUnsupported`.
+
+End-to-end coverage against Azurite exists as
+`test/dockertest_azurite_test.go`, run by `make test-containers`, but it has
+not been run in this environment because no Docker daemon was available.
+
+## Google Cloud Storage
+
+Google Cloud Storage (`gs://`) has no storage backend in polytable. A
+`gs://` path fails at storage selection with an error that names the
+unsupported scheme and lists the supported ones. The failure is deliberate:
+falling through to local storage would misread `gs://bucket/table` as a
+relative directory and create a literal `gs:` directory on the first write.
+
+For a table that lives in GCS, use the upstream Java implementation, Apache
+XTable — see its
 [Creating your first interoperable table](https://xtable.apache.org/docs/how-to)
-guide, which covers both stores.
-
-Azure support is planned, and is a requirement rather than an extension: an
-ADLS Gen2 and OneLake storage backend is scheduled as T51 in
-[the improvement plan](improvement-plan.md), and the OneLake and Fabric catalog
-as T52. Until both land, this section describes what happens today. Google
-Cloud Storage remains unscheduled.
-
-The OneLake read path goes through the Iceberg REST-compatible endpoint — see
-[Sync to an Iceberg REST catalog](iceberg-rest-catalog.md) — rather than a
-separate catalog client. Upstream tracks the same idea as
-[apache/incubator-xtable#810](https://github.com/apache/incubator-xtable/issues/810)
-and has not implemented it either.
+guide, which covers that store.
 
 ## Storage configuration reference
 
-The `storage` block is set per dataset and applies only to `s3://` and
-`s3a://` paths. It has the following keys:
+The `storage` block is set per dataset. Its top-level keys apply only to
+`s3://` and `s3a://` paths:
 
 - **`region`**: the AWS region for S3 requests, for example `us-west-2`. Takes
   precedence over the region from the environment and the shared config file.
@@ -158,6 +218,23 @@ The `storage` block is set per dataset and applies only to `s3://` and
   (`endpoint/bucket/key`) instead of the default virtual-hosted style
   (`bucket.endpoint/key`). MinIO requires it in its default configuration. This key
   takes effect only when the `endpoint` key is also set.
+
+A nested `storage.azure` block applies to `abfss://`, `abfs://`, `wasbs://`,
+and `wasb://` paths. It has the following keys:
+
+- **`endpoint`**: overrides the blob service URL that polytable derives from
+  the path's host. Azurite needs it, and so does any deployment whose blob
+  host isn't derivable from its `abfss://` host.
+- **`accountName`**: overrides the storage account parsed from the path's
+  host. Azurite needs it: its service URL carries the account in the path
+  rather than the host.
+- **`anonymous`**: set to `true` to read without credentials, for a public
+  container.
+
+The block holds no credential fields — a SAS token or a shared account key
+reaches polytable only through the `AZURE_STORAGE_SAS_TOKEN` and
+`AZURE_STORAGE_KEY` environment variables; see Credentials under
+[Sync a table in Azure](#sync-a-table-in-azure) above.
 
 ## What's next
 

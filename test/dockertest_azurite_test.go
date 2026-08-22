@@ -21,14 +21,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/ory/dockertest/v3"
 	"github.com/ory/dockertest/v3/docker"
 	"github.com/stretchr/testify/assert"
@@ -43,13 +39,16 @@ import (
 	"github.com/slachiewicz/polytable/pkg/spi"
 )
 
+// Azurite's well-known development storage account. These are fixed, publicly documented test
+// credentials shipped with the emulator, not secrets.
 const (
-	minioUser     = "minioadmin"
-	minioPassword = "minioadminpassword"
-	testBucket    = "lakehouse-e2e"
+	azuriteAccountName = "devstoreaccount1"
+	azuriteAccountKey  = "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw=="
+	azuriteContainer   = "lakehouse-e2e"
+	azuriteHost        = "devstoreaccount1.dfs.core.windows.net"
 )
 
-func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
+func TestDockertest_Azurite_FullLakehouseMatrix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping dockertest integration test in short mode")
 	}
@@ -60,86 +59,77 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 	err = pool.Client.Ping()
 	require.NoError(t, err, "failed to ping Docker daemon")
 
-	// 1. Run MinIO container with 120s auto-expiry to prevent orphan containers
+	// 1. Run Azurite container with 120s auto-expiry to prevent orphan containers
 	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
-		Repository: "minio/minio",
+		Repository: "mcr.microsoft.com/azure-storage/azurite",
 		Tag:        "latest",
-		Cmd:        []string{"server", "/data"},
-		Env: []string{
-			"MINIO_ROOT_USER=" + minioUser,
-			"MINIO_ROOT_PASSWORD=" + minioPassword,
-		},
 		PortBindings: map[docker.Port][]docker.PortBinding{
-			"9000/tcp": {{HostIP: "127.0.0.1", HostPort: ""}},
+			"10000/tcp": {{HostIP: "127.0.0.1", HostPort: ""}},
 		},
 	})
-	require.NoError(t, err, "failed to start MinIO container")
+	require.NoError(t, err, "failed to start Azurite container")
 	_ = resource.Expire(120)
 	defer func() {
 		_ = pool.Purge(resource)
 	}()
 
-	minioPort := resource.GetPort("9000/tcp")
-	minioEndpoint := fmt.Sprintf("http://127.0.0.1:%s", minioPort)
+	azuritePort := resource.GetPort("10000/tcp")
+	blobServiceURL := fmt.Sprintf("http://127.0.0.1:%s/%s", azuritePort, azuriteAccountName)
 
-	// 2. Wait for MinIO readiness
+	// 2. Wait for Azurite readiness. Azurite has no health endpoint, so any HTTP response —
+	// including the 400 Azurite returns for an unauthenticated GET on the service root — proves
+	// the listener is up.
 	err = pool.Retry(func() error {
-		resp, err := http.Get(fmt.Sprintf("%s/minio/health/live", minioEndpoint))
-		if err != nil {
-			return err
+		req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, blobServiceURL, nil)
+		if reqErr != nil {
+			return reqErr
+		}
+		resp, getErr := http.DefaultClient.Do(req)
+		if getErr != nil {
+			return getErr
 		}
 		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("minio healthcheck returned status %d", resp.StatusCode)
-		}
 		return nil
 	})
-	require.NoError(t, err, "minio failed to become ready in time")
+	require.NoError(t, err, "azurite failed to become ready in time")
 
 	ctx := context.Background()
 
-	// 3. Set AWS credentials for MinIO via environment variables for config path testing
-	_ = os.Setenv("AWS_ACCESS_KEY_ID", minioUser)
-	_ = os.Setenv("AWS_SECRET_ACCESS_KEY", minioPassword)
-	_ = os.Setenv("AWS_REGION", "us-east-1")
-	defer func() { _ = os.Unsetenv("AWS_ACCESS_KEY_ID") }()
-	defer func() { _ = os.Unsetenv("AWS_SECRET_ACCESS_KEY") }()
-	defer func() { _ = os.Unsetenv("AWS_REGION") }()
-
-	// 4. Create S3 Test Bucket using config path
+	// 3. Configure the Azure-backed storage through conversion.StorageConfig, the same path the
+	// CLI, daemon and REST server use. AccountKey has no StorageConfig field — credentials are
+	// deliberately excluded from that type — so it is appended as an extra option func alongside
+	// the ones ToOptionFuncs produces, rather than reimplementing the closures it already builds.
 	storageConfig := conversion.StorageConfig{
-		Region:       "us-east-1",
-		Endpoint:     minioEndpoint,
-		UsePathStyle: true,
+		Azure: &conversion.AzureStorageConfig{
+			Endpoint:    blobServiceURL,
+			AccountName: azuriteAccountName,
+		},
 	}
+	optFns := storageConfig.ToOptionFuncs()
+	optFns = append(optFns, func(opts *io.Options) { opts.Azure.AccountKey = azuriteAccountKey })
 
-	testStorage, err := io.NewStorageForPathWithOptions(ctx, fmt.Sprintf("s3://%s", testBucket),
-		storageConfig.ToOptionFuncs()...)
+	tableBasePath := fmt.Sprintf("abfss://%s@%s/tables/financial_events", azuriteContainer, azuriteHost)
+
+	testStorage, err := io.NewStorageForPathWithOptions(ctx, tableBasePath, optFns...)
 	require.NoError(t, err)
 
-	s3Client, err := config.LoadDefaultConfig(ctx,
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(minioUser, minioPassword, "")),
-	)
+	// 4. Create the Azure test container using a raw azblob client, mirroring how the MinIO suite
+	// makes its bucket with a raw s3.Client.
+	cred, err := azblob.NewSharedKeyCredential(azuriteAccountName, azuriteAccountKey)
+	require.NoError(t, err)
+	azClient, err := azblob.NewClientWithSharedKeyCredential(blobServiceURL, cred, nil)
 	require.NoError(t, err)
 
-	s3svc := s3.NewFromConfig(s3Client, func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(minioEndpoint)
-		o.UsePathStyle = true
-	})
+	_, err = azClient.CreateContainer(ctx, azuriteContainer, nil)
+	require.NoError(t, err, "failed to create test container in Azurite")
 
-	_, err = s3svc.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(testBucket),
-	})
-	require.NoError(t, err, "failed to create test bucket in MinIO")
-	tableBasePath := fmt.Sprintf("s3://%s/tables/financial_events", testBucket)
-
-	// Write mock physical Parquet data file into MinIO
+	// Write mock physical Parquet data file into Azurite
 	mockParquetBytes := []byte("PAR1-MOCK-PARQUET-BINARY-PAYLOAD-FOR-TEST-ROW-COUNT-500")
 	parquetFilePath := fmt.Sprintf("%s/region=EU/data-001.parquet", tableBasePath)
 	err = testStorage.Write(ctx, parquetFilePath, mockParquetBytes)
 	require.NoError(t, err)
 
-	// 6. Build initial Delta Table Seed on MinIO
+	// 5. Build initial Delta Table Seed on Azurite
 	idField := &model.Field{Name: "transaction_id", Schema: model.NewPrimitiveSchema(model.TypeLong, false)}
 	userField := &model.Field{Name: "user_uuid", Schema: model.NewPrimitiveSchema(model.TypeUUID, false)}
 	amountField := &model.Field{Name: "amount", Schema: model.NewDecimalSchema(18, 2, false)}
@@ -177,17 +167,17 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 		SourceIdentifier: "0",
 	}
 
-	// Commit initial Delta snapshot on MinIO
+	// Commit initial Delta snapshot on Azurite
 	deltaTarget := delta.NewTarget(testStorage)
 	err = deltaTarget.Init(ctx, table)
 	require.NoError(t, err)
 	err = deltaTarget.CommitSnapshot(ctx, snapshot)
 	require.NoError(t, err)
 
-	// 7. RUN FULL MATRIX CONVERSIONS ON MINIO
+	// 6. RUN FULL MATRIX CONVERSIONS ON AZURITE
 	controller := conversion.NewController(testStorage)
 
-	t.Run("DeltaToIcebergAndHudi_OnMinIO", func(t *testing.T) {
+	t.Run("DeltaToIcebergAndHudi_OnAzurite", func(t *testing.T) {
 		datasetConfig := &conversion.DatasetConfig{
 			SourceFormat:  model.TableFormatDelta,
 			TargetFormats: []model.TableFormat{model.TableFormatIceberg, model.TableFormatHudi},
@@ -204,7 +194,7 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 		assert.Equal(t, spi.SyncStatusSuccess, results[model.TableFormatIceberg].StatusCode)
 		assert.Equal(t, spi.SyncStatusSuccess, results[model.TableFormatHudi].StatusCode)
 
-		// 8. Verify Iceberg Metadata on MinIO
+		// 7. Verify Iceberg Metadata on Azurite
 		icebergSource := iceberg.NewSource(testStorage, tableBasePath)
 		icebergTable, err := icebergSource.GetCurrentTable(ctx)
 		require.NoError(t, err)
@@ -216,7 +206,7 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 		require.Len(t, icebergSnap.DataFiles, 1)
 		assert.Equal(t, int64(500), icebergSnap.DataFiles[0].RecordCount)
 
-		// 9. Verify Hudi Metadata on MinIO
+		// 8. Verify Hudi Metadata on Azurite
 		hudiSource := hudi.NewSource(testStorage, tableBasePath)
 		hudiTable, err := hudiSource.GetCurrentTable(ctx)
 		require.NoError(t, err)
@@ -228,18 +218,42 @@ func TestDockertest_MinIO_FullLakehouseMatrix(t *testing.T) {
 		assert.Equal(t, int64(500), hudiSnap.DataFiles[0].RecordCount)
 	})
 
-	t.Run("HudiToDeltaAndIceberg_OnMinIO", func(t *testing.T) {
+	t.Run("HudiToDeltaAndIceberg_OnAzurite", func(t *testing.T) {
 		datasetConfig := &conversion.DatasetConfig{
 			SourceFormat:  model.TableFormatHudi,
 			TargetFormats: []model.TableFormat{model.TableFormatDelta, model.TableFormatIceberg},
 			TableName:     "financial_events",
 			TableBasePath: tableBasePath,
 			SyncMode:      spi.SyncModeFull,
+			Storage:       &storageConfig,
 		}
 
 		results, syncErr := controller.Sync(ctx, datasetConfig)
 		require.NoError(t, syncErr)
 		assert.Equal(t, spi.SyncStatusSuccess, results[model.TableFormatDelta].StatusCode)
 		assert.Equal(t, spi.SyncStatusSuccess, results[model.TableFormatIceberg].StatusCode)
+	})
+
+	t.Run("RoundTripsAbfssPaths", func(t *testing.T) {
+		roundTripPath := fmt.Sprintf("%s/roundtrip/probe.txt", tableBasePath)
+		err := testStorage.Write(ctx, roundTripPath, []byte("abfss round trip probe"))
+		require.NoError(t, err)
+
+		listPrefix := fmt.Sprintf("%s/roundtrip", tableBasePath)
+		infos, err := testStorage.List(ctx, listPrefix)
+		require.NoError(t, err)
+		require.NotEmpty(t, infos)
+
+		for _, info := range infos {
+			assert.True(t, len(info.Path) > len("abfss://") && info.Path[:len("abfss://")] == "abfss://",
+				"expected FileInfo.Path %q to start with abfss://", info.Path)
+
+			container, blobPath, host, scheme, parseErr := io.ParseAzureURI(info.Path)
+			require.NoError(t, parseErr, "expected %q to parse back through ParseAzureURI", info.Path)
+			assert.Equal(t, "abfss", scheme)
+			assert.Equal(t, azuriteContainer, container)
+			assert.Equal(t, azuriteHost, host)
+			assert.Equal(t, "tables/financial_events/roundtrip/probe.txt", blobPath)
+		}
 	})
 }

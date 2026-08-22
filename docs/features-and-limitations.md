@@ -58,10 +58,19 @@ metadata, so a table can move between them without a resync.
 ### Storage
 
 polytable reads and writes plain local paths and the `file://`, `s3://`,
-`s3a://`, and `mem://` schemes. The `gs://` and `abfss://` schemes have no
-storage backend and fail with an error that names the supported schemes. This
-is deliberate: a `gs://` path still parses, because foreign metadata can carry
-such paths, but polytable refuses to route it to a backend that can't serve it.
+`s3a://`, `abfss://`, `abfs://`, `wasbs://`, `wasb://`, and `mem://` schemes.
+See [Cloud storage](cloud-storage.md) for Azure configuration and credentials.
+The `gs://` scheme has no storage backend and fails with an error that names
+the supported schemes. This is deliberate: a `gs://` path still parses,
+because foreign metadata can carry such paths, but polytable refuses to route
+it to a backend that can't serve it.
+
+The Azure backend has not been run against Azure or against the Azurite
+emulator. End-to-end coverage exists as `test/dockertest_azurite_test.go`, but
+it has not been executed — no Docker daemon was available. The blob endpoint
+polytable derives for OneLake paths matches the pair Microsoft documents, and
+the `endpoint` override covers the regional, private-link and
+`api.onelake.fabric.microsoft.com` forms it does not derive.
 
 ### Catalogs
 

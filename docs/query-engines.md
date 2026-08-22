@@ -287,11 +287,13 @@ Lakehouse links to the synced table's storage location, after which the table
 is queryable from T-SQL, Spark, and Power BI. Shortcuts can reference Azure
 Data Lake Storage Gen2 and Amazon S3, among other stores.
 
-polytable does not support `abfss://` paths, so it cannot produce the Delta
-metadata in place on ADLS — for that flow, run the upstream Java project as
-its [Fabric guide](https://xtable.apache.org/docs/fabric) describes. For a
-table that lives in Amazon S3, sync it to a Delta Lake target with polytable
-and create an S3 shortcut to the table directory in your Lakehouse.
+polytable reads and writes `abfss://` paths, including OneLake's
+`abfss://<workspace>@onelake.dfs.fabric.microsoft.com/<item>.<itemtype>/<path>`
+form, so it can produce the Delta metadata in place on ADLS or in a Lakehouse.
+That path has not been exercised against a live Fabric workspace — see
+[Cloud storage](cloud-storage.md). For a table that lives in Amazon S3, sync
+it to a Delta Lake target and create an S3 shortcut to the table directory in
+your Lakehouse.
 
 ## Verification status
 
