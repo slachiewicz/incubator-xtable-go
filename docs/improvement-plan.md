@@ -1785,7 +1785,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T57, T59, T60 |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T57, T59, T60, T61 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -3037,6 +3037,14 @@ only but advertises `POST /v1/{prefix}/namespaces/{ns}/tables/{table}/metrics`, 
 write-route filter. polytable would have called it writable and failed a registration with a bare
 status instead of the read-only message. Routes ending in `/metrics` no longer count as writes.
 
+**Confirmed against a live Apache Polaris container**, after the fixes landed: `overrides.prefix`
+is `pt_catalog` with `defaults` carrying no prefix, so the merge order is right; an unknown
+warehouse really does answer `404 NotFoundException` while no warehouse answers `400`, which is
+exactly the pair the disambiguation distinguishes; and the advertised `endpoints` array carries both
+real write routes and the `/metrics` route, so the exclusion narrows the heuristic without disabling
+it. The same run surfaced one thing none of the fixes covers, filed as T61: Polaris also returns
+`"namespace-separator": "%1F"`, which polytable ignores.
+
 **Verified.** Four scenario groups in `pkg/catalog/rest_prefix_test.go`, each driving an `httptest`
 server shaped like the real catalog, and **each confirmed to go red when its fix is reverted** —
 checked by actually reverting each change and restoring it, which is the only way to know a
@@ -3151,6 +3159,39 @@ recorded here with its reason. The reverse direction — Java recognizing polyta
 the JVM lane in T30 to verify.
 
 **Commit:** `fix: read Java XTable's XTABLE_METADATA sync state`
+
+---
+
+## T61 — The catalog's `namespace-separator` is ignored
+
+Found by running Apache Polaris rather than reading about it. Its `GET /v1/config` returns:
+
+```json
+"overrides": {"namespace-separator": "%1F", "prefix": "pt_catalog"}
+```
+
+`%1F` is the ASCII unit separator, URL-encoded. Polaris is telling clients that a multi-level
+namespace must be joined with that character when it appears in a path, because a dot is a legal
+character inside a namespace level and cannot be the separator.
+
+polytable reads `prefix` out of that object and nothing else (`pkg/catalog/rest_config.go`), and
+passes the namespace to `path()` as one already-joined string. For a single-level namespace — every
+case the tests and the container suites cover — that is indistinguishable from correct. For
+`a.b.c` it is wrong in a way that produces a confusing 404 rather than an error naming the cause.
+
+**Scope.** Read `overrides["namespace-separator"]`, default to the specification's `%1F` when a
+catalog does not say, and join multi-level namespaces with it. The awkward part is upstream of that:
+`catalog.Config.DatabaseName` and `TableIdentifier.Database` are single strings, so polytable has no
+representation of a multi-level namespace to join in the first place. Decide whether the identifier
+type grows levels or whether a configured `a.b.c` is split on the dot at the edge — the second is
+cheaper and wrong for a namespace level containing a dot, which is exactly what the separator exists
+to allow.
+
+**Acceptance:** a two-level namespace addresses correctly against a real Polaris container; a
+catalog that advertises no separator behaves as today; and a namespace level containing a dot either
+works or is refused with a message naming the limitation, not silently mis-addressed.
+
+**Commit:** `fix: join multi-level namespaces with the catalog's namespace-separator`
 
 ---
 
