@@ -311,13 +311,30 @@ OAuth2 client-credentials grant (Apache Polaris and Snowflake Open Catalog, whic
 account: `ListTables` completed with no authentication error, and returned zero tables because the
 account's Glue catalog had none registered.
 
-**S3 Tables' Iceberg REST endpoint remains unrun.** The `sigv4` transport is generic across signing
-name and region, so it should sign an S3 Tables request the same way, but that has not been tried
-against a live table bucket. And even where signing works, a table addressed through either native
-endpoint would still need bucket-wide S3 credentials to read its data files: as recorded under T64,
-polytable does not consume the short-lived, table-scoped credentials an Iceberg REST catalog can
-vend alongside its metadata responses, so authenticating to the catalog is not the same as having
-data access to what it describes.
+**S3 Tables has since been run too, against a live table bucket in `eu-north-1`.** `ListTables`
+negotiated the prefix, listed namespaces and discovered a table on the first attempt, with the
+region and signing name (`s3tables`) derived from the endpoint host and no properties set beyond
+`warehouse`.
+
+That run is worth reading for what its `GET /v1/config` returns, because it is unlike Glue's:
+
+```json
+{"defaults":{"prefix":"arn%3Aaws%3As3tables%3A<region>%3A<account>%3Abucket%2F<name>", ...},
+ "overrides":{}}
+```
+
+The prefix arrives under **`defaults`**, with `overrides` present but empty, and it is **already
+percent-encoded** — the ARN's `:` and `/` are `%3A` and `%2F`. Those are precisely the two shapes
+T58 fixed after finding them on Nessie and Lakekeeper. A client reading only `overrides` computes no
+prefix here, and one escaping the prefix per segment turns every `%` into `%25`. Either alone breaks
+S3 Tables, so AWS's own service was affected by bugs found on two unrelated catalogs.
+
+Reading a table's **data** is a separate matter from authenticating to the catalog. S3 Tables stores
+data in a managed bucket normally reached through short-lived, table-scoped credentials vended from
+`GET /v1/{prefix}/namespaces/{namespace}/tables/{table}/credentials`. polytable does not call that
+endpoint — `pkg/io` resolves S3 credentials from its own chain — so as recorded under T64 you must
+configure credentials for that bucket yourself. This was confirmed by reading the client rather than
+by observing a denial, since the probe ran with account-root credentials.
 
 Writing table data through `s3://` is unaffected by any of this — that goes through `S3Storage`,
 never through the Iceberg REST catalog client.
