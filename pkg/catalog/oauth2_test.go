@@ -121,6 +121,55 @@ func TestOAuth2TransportAttachesBearerToken(t *testing.T) {
 	assert.Equal(t, "Bearer tok-1", gotAuth)
 }
 
+// TestOAuth2OmitsEmptyClientID pins a fix found by running Snowflake's Horizon Catalog rather than
+// by reading a specification. Snowflake authenticates the client-credentials exchange on the secret
+// alone -- a programmatic access token -- and rejects a request that carries a client_id, reporting
+// it as "invalid_scope". That error names a field that is not the problem, so sending a blank or
+// placeholder id makes the failure actively misleading rather than merely wrong. The id must be
+// absent from the form, not present and empty.
+func TestOAuth2OmitsEmptyClientID(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		clientID string
+		wantSent bool
+	}{
+		{name: "empty client id is omitted entirely", clientID: "", wantSent: false},
+		{name: "a configured client id is sent", clientID: "some-client", wantSent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var hasClientID bool
+			var gotSecret string
+			tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.NoError(t, r.ParseForm())
+				_, hasClientID = r.Form["client_id"]
+				gotSecret = r.Form.Get("client_secret")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"access_token":"tok","token_type":"bearer","expires_in":3600}`))
+			}))
+			defer tokenSrv.Close()
+
+			apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer apiSrv.Close()
+
+			client := catalog.NewOAuth2HTTPClientWithSecret(5*time.Second, tokenSrv.URL, tc.clientID, "the-secret", "", nil)
+			resp, err := client.Get(apiSrv.URL + "/whatever")
+			require.NoError(t, err)
+			defer func() { _ = resp.Body.Close() }()
+
+			assert.Equal(t, tc.wantSent, hasClientID,
+				"client_id presence in the token exchange form")
+			assert.Equal(t, "the-secret", gotSecret,
+				"the secret is always sent, whether or not an id accompanies it")
+		})
+	}
+}
+
 func TestOAuth2TransportSendsFormEncodedClientCredentialsBody(t *testing.T) {
 	t.Parallel()
 
@@ -392,7 +441,7 @@ func TestRESTHTTPClientOAuth2DefaultsTokenEndpointFromURI(t *testing.T) {
 	assert.Empty(t, token)
 }
 
-func TestRESTHTTPClientOAuth2RequiresClientID(t *testing.T) {
+func TestRESTHTTPClientOAuth2AcceptsMissingClientID(t *testing.T) {
 	t.Parallel()
 
 	cfg := &catalog.Config{
@@ -405,9 +454,12 @@ func TestRESTHTTPClientOAuth2RequiresClientID(t *testing.T) {
 		},
 	}
 
+	// Inverted deliberately, not deleted: this asserted that clientId was required, which locked
+	// out Snowflake's Horizon Catalog. Snowflake authenticates on the secret alone and rejects an
+	// exchange carrying a client_id. Verified against a live account, so the requirement was wrong
+	// rather than merely strict, and the test is kept to record that a missing clientId is fine.
 	_, _, err := catalog.RestHTTPClient(cfg, time.Second)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), catalog.PropCatalogOAuth2ClientID)
+	require.NoError(t, err)
 }
 
 func TestRESTHTTPClientOAuth2RequiresClientSecretEnvProperty(t *testing.T) {

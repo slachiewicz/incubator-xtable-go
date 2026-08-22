@@ -111,13 +111,17 @@ type oauth2TokenResponse struct {
 }
 
 // fetchToken exchanges the configured client id and secret for a bearer token at t.tokenURL, per
-// the client-credentials grant: a form-encoded POST carrying grant_type, client_id, client_secret
-// and, if configured, scope. scope is omitted from the request entirely when empty, since it is
-// optional in the OAuth2 specification and no catalog observed so far rejects its absence.
+// the client-credentials grant: a form-encoded POST carrying grant_type, client_secret and, if
+// configured, client_id and scope. Both are omitted entirely when empty rather than sent blank.
+// scope is optional in the OAuth2 specification. Omitting client_id is not merely tidy: Snowflake's
+// Horizon Catalog authenticates on the secret alone and rejects an exchange carrying a client_id,
+// reporting "invalid_scope" -- an error naming a field that is not the problem.
 func (t *oauth2Transport) fetchToken(req *http.Request) (string, int64, error) {
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
-	form.Set("client_id", t.clientID)
+	if t.clientID != "" {
+		form.Set("client_id", t.clientID)
+	}
 	form.Set("client_secret", t.clientSecret)
 	if t.scope != "" {
 		form.Set("scope", t.scope)

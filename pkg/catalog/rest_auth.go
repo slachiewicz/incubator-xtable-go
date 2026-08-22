@@ -41,7 +41,10 @@ const PropCatalogToken = "token"
 // not part of the specification, so it belongs here as documentation, not as this package's default.
 const PropCatalogScope = "scope"
 
-// PropCatalogOAuth2ClientID is the OAuth2 client-credentials client id (auth=oauth2 only). Unlike
+// PropCatalogOAuth2ClientID is the OAuth2 client-credentials client id (auth=oauth2 only), and is
+// optional: when empty the exchange omits client_id entirely, which is what Snowflake's Horizon
+// Catalog requires -- it authenticates on the secret alone and refuses a request carrying an id.
+// Unlike
 // the client secret, this is not sensitive, so it may be an ordinary config property.
 const PropCatalogOAuth2ClientID = "clientId"
 
@@ -179,10 +182,11 @@ func buildRESTAuthClient(props map[string]string, uri string, timeout time.Durat
 		}
 		return client, "", nil
 	case "oauth2", "oauth", "client-credentials":
+		// clientId is optional, and demanding it locks out a real deployment. Snowflake's Horizon
+		// Catalog authenticates with the secret alone -- a programmatic access token -- and
+		// *rejects* an exchange that carries a client_id, reporting it as "invalid_scope", which
+		// names the wrong field and makes the cause hard to find. Verified against a live account.
 		clientID := strings.TrimSpace(props[PropCatalogOAuth2ClientID])
-		if clientID == "" {
-			return nil, "", fmt.Errorf("%s %q for Iceberg REST catalog requires %q", PropCatalogAuth, auth, PropCatalogOAuth2ClientID)
-		}
 		clientSecretEnvVar := strings.TrimSpace(props[PropCatalogOAuth2ClientSecretEnv])
 		if clientSecretEnvVar == "" {
 			return nil, "", fmt.Errorf("%s %q for Iceberg REST catalog requires %q, naming the environment variable that holds the client secret -- the secret itself must never be a config property",

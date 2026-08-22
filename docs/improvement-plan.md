@@ -3246,7 +3246,33 @@ chain. Supplying `AWS_REGION` only moves the failure to `AssumeRole` against the
 subtest skips with that reason stated rather than being weakened. **Its read-back assertions have
 therefore never executed** — treat them as unwritten until real storage backs a Polaris container.
 
-**Unmet:** **Snowflake itself is unreached** — no account — so its hostname
+**Snowflake has since been reached**, via its Horizon Catalog rather than Open Catalog, and the run
+found a defect no fake would have. Snowflake Open Catalog is **closed to new customers** — its own
+documentation says a customer who has never had one cannot sign up — and directs them to Horizon
+Catalog, which serves the same Polaris-derived endpoint at
+`https://<account>.snowflakecomputing.com/polaris/api/catalog`.
+
+Its `/v1/config` for a database returns `overrides.prefix` set to the **database name**, `defaults`
+carrying only an empty `default-base-location`, and real write routes. Unlike self-hosted Polaris it
+advertises **no `namespace-separator`**, so the identity `docs/snowflake.md` assumed does not extend
+to every field.
+
+**The defect:** Snowflake authenticates the client-credentials exchange on the secret alone — a
+programmatic access token — and **rejects a request carrying a `client_id`**, reporting it as
+`invalid_scope`, an error naming a field that is not the problem. polytable required `clientId` and
+always sent it, so Snowflake was unreachable. It is now optional and omitted from the form when
+empty, pinned by `TestOAuth2OmitsEmptyClientID`. With that, polytable authenticates to Snowflake,
+negotiates the prefix, and lists.
+
+Two things worth knowing before repeating this. A **network policy must be attached** to the user or
+account before Snowflake accepts a programmatic access token at all — without one every call fails
+`390432 Fail : Network policy is required`, including the SQL API, which is the quickest way to tell
+a bad token from a bad policy. And the `warehouse` property is the **database** name, not a
+Snowflake warehouse.
+
+**Unmet:** listing returned zero tables, because the databases available carry no Iceberg tables —
+**no table has been read through Snowflake**, only the catalog protocol exercised. Key-pair/JWT and
+External OAuth are unimplemented; only the token-exchange path works. — no account — so its hostname
 handling, its `/v1/config`, and any auth it layers on top are assumed by software identity rather
 than verified. `docs/snowflake.md` says so.
 
