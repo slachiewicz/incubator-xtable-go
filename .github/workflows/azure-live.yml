@@ -1,0 +1,82 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# This lane runs polytable against a real Azure Data Lake Storage Gen2 account, authenticating
+# with a federated (OIDC) Entra ID credential -- there is no client secret, and there must never
+# be one.
+#
+# Triggers are workflow_dispatch and a nightly schedule ONLY. This repository is public, so
+# anyone can open a pull request against it; pull_request and, even more dangerously,
+# pull_request_target would hand a fork-authored workflow run (or, for pull_request_target, a
+# run that checks out fork-authored code while still keeping base-repo secrets and permissions)
+# the OIDC token exchange this job performs and, through it, write access to the storage account.
+# Do not add either trigger here.
+name: Azure Live Storage Test
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Nightly, well off the hour to avoid GitHub's documented top-of-hour scheduling contention.
+    - cron: "17 5 * * *"
+
+# Exactly these two, and nothing broader: id-token: write is what lets azure/login@v2 exchange a
+# GitHub OIDC token for an Azure access token, and contents: read is only what checkout needs.
+permissions:
+  id-token: write
+  contents: read
+
+# The service principal this job authenticates as is scoped to one storage account with Storage
+# Blob Data Contributor. Two overlapping runs would seed and delete blobs under the same
+# container concurrently, so serialize rather than let them interleave; queue instead of
+# cancelling a run that may already be mid-write.
+concurrency:
+  group: azure-live-storage
+  cancel-in-progress: false
+
+jobs:
+  azure-live:
+    name: Azure Live Storage Integration Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.0"
+          check-latest: true
+          cache: true
+
+      # OIDC token exchange only -- no client-secret or certificate credential is configured for
+      # this app registration, and none should ever be added here.
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Only the live test, not the whole ./test/... suite: the dockertest matrix in that package
+      # is already covered by integration.yml, and this job's purpose is the real-account
+      # coverage that lane cannot provide -- running it here too would just duplicate that work
+      # against the same Docker daemon this runner also has.
+      - name: Run Azure live storage test
+        env:
+          POLYTABLE_AZURE_ACCOUNT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
+        run: go test -count=1 -v -run TestAzureLive ./test/
