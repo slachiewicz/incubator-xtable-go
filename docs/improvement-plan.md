@@ -3204,11 +3204,44 @@ presented until it expires; a SigV4 request to Glue's endpoint is signed correct
 a live account or explicitly recorded as unverified; `GOOS=js GOARCH=wasm go list -deps
 ./cmd/polytable-wasm | grep -ci azure` stays 0 and no AWS package enters the wasm build either.
 
+**Outcome: both halves implemented, and both run against the real thing. One criterion is unmet.**
+
+*SigV4* landed in `a30d5b2` and has since been run against **two** live AWS endpoints. Glue's
+(`https://glue.<region>.amazonaws.com/iceberg`) listed without an auth error. Amazon **S3 Tables**
+worked on the first attempt with the region and signing name derived from the host and no properties
+set — and its config response turned out to carry both of T58's bugs, so it is recorded there too.
+
+*OAuth2 client-credentials* is implemented as SigV4's sibling: `auth: oauth2` (also `oauth`,
+`client-credentials`), with the token endpoint defaulting to `<uri>/v1/oauth/tokens` and refreshed
+30 seconds before `expires_in`, a shorter margin than Entra's five minutes because these tokens are
+often short-lived.
+
+**The secret never appears in config.** `clientSecretEnv` *names* an environment variable, mirroring
+`AccountKeyEnv` from T51 and T55. There is no well-known fallback variable — OAuth2 has no
+equivalent of the AWS credential chain — and an unset variable is a named error rather than a silent
+fallthrough, so one process can authenticate to several catalogs from different variables.
+
+A generic `header.<Name>` property carries vendor headers. Polaris needs `Polaris-Realm`, and a
+review caught that those headers reached the catalog request but **not the token exchange**, which
+lives on the catalog's own host, unlike Entra's. Both now carry them, with a test for each.
+
+**Verified against a live Apache Polaris container**, which is what makes this more than unit
+coverage: given only a client id, a scope, and the name of an environment variable, polytable
+fetched its own token and listed namespaces through the negotiated prefix. Polaris's `/v1/config`
+returns 401 unauthenticated and no static token was supplied, so the exchange demonstrably happened;
+its log shows the token request. Since **Snowflake Open Catalog is Polaris** — its endpoint path is
+literally `/polaris/api/catalog` — this covers the protocol Snowflake serves.
+
+**Unmet:** that run was manual. The dockertest suite this task asks for does not exist, so nothing
+stops the behavior regressing. **Snowflake itself is unreached** — no account — so its hostname
+handling, its `/v1/config`, and any auth it layers on top are assumed by software identity rather
+than verified. `docs/snowflake.md` says so.
+
 **Commit:** `feat: authenticate REST catalogs with OAuth2 client credentials and SigV4`
 
 ---
 
-## T60 — polytable and Java XTable do not recognize each other's sync state
+## T60 — polytable and Java XTable do not recognize each other's sync state ✅
 
 **T30's headline claim is false, and this is the evidence.** That task says the sharpest claim is
 "tables move between polytable and Apache XTable without resync (shared `xtable_*` keys)". They do

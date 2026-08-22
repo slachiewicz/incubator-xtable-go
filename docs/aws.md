@@ -302,16 +302,22 @@ path prefix from every catalog it talks to by calling `GET /v1/config?warehouse=
 (`pkg/catalog/rest_config.go`) and using the prefix the catalog returns for every later request —
 mechanism that is generic, not AWS- or OneLake-specific.
 
-**Authentication is the open question, and it does not look solved today.** `restHTTPClient`
-(`pkg/catalog/rest_auth.go`) recognizes exactly two `auth` modes: the default, a static bearer token
-carried in `properties.token`, and `entra`/`entra-id`/`azure` for Microsoft Entra ID. **There is no
-SigV4 signing transport anywhere in `pkg/catalog`.** Since both of AWS's native Iceberg REST
-endpoints require a SigV4-signed request, a `type: ICEBERG_REST` entry pointed at either one would
-authenticate with a plain (or absent) bearer token — the wrong credential shape — and would be
-expected to fail with an authentication error rather than succeed. No test in this repository
-exercises either endpoint, and nothing here has confirmed that failure mode against a live account,
-so treat this whole path as unverified in both directions: unverified that it fails the way this
-reasoning predicts, and unverified that it could ever succeed without adding a SigV4 transport.
+**Authentication.** `restHTTPClient` (`pkg/catalog/rest_auth.go`) recognizes four `auth` modes: the
+default, a static bearer token carried in `properties.token`; `entra`/`entra-id`/`azure` for
+Microsoft Entra ID; `oauth2`/`oauth`/`client-credentials` for the Iceberg REST specification's own
+OAuth2 client-credentials grant (Apache Polaris and Snowflake Open Catalog, which is Polaris); and
+`sigv4`/`aws`, added in `a30d5b2`, which signs every request with AWS Signature Version 4. A
+`sigv4`-authenticated request to Glue's Iceberg REST endpoint has been run against a real AWS
+account: `ListTables` completed with no authentication error, and returned zero tables because the
+account's Glue catalog had none registered.
+
+**S3 Tables' Iceberg REST endpoint remains unrun.** The `sigv4` transport is generic across signing
+name and region, so it should sign an S3 Tables request the same way, but that has not been tried
+against a live table bucket. And even where signing works, a table addressed through either native
+endpoint would still need bucket-wide S3 credentials to read its data files: as recorded under T64,
+polytable does not consume the short-lived, table-scoped credentials an Iceberg REST catalog can
+vend alongside its metadata responses, so authenticating to the catalog is not the same as having
+data access to what it describes.
 
 Writing table data through `s3://` is unaffected by any of this — that goes through `S3Storage`,
 never through the Iceberg REST catalog client.

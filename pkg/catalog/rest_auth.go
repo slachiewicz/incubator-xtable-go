@@ -32,8 +32,50 @@ const PropCatalogAuth = "auth"
 // PropCatalogToken carries a static bearer token.
 const PropCatalogToken = "token"
 
-// PropCatalogScope overrides the Entra ID scope requested for the catalog.
+// PropCatalogScope overrides the OAuth2 scope requested for the catalog, for both auth modes that
+// speak an OAuth2-shaped token request: entra/entra-id/azure and oauth2. The two differ in what an
+// empty value means. For entra, empty falls back to DefaultOneLakeScope, because Entra ID always
+// requires a scope. For oauth2, empty omits the scope form field entirely -- it is optional in the
+// OAuth2 client-credentials grant -- rather than defaulting to any one catalog's convention; Apache
+// Polaris's own examples request "PRINCIPAL_ROLE:ALL", but that is Polaris-specific role-scoping,
+// not part of the specification, so it belongs here as documentation, not as this package's default.
 const PropCatalogScope = "scope"
+
+// PropCatalogOAuth2ClientID is the OAuth2 client-credentials client id (auth=oauth2 only). Unlike
+// the client secret, this is not sensitive, so it may be an ordinary config property.
+const PropCatalogOAuth2ClientID = "clientId"
+
+// PropCatalogOAuth2ClientSecretEnv names the environment variable holding the OAuth2 client secret
+// (auth=oauth2 only). See newOAuth2HTTPClient's doc comment for why the secret itself is never a
+// config property.
+const PropCatalogOAuth2ClientSecretEnv = "clientSecretEnv"
+
+// PropCatalogOAuth2TokenEndpoint overrides the OAuth2 token endpoint (auth=oauth2 only). The
+// Iceberg REST specification places it at POST <catalog-uri>/v1/oauth/tokens, which is the default
+// used when this is unset; a deployment that moves the endpoint elsewhere can override it here.
+const PropCatalogOAuth2TokenEndpoint = "oauth2TokenEndpoint" //nolint:gosec // a property name constant, not a credential
+
+// PropCatalogHeaderPrefix marks a config property as an extra HTTP header attached to every request
+// a REST catalog client sends, independent of the auth mode in use: a property named
+// "header.<Name>" with value "<value>" attaches header "<Name>: <value>". This is a prefix on
+// arbitrary property keys, rather than one property packing several headers into a single string
+// (as a comma- or semicolon-joined value would), so that a header value containing a comma, a
+// semicolon or a colon needs no escaping -- map[string]string already handles that. Apache
+// Iceberg's own REST catalog clients use the same "header.<Name>" property convention, so a config
+// already written for one of them carries over unchanged.
+//
+// Apache Polaris is the motivating case: reaching it required a "Polaris-Realm: POLARIS" header
+// (confirmed against a local Polaris container) that selects which realm a request addresses, a
+// concern OAuth2 alone cannot express. Extra headers are attached after whatever auth transport is
+// in use signs or authenticates the request -- see headerTransport below -- so for auth=sigv4 they
+// are also covered by the signature (in SignedHeaders), not layered on unsigned afterward.
+//
+// For auth=oauth2, these headers are attached to the token exchange (POST /v1/oauth/tokens) as well
+// as to the catalog request: the token endpoint is on the catalog's own host, so a realm header
+// Polaris needs to route the catalog request typically applies to the token request too. Entra ID's
+// token endpoint has no analogous need -- it is Azure AD's own host, not the catalog's -- and
+// sigv4 has no token endpoint to attach anything to.
+const PropCatalogHeaderPrefix = "header."
 
 // PropCatalogWarehouse carries the Iceberg REST warehouse identifier sent as
 // GET /v1/config?warehouse=<value>. This is distinct from Config.DatabaseName, which maps to the
@@ -66,14 +108,9 @@ const PropCatalogRegion = "region"
 // worse failure mode than refusing to build the client at all.
 const PropCatalogSigningName = "signingName"
 
-// restHTTPClient returns the HTTP client and static token a REST catalog client should use. Empty
-// auth preserves today's behavior: a plain client and the static token in PropCatalogToken. auth
-// values entra, entra-id and azure (case-insensitive, trimmed) instead build a client whose
-// transport attaches a refreshed Entra ID bearer token, and sigv4/aws build one whose transport
-// SigV4-signs every request; both return an empty static token since every REST client call site
-// already skips the Authorization header when the token is empty. Any other non-empty auth value
-// is an error naming the value and the accepted ones, so a typo does not silently downgrade a
-// deployment to unauthenticated.
+// restHTTPClient returns the HTTP client and static token a REST catalog client should use. It
+// builds the base client for the configured auth mode (buildRESTAuthClient) and then, regardless of
+// that mode, wraps it with any extra headers configured via PropCatalogHeaderPrefix.
 func restHTTPClient(cfg *Config, timeout time.Duration) (*http.Client, string, error) {
 	var props map[string]string
 	var uri string
@@ -82,6 +119,29 @@ func restHTTPClient(cfg *Config, timeout time.Duration) (*http.Client, string, e
 		uri = cfg.URI
 	}
 
+	client, token, err := buildRESTAuthClient(props, uri, timeout)
+	if err != nil {
+		return nil, "", err
+	}
+
+	headers := extraHeaders(props)
+	if len(headers) > 0 {
+		client.Transport = &headerTransport{base: client.Transport, headers: headers}
+	}
+	return client, token, nil
+}
+
+// buildRESTAuthClient builds the HTTP client for cfg's auth mode, before any extra headers are
+// applied. Empty auth preserves today's behavior: a plain client and the static token in
+// PropCatalogToken. auth values entra, entra-id and azure (case-insensitive, trimmed) instead build
+// a client whose transport attaches a refreshed Entra ID bearer token; sigv4/aws build one whose
+// transport SigV4-signs every request; oauth2/oauth/client-credentials build one whose transport
+// attaches an OAuth2 client-credentials bearer token, refreshed the same way. All three non-empty
+// modes return an empty static token since every REST client call site already skips the
+// Authorization header when the token is empty. Any other non-empty auth value is an error naming
+// the value and the accepted ones, so a typo does not silently downgrade a deployment to
+// unauthenticated.
+func buildRESTAuthClient(props map[string]string, uri string, timeout time.Duration) (*http.Client, string, error) {
 	auth := strings.TrimSpace(props[PropCatalogAuth])
 	switch strings.ToLower(auth) {
 	case "":
@@ -118,9 +178,87 @@ func restHTTPClient(cfg *Config, timeout time.Duration) (*http.Client, string, e
 			return nil, "", err
 		}
 		return client, "", nil
+	case "oauth2", "oauth", "client-credentials":
+		clientID := strings.TrimSpace(props[PropCatalogOAuth2ClientID])
+		if clientID == "" {
+			return nil, "", fmt.Errorf("%s %q for Iceberg REST catalog requires %q", PropCatalogAuth, auth, PropCatalogOAuth2ClientID)
+		}
+		clientSecretEnvVar := strings.TrimSpace(props[PropCatalogOAuth2ClientSecretEnv])
+		if clientSecretEnvVar == "" {
+			return nil, "", fmt.Errorf("%s %q for Iceberg REST catalog requires %q, naming the environment variable that holds the client secret -- the secret itself must never be a config property",
+				PropCatalogAuth, auth, PropCatalogOAuth2ClientSecretEnv)
+		}
+		tokenEndpoint := strings.TrimSpace(props[PropCatalogOAuth2TokenEndpoint])
+		if tokenEndpoint == "" {
+			tokenEndpoint = defaultOAuth2TokenEndpoint(uri)
+		}
+		if tokenEndpoint == "" {
+			return nil, "", fmt.Errorf("%s %q for Iceberg REST catalog requires %q: it could not be derived from an empty catalog URI",
+				PropCatalogAuth, auth, PropCatalogOAuth2TokenEndpoint)
+		}
+		scope := strings.TrimSpace(props[PropCatalogScope])
+
+		// Passed through to the token exchange itself, not just the catalog request restHTTPClient
+		// wraps afterward: see PropCatalogHeaderPrefix's doc comment for why.
+		client, err := newOAuth2HTTPClient(timeout, tokenEndpoint, clientID, clientSecretEnvVar, scope, extraHeaders(props))
+		if err != nil {
+			return nil, "", err
+		}
+		return client, "", nil
 	default:
-		return nil, "", fmt.Errorf("unsupported %s %q for Iceberg REST catalog: accepted values are \"\" (static token), \"entra\", \"entra-id\", \"azure\", \"sigv4\" and \"aws\"", PropCatalogAuth, auth)
+		return nil, "", fmt.Errorf("unsupported %s %q for Iceberg REST catalog: accepted values are \"\" (static token), \"entra\", \"entra-id\", \"azure\", \"sigv4\", \"aws\", \"oauth2\", \"oauth\" and \"client-credentials\"", PropCatalogAuth, auth)
 	}
+}
+
+// defaultOAuth2TokenEndpoint derives the OAuth2 token endpoint the Iceberg REST specification
+// places at POST <catalog-uri>/v1/oauth/tokens. It returns "" for an empty uri, in which case the
+// caller must be configured with PropCatalogOAuth2TokenEndpoint explicitly.
+func defaultOAuth2TokenEndpoint(uri string) string {
+	uri = strings.TrimRight(strings.TrimSpace(uri), "/")
+	if uri == "" {
+		return ""
+	}
+	return uri + "/v1/oauth/tokens"
+}
+
+// headerTransport is an http.RoundTripper that attaches a fixed set of extra headers to every
+// request, then delegates to base. It never mutates req, the same discipline entraTransport,
+// sigv4Transport and oauth2Transport all follow: it clones the request and sets headers on the
+// clone.
+type headerTransport struct {
+	base    http.RoundTripper
+	headers http.Header
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	for name, values := range t.headers {
+		for _, value := range values {
+			clone.Header.Add(name, value)
+		}
+	}
+
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(clone)
+}
+
+// extraHeaders collects every "header.<Name>": "<value>" property into an http.Header, stripping
+// the PropCatalogHeaderPrefix. It returns an empty, non-nil header when there are none, so callers
+// can check len() without a nil check.
+func extraHeaders(props map[string]string) http.Header {
+	headers := make(http.Header)
+	for key, value := range props {
+		name, ok := strings.CutPrefix(key, PropCatalogHeaderPrefix)
+		if !ok || name == "" {
+			continue
+		}
+		headers.Add(name, value)
+	}
+	return headers
 }
 
 // deriveSigV4HostDefaults reads the region and signing name out of a URI host shaped like
