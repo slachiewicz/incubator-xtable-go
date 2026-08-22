@@ -33,18 +33,18 @@ Azure Data Lake Storage Gen2 and Microsoft Fabric OneLake are implemented in `pk
 `azblob` SDK, with credential selection, endpoint derivation, and OneLake's path shape all coded
 against Microsoft's published documentation.
 
-What is verified: `test/dockertest_azurite_test.go` passes against the Azurite emulator. It syncs
-Delta to Iceberg and Hudi and back through the Azure backend, and asserts that every path `List`
-returns round-trips through `ParseAzureURI` to the same container, host, and blob. That covers the
-shared-key credential path and `abfss://` only.
+Azure Data Lake Storage Gen2 is verified against a real account. On a `StorageV2` account created
+with the hierarchical namespace enabled, polytable synced a Delta table to Iceberg and Hudi over
+`abfss://`, read every target back, resolved directories correctly, and authenticated through both a
+shared key and `DefaultAzureCredential`. The Azurite emulator suite
+(`test/dockertest_azurite_test.go`) covers shared key, SAS, anonymous and all four ABFS spellings on
+every run.
 
-**Nothing has been exercised against a live Azure account or a Fabric workspace.** The emulator
-implements the Blob API; it is not Azure, and it exercises neither Entra ID nor the hierarchical
-namespace. SAS, anonymous, and `DefaultAzureCredential` have no test, and the last cannot have one
-without a tenant. `docs/improvement-plan.md` T51 and T52 record exactly which acceptance criteria
-that leaves unmet, and [Set up an Azure test environment](azure-test-environment.md) is the recipe
-for closing them. Treat every claim below about behavior against a real Azure or Fabric endpoint as
-unverified unless stated otherwise.
+**OneLake is not verified.** A token has been accepted by the live endpoint, which confirms the
+scope and the Entra transport, but no request against a real Fabric workspace has succeeded —
+see [Catalogs on Azure](#catalogs-on-azure). `docs/improvement-plan.md` T51 and T52 record exactly
+what that leaves open, and [Set up an Azure test environment](azure-test-environment.md) is the
+recipe for closing it.
 
 ## URI shapes
 

@@ -1778,12 +1778,12 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T53, T54, T55 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T53, T54, T55, T56 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T56 for Azure usability |
+| 🎯 Open queue | T24, T30, T34, T37, and T38–T50 from the roadmap |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -2467,15 +2467,27 @@ blob byte-identically. Pagination is deliberately skipped rather than faked: `Li
 `MaxResults`, and the server-side default page is 5000 on both Azure and Azurite, so forcing a
 second page would need 5000 uploads.
 
-**Why this is still ⚠️ and not ✅ — three acceptance criteria remain unmet:**
+### Verified against a real Azure account, 2026-08-22 ✅
 
-1. **Nothing has reached a real Azure account.** The emulator implements the Blob API; it is not
-   Azure, and it does not exercise Entra ID, network policy, or ADLS Gen2's hierarchical namespace —
-   T54 fixed a directory bug that no emulator test could have caught, which is the concrete evidence
-   for why this gap matters. `docs/azure-test-environment.md` is the recipe for closing it.
-2. **`DefaultAzureCredential` has no test** and cannot have one without a tenant. SAS, shared key
-   and anonymous are now covered.
-3. **No OneLake request has been made**, though the shapes are sourced rather than guessed.
+Run against a pay-as-you-go subscription with a `StorageV2` account created `--hns true`, so a
+genuine ADLS Gen2 hierarchical namespace, seeded with the `delta-rs-checkpoint` fixture:
+
+- **Sync works.** `polytable sync` over `abfss://` reported `SUCCESS` for both the Iceberg and Hudi
+  targets, reading a Delta table whose early commits were expired by log retention.
+- **`DefaultAzureCredential` works**, which is what could not be tested without a tenant. With no
+  `AZURE_STORAGE_KEY` in the environment, `polytable inspect` read the Iceberg target back through
+  the Entra chain — the `az` CLI login plus a `Storage Blob Data Contributor` assignment — and
+  reported the same schema, partition field and six data files.
+- **T54's fix is confirmed on the account type that produces the bug.** Uploading 10 files created
+  17 blobs: the hierarchical namespace materializes directories as real objects. `List` reports 6
+  directories and 10 files, each `IsDir` correct. Before T54 all six would have been zero-byte
+  *files*, and `region=east` and its siblings would have been crawled as data. This is the failure
+  the emulator structurally cannot produce, now observed and closed.
+
+**Why this is still ⚠️ and not ✅ — two acceptance criteria remain unmet:**
+
+1. **No OneLake request has succeeded.** One has now been *made* — see T52's first-contact note —
+   but only the failure path ran. The shapes are sourced rather than guessed.
    Microsoft documents the abfss form as
    `abfs[s]://<workspace>@onelake.dfs.fabric.microsoft.com/<item>.<itemtype>/<path>/<fileName>`,
    with "the account name is always `onelake`, the container name is your workspace name" — which
@@ -2858,7 +2870,7 @@ A's key, which is exactly the production failure this guards against.
 
 ---
 
-## T56 — `Exists` cannot tell "absent" from "not allowed"
+## T56 — `Exists` cannot tell "absent" from "not allowed" ✅ INVESTIGATED, NO CHANGE NEEDED
 
 Found by the Azurite credential work, as a reasoned risk rather than a reproduction — record it that
 way and confirm it before writing the fix.
@@ -2890,6 +2902,30 @@ passing unchanged. If the investigation shows Azure returns `403` here after all
 line in this task saying so and no code change.
 
 **Commit:** `fix: distinguish an inaccessible blob from a missing one`
+
+### Outcome ✅ — the concern does not reproduce; `Exists` already fails closed
+
+Checked against a real ADLS Gen2 account on 2026-08-22, all four cases the task asked for:
+
+| Caller | Blob | Azure response | `Exists` returns |
+| :--- | :--- | :--- | :--- |
+| Anonymous | exists | `401 NoAuthenticationInformation` | `(false, error)` |
+| Anonymous | missing | `401 NoAuthenticationInformation` | `(false, error)` |
+| Authenticated, no RBAC role | exists | `403 AuthorizationPermissionMismatch` | `(false, error)` |
+| Authenticated, no RBAC role | missing | `403 AuthorizationPermissionMismatch` | `(false, error)` |
+
+The under-privileged case used a service principal created with no role assignment at all, driven
+through `DefaultAzureCredential`'s environment path, and deleted afterwards.
+
+**Azure does not return `404` here.** The existence-hiding `404` behavior applies to probing a
+*public* blob endpoint, not to a private container reached without adequate credentials. Since
+`bloberror.BlobNotFound` never fires on these paths, the `(false, nil)` mapping is never reached
+and `Exists` fails closed in all four cases — which is the behavior the task wanted.
+
+**No code change.** This task exists as the record that the risk was real enough to check and the
+check came back clean, so the next person reading `Exists` does not have to re-derive it. Azurite's
+`403` and real Azure's `401`/`403` differ in code but agree in kind, so
+`AnonymousAccessFailsClosed` in the emulator suite pins the right behavior after all.
 
 ---
 
