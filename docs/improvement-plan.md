@@ -1778,12 +1778,12 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T53, T54 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T53, T54, T55 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T55, T56 for Azure usability |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T56 for Azure usability |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -2751,7 +2751,7 @@ Azurite suite still passes — the Blob-convention path is unchanged.
 
 ---
 
-## T55 — One process, one Azure account: credentials are process-wide
+## T55 — One process, one Azure account: credentials are process-wide ✅ COMPLETED
 
 The daemon loops datasets (`pkg/daemon/daemon.go:75`) and builds a `Storage` per dataset from that
 dataset's own `StorageConfig`. Azure credentials do not follow that per-dataset path: `SASToken`
@@ -2790,6 +2790,42 @@ variable fails with a message naming it; the well-known variables keep working u
 the existing tests.
 
 **Commit:** `feat: let a dataset name the environment variable holding its Azure credential`
+
+### Outcome ✅
+
+`AzureStorageConfig` gained `accountKeyEnv` and `sasTokenEnv`, mirrored onto `AzureOptions` and
+carried through `ToOptionFuncs`. `resolveAzureCredential(literal, envVarName, configField,
+wellKnownEnv)` in `pkg/io/azure.go` applies one order at both the SAS and shared-key sites: a
+literal option wins outright, then the named variable, then the well-known one. With no new field
+set the behavior is byte-identical to before.
+
+**The no-fall-through rule is the load-bearing part.** A named variable that is unset or empty is a
+hard error naming both the config field and the variable — it does **not** try the next credential
+mode. Falling through would turn a typo in `accountKeyEnv` into an Entra 403 much later, from a
+completely different subsystem, which is the kind of error nobody traces back to a config typo.
+
+**Scope decision: Azure only.** `NewS3Storage` relies entirely on `awsconfig.LoadDefaultConfig` and
+has the same shape of limitation, but nobody has asked for the S3 case. `resolveAzureCredential`'s
+signature is directly reusable there if they do.
+
+**Acceptance, checked:**
+- **Two datasets, two variables, two accounts, one process** — `TwoAccountsOneProcess` in
+  `test/dockertest_azurite_test.go` starts a second Azurite container with its own account via
+  `AZURITE_ACCOUNTS`, so the two datasets really do address different stores rather than one store
+  on two ports. Both configs go through `conversion.StorageConfig.ToOptionFuncs()` and
+  `io.NewStorageForPathWithOptions`, which is what proves the per-dataset plumbing rather than the
+  option struct. A blob written to account A is asserted invisible from account B's storage.
+- **`AZURE_STORAGE_KEY` is set to a deliberately wrong value for the whole subtest.** That is the
+  point of the test: if resolution ever falls back to the well-known variable, both datasets fail
+  loudly instead of passing quietly. Do not "simplify" it away.
+- **An unset named variable fails construction** with an error naming the variable, asserted in the
+  same subtest and in a 15-case unit table in `pkg/io/azure_credentials_test.go`.
+
+**Negative control run:** pointing both datasets at the same variable fails, at `Write` with
+`403 AuthorizationFailure` rather than at the cross-account assertion — account B rejecting account
+A's key, which is exactly the production failure this guards against.
+
+`docs/azure.md` and `docs/cloud-storage.md` document both keys and the precedence rule.
 
 ---
 

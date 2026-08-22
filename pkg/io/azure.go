@@ -57,15 +57,55 @@ type AzureOptions struct {
 	// AccountName overrides the account parsed from the URI host. Azurite needs it: its
 	// service URL carries the account in the path rather than the host.
 	AccountName string
-	// AccountKey authenticates with a shared key. Prefer the AZURE_STORAGE_KEY environment
-	// variable; this field exists for tests and for callers that already hold the secret.
+	// AccountKey authenticates with a shared key. Prefer AccountKeyEnv, or the well-known
+	// AZURE_STORAGE_KEY environment variable, over this field; it exists for tests and for
+	// callers that already hold the secret in hand.
 	AccountKey string
+	// AccountKeyEnv names the environment variable holding the shared account key, rather than
+	// the well-known AZURE_STORAGE_KEY — so one process can serve several storage accounts,
+	// each with its own key, one dataset config pointing at a different variable than the
+	// next. It never holds the secret itself: only the variable name is configuration, and
+	// configuration is what gets committed, logged, and POSTed to the REST service. If set, it
+	// outranks AZURE_STORAGE_KEY; if the named variable is unset or empty, that is an error
+	// naming the variable rather than a silent fall-through to the next credential mode — a
+	// typo here must not turn into a confusing Entra ID 403 several steps later.
+	AccountKeyEnv string
 	// SASToken authenticates with a shared access signature, with or without a leading "?".
 	SASToken string
+	// SASTokenEnv names the environment variable holding the SAS token, the same way
+	// AccountKeyEnv does for the shared key: it outranks AZURE_STORAGE_SAS_TOKEN, and an unset
+	// or empty named variable is an error naming it, not a fall-through.
+	SASTokenEnv string
 	// Anonymous selects unauthenticated access, for a public container.
 	Anonymous bool
 	// CustomHTTPClient injects a transport. Tests use it; production should not need it.
 	CustomHTTPClient *http.Client
+}
+
+// resolveAzureCredential resolves a single Azure credential (a SAS token or an account key) from
+// three sources, in order: an explicit literal value, a named environment variable (configFieldName
+// names the AzureOptions/AzureStorageConfig field that carries it, for the error message), and a
+// well-known environment variable. The literal value is the most explicit, so it wins outright
+// without even looking at either variable.
+//
+// The named variable is deliberately not allowed to fall through to the well-known one when it is
+// unset or empty: falling through would turn a typo in a config's accountKeyEnv/sasTokenEnv key
+// into an unrelated credential mode being tried instead (most often the Entra ID default chain),
+// which surfaces as a confusing 403 far from the actual mistake. Naming both the field and the
+// empty variable in the error keeps the failure next to its cause.
+func resolveAzureCredential(literal, envVarName, configFieldName, wellKnownEnvVar string) (string, error) {
+	if literal != "" {
+		return literal, nil
+	}
+	if envVarName != "" {
+		value := os.Getenv(envVarName)
+		if value == "" {
+			return "", fmt.Errorf("azure: %s names environment variable %s, which is unset or empty",
+				configFieldName, envVarName)
+		}
+		return value, nil
+	}
+	return os.Getenv(wellKnownEnvVar), nil
 }
 
 // NewAzureStorage creates a new AzureStorage instance for the account addressed by uri. The URI is
@@ -114,13 +154,13 @@ func NewAzureStorage(ctx context.Context, uri string, optFns ...func(*AzureOptio
 		clientOptions = &azblob.ClientOptions{ClientOptions: azcore.ClientOptions{Transport: opts.CustomHTTPClient}}
 	}
 
-	sasToken := opts.SASToken
-	if sasToken == "" {
-		sasToken = os.Getenv("AZURE_STORAGE_SAS_TOKEN")
+	sasToken, err := resolveAzureCredential(opts.SASToken, opts.SASTokenEnv, "SASTokenEnv", "AZURE_STORAGE_SAS_TOKEN")
+	if err != nil {
+		return nil, err
 	}
-	accountKey := opts.AccountKey
-	if accountKey == "" {
-		accountKey = os.Getenv("AZURE_STORAGE_KEY")
+	accountKey, err := resolveAzureCredential(opts.AccountKey, opts.AccountKeyEnv, "AccountKeyEnv", "AZURE_STORAGE_KEY")
+	if err != nil {
+		return nil, err
 	}
 
 	var client *azblob.Client

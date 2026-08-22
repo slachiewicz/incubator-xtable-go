@@ -157,18 +157,32 @@ too, since foreign metadata may record any of the four.
 polytable selects Azure credentials in the following order, using the first
 one that is configured:
 
-1. A SAS token, from the `AZURE_STORAGE_SAS_TOKEN` environment variable.
-2. A shared account key, from the `AZURE_STORAGE_KEY` environment variable.
+1. A SAS token, from the environment variable named by the dataset's
+   `storage.azure.sasTokenEnv` key, or the `AZURE_STORAGE_SAS_TOKEN`
+   environment variable if `sasTokenEnv` is unset.
+2. A shared account key, from the environment variable named by
+   `storage.azure.accountKeyEnv`, or `AZURE_STORAGE_KEY` if `accountKeyEnv`
+   is unset.
 3. Anonymous access, if the dataset's `storage.azure.anonymous` key is set to
    `true`, for a public container.
 4. The Entra ID default credential chain (`DefaultAzureCredential`), which
    covers workload identity, managed identity, an environment service
    principal, and the Azure CLI, in that order.
 
+A named variable — `sasTokenEnv` or `accountKeyEnv` — that is unset or empty
+is an error naming that variable. It does not fall back to the well-known
+variable or further down the chain: a typo in either key would otherwise
+surface much later as a confusing Entra ID 403 rather than as a clear
+configuration error.
+
 Credentials are never a configuration-file field. `storage.azure` carries
-only `endpoint`, `accountName`, and `anonymous`; a SAS token or an account key
-must reach polytable through the environment instead, because a config file
-gets committed, logged, and POSTed to the REST service.
+`endpoint`, `accountName`, `anonymous`, `accountKeyEnv`, and `sasTokenEnv` —
+but the last two name a variable, never hold a secret. Naming the variable,
+rather than always reading the well-known `AZURE_STORAGE_KEY` /
+`AZURE_STORAGE_SAS_TOKEN`, is also what lets one process sync datasets from
+two different storage accounts, each pointed at its own variable. A config
+file still never carries the secret itself, because it gets committed,
+logged, and POSTed to the REST service.
 
 ### The blob service endpoint
 
@@ -235,13 +249,21 @@ and `wasb://` paths. It has the following keys:
 - **`accountName`**: overrides the storage account parsed from the path's
   host. Azurite needs it: its service URL carries the account in the path
   rather than the host.
+- **`accountKeyEnv`**: names the environment variable holding the shared
+  account key for this dataset — never the key itself. Outranks
+  `AZURE_STORAGE_KEY`; an unset or empty named variable is an error naming
+  it, not a fall-through to the well-known variable.
+- **`sasTokenEnv`**: names the environment variable holding the SAS token for
+  this dataset, the same way `accountKeyEnv` does for the shared key.
+  Outranks `AZURE_STORAGE_SAS_TOKEN`.
 - **`anonymous`**: set to `true` to read without credentials, for a public
   container.
 
 The block holds no credential fields — a SAS token or a shared account key
-reaches polytable only through the `AZURE_STORAGE_SAS_TOKEN` and
-`AZURE_STORAGE_KEY` environment variables; see Credentials under
-[Sync a table in Azure](#sync-a-table-in-azure) above.
+reaches polytable only through the environment, either through the variable
+named by `sasTokenEnv` / `accountKeyEnv` or, absent those, the well-known
+`AZURE_STORAGE_SAS_TOKEN` and `AZURE_STORAGE_KEY` variables; see Credentials
+under [Sync a table in Azure](#sync-a-table-in-azure) above.
 
 ## What's next
 

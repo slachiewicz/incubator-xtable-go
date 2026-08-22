@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,6 +50,51 @@ const (
 	azuriteHost        = "devstoreaccount1.dfs.core.windows.net"
 )
 
+// azuriteRunOptions builds the container options both Azurite instances in this file use. Only the
+// blob service is started, and two flags are load-bearing. --blobHost 0.0.0.0 makes the listener
+// reachable through the published port: the image's default binds the container's own loopback, so
+// a published port accepts the connection and then resets it. --skipApiVersionCheck is required
+// because azblob sends a newer x-ms-version than Azurite recognizes, which Azurite rejects with
+// InvalidHeaderValue on the first request; the emulator trails the service, so expect this to stay
+// true after each SDK bump.
+func azuriteRunOptions(env []string) *dockertest.RunOptions {
+	return &dockertest.RunOptions{
+		Repository: "mcr.microsoft.com/azure-storage/azurite",
+		Tag:        "latest",
+		Cmd:        []string{"azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000", "--skipApiVersionCheck"},
+		Env:        env,
+		PortBindings: map[docker.Port][]docker.PortBinding{
+			"10000/tcp": {{HostIP: "127.0.0.1", HostPort: ""}},
+		},
+	}
+}
+
+// runAzurite starts an Azurite container, retrying a host-port collision.
+//
+// An empty HostPort asks Docker for a free ephemeral port, so a collision should not happen — and
+// locally it does not. On GitHub's runners it did: the container failed to start with "failed to
+// listen on TCP socket: address already in use", while the MinIO and Iceberg REST suites, which use
+// the identical binding shape on different ports, started fine. The cause is not established, so
+// this retries with a fresh allocation rather than pretending to know it. If a retry also fails,
+// the error surfaces with the attempt count, which distinguishes a transient collision from a port
+// that is permanently occupied on that host.
+func runAzurite(pool *dockertest.Pool, env []string) (*dockertest.Resource, error) {
+	const attempts = 3
+
+	var err error
+	for i := 1; i <= attempts; i++ {
+		var resource *dockertest.Resource
+		resource, err = pool.RunWithOptions(azuriteRunOptions(env))
+		if err == nil {
+			return resource, nil
+		}
+		if !strings.Contains(err.Error(), "address already in use") {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("azurite container failed to bind a host port after %d attempts: %w", attempts, err)
+}
+
 func TestDockertest_Azurite_FullLakehouseMatrix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping dockertest integration test in short mode")
@@ -61,19 +107,7 @@ func TestDockertest_Azurite_FullLakehouseMatrix(t *testing.T) {
 	require.NoError(t, err, "failed to ping Docker daemon")
 
 	// 1. Run Azurite container with 120s auto-expiry to prevent orphan containers
-	resource, err := pool.RunWithOptions(&dockertest.RunOptions{
-		Repository: "mcr.microsoft.com/azure-storage/azurite",
-		Tag:        "latest",
-		// Only the blob service is needed, and two flags are load-bearing. --blobHost 0.0.0.0
-		// makes the listener reachable through the published port. --skipApiVersionCheck is
-		// required because azblob sends a newer x-ms-version than Azurite recognizes, which
-		// Azurite rejects with InvalidHeaderValue on the first request; the emulator trails the
-		// service, so this will keep being true after the next SDK bump.
-		Cmd: []string{"azurite-blob", "--blobHost", "0.0.0.0", "--blobPort", "10000", "--skipApiVersionCheck"},
-		PortBindings: map[docker.Port][]docker.PortBinding{
-			"10000/tcp": {{HostIP: "127.0.0.1", HostPort: ""}},
-		},
-	})
+	resource, err := runAzurite(pool, nil)
 	require.NoError(t, err, "failed to start Azurite container")
 	_ = resource.Expire(120)
 	defer func() {
@@ -436,5 +470,138 @@ func TestDockertest_Azurite_FullLakehouseMatrix(t *testing.T) {
 			"Azure and Azurite, so forcing a second page needs more than 5000 sequential blob uploads " +
 			"against a single container, which is impractical for a unit test. Skipped rather than faked " +
 			"with a lowered page size that would not actually exercise pagination.")
+	})
+
+	// 10. T55's last unmet acceptance criterion: two datasets naming different account-key
+	// environment variables must sync to different accounts in one process. A second, genuinely
+	// distinct Azurite container proves both the credential and the endpoint are per-dataset, not
+	// only the credential -- one Azurite instance with two AZURITE_ACCOUNTS entries would leave the
+	// endpoint shared and prove less.
+	t.Run("TwoAccountsOneProcess", func(t *testing.T) {
+		const (
+			secondAccountName = "polytableaccountb"
+			// Valid base64, and deliberately not devstoreaccount1's key: azblob.NewSharedKeyCredential
+			// and Azurite's own AZURITE_ACCOUNTS parsing both require valid base64, but the byte
+			// content is otherwise arbitrary.
+			//nolint:gosec // not a credential: a fixed, non-secret key for a throwaway Azurite container
+			secondAccountKey = "cG9seXRhYmxlLXNlY29uZC1hY2NvdW50LXNoYXJlZC1rZXktZm9yLWF6dXJpdGUtdGVzdA=="
+		)
+
+		// Start a second Azurite container with its own account, via AZURITE_ACCOUNTS, so the two
+		// datasets below really do talk to different stores rather than the same devstoreaccount1
+		// reachable on two ports.
+		resourceB, err := runAzurite(pool, []string{fmt.Sprintf("AZURITE_ACCOUNTS=%s:%s", secondAccountName, secondAccountKey)})
+		require.NoError(t, err, "failed to start second Azurite container")
+		_ = resourceB.Expire(120)
+		defer func() {
+			_ = pool.Purge(resourceB)
+		}()
+
+		secondPort := resourceB.GetPort("10000/tcp")
+		secondBlobServiceURL := fmt.Sprintf("http://127.0.0.1:%s/%s", secondPort, secondAccountName)
+
+		err = pool.Retry(func() error {
+			req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, secondBlobServiceURL, nil)
+			if reqErr != nil {
+				return reqErr
+			}
+			resp, getErr := http.DefaultClient.Do(req)
+			if getErr != nil {
+				return getErr
+			}
+			defer func() { _ = resp.Body.Close() }()
+			return nil
+		})
+		require.NoError(t, err, "second azurite container failed to become ready in time")
+
+		// Create the container on the second account with a raw azblob client, mirroring the
+		// top-level setup above.
+		secondCred, err := azblob.NewSharedKeyCredential(secondAccountName, secondAccountKey)
+		require.NoError(t, err)
+		secondAzClient, err := azblob.NewClientWithSharedKeyCredential(secondBlobServiceURL, secondCred, nil)
+		require.NoError(t, err)
+		_, err = secondAzClient.CreateContainer(ctx, azuriteContainer, nil)
+		require.NoError(t, err, "failed to create test container on the second Azurite account")
+
+		// The three environment variables that make this test mean something. AZURE_STORAGE_KEY is
+		// deliberately wrong, though still valid base64: if credential resolution for either
+		// dataset ever falls back to the well-known variable instead of respecting its own
+		// AccountKeyEnv, that dataset fails loudly (an auth error against the real accounts) rather
+		// than silently passing against the wrong one. Do not simplify this away.
+		t.Setenv("POLYTABLE_TEST_AZURE_KEY_A", azuriteAccountKey)
+		t.Setenv("POLYTABLE_TEST_AZURE_KEY_B", secondAccountKey)
+		//nolint:gosec // not a credential: deliberately wrong, valid-base64 sentinel value for the well-known fallback var
+		t.Setenv("AZURE_STORAGE_KEY", "dGhpcy1pcy1hLWRlbGliZXJhdGVseS13cm9uZy1henVyZS1zdG9yYWdlLWtleS12YWx1ZQ==")
+
+		secondTableBasePath := fmt.Sprintf("abfss://%s@%s.dfs.core.windows.net/tables/other_events",
+			azuriteContainer, secondAccountName)
+
+		// Two conversion.StorageConfig values, each naming its own Azure endpoint, account and
+		// AccountKeyEnv, run through ToOptionFuncs() -- the same path the CLI, daemon and REST
+		// server use -- rather than constructing io.AzureOptions directly, since the per-dataset
+		// plumbing through StorageConfig is the actual subject of this test.
+		configA := conversion.StorageConfig{
+			Azure: &conversion.AzureStorageConfig{
+				Endpoint:      blobServiceURL,
+				AccountName:   azuriteAccountName,
+				AccountKeyEnv: "POLYTABLE_TEST_AZURE_KEY_A",
+			},
+		}
+		configB := conversion.StorageConfig{
+			Azure: &conversion.AzureStorageConfig{
+				Endpoint:      secondBlobServiceURL,
+				AccountName:   secondAccountName,
+				AccountKeyEnv: "POLYTABLE_TEST_AZURE_KEY_B",
+			},
+		}
+
+		storageA, err := io.NewStorageForPathWithOptions(ctx, tableBasePath, configA.ToOptionFuncs()...)
+		require.NoError(t, err)
+		storageB, err := io.NewStorageForPathWithOptions(ctx, secondTableBasePath, configB.ToOptionFuncs()...)
+		require.NoError(t, err)
+
+		pathA := fmt.Sprintf("%s/two-accounts/probe-a.txt", tableBasePath)
+		dataA := []byte("account A payload, only visible through storageA")
+		pathB := fmt.Sprintf("%s/two-accounts/probe-b.txt", secondTableBasePath)
+		dataB := []byte("account B payload, only visible through storageB")
+
+		require.NoError(t, storageA.Write(ctx, pathA, dataA))
+		require.NoError(t, storageB.Write(ctx, pathB, dataB))
+
+		gotA, err := storageA.Read(ctx, pathA)
+		require.NoError(t, err)
+		assert.Equal(t, dataA, gotA, "storageA must read back byte-identically what it wrote")
+
+		gotB, err := storageB.Read(ctx, pathB)
+		require.NoError(t, err)
+		assert.Equal(t, dataB, gotB, "storageB must read back byte-identically what it wrote")
+
+		listA, err := storageA.List(ctx, fmt.Sprintf("%s/two-accounts", tableBasePath))
+		require.NoError(t, err)
+		assert.NotEmpty(t, listA)
+
+		listB, err := storageB.List(ctx, fmt.Sprintf("%s/two-accounts", secondTableBasePath))
+		require.NoError(t, err)
+		assert.NotEmpty(t, listB)
+
+		// The cross-check that proves the two are really separate stores: a blob written only to
+		// account A must not be visible from the storage built for account B.
+		existsOnB, err := storageB.Exists(ctx, pathA)
+		require.NoError(t, err)
+		assert.False(t, existsOnB, "a blob written only to account A must not be visible from account B's storage")
+
+		// Negative case pinning the no-fall-through rule: an AccountKeyEnv naming an unset variable
+		// must fail construction, with an error naming that variable -- the rule the wrong
+		// AZURE_STORAGE_KEY above would otherwise hide if it were ever silently consulted instead.
+		configMissing := conversion.StorageConfig{
+			Azure: &conversion.AzureStorageConfig{
+				Endpoint:      blobServiceURL,
+				AccountName:   azuriteAccountName,
+				AccountKeyEnv: "POLYTABLE_TEST_AZURE_KEY_UNSET",
+			},
+		}
+		_, err = io.NewStorageForPathWithOptions(ctx, tableBasePath, configMissing.ToOptionFuncs()...)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "POLYTABLE_TEST_AZURE_KEY_UNSET")
 	})
 }

@@ -33,11 +33,13 @@ var ErrAzureUnsupported = errors.New("Azure storage is unavailable in WebAssembl
 // functions compile identically on both. CustomHTTPClient is omitted: it exists only to inject an
 // HTTP transport, which has no meaning here.
 type AzureOptions struct {
-	Endpoint    string
-	AccountName string
-	AccountKey  string
-	SASToken    string
-	Anonymous   bool
+	Endpoint      string
+	AccountName   string
+	AccountKey    string
+	AccountKeyEnv string
+	SASToken      string
+	SASTokenEnv   string
+	Anonymous     bool
 }
 
 // NewAzureStorage always fails on WebAssembly. It exists so NewStorageForPath keeps one shape

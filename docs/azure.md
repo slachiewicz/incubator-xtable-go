@@ -91,12 +91,15 @@ a GUID container name works the same as a display name.
 `NewAzureStorage` (`pkg/io/azure.go`) selects a credential mode with first match wins, in this
 order:
 
-1. **A SAS token** — from `AzureOptions.SASToken`, or the `AZURE_STORAGE_SAS_TOKEN` environment
-   variable if that field is empty. The client is built with
-   `azblob.NewClientWithNoCredential` against the service URL with the token appended as a query
-   string.
-2. **A shared account key** — from `AzureOptions.AccountKey`, or `AZURE_STORAGE_KEY` if empty.
-   Built with `azblob.NewSharedKeyCredential` and `azblob.NewClientWithSharedKeyCredential`.
+1. **A SAS token** — from `AzureOptions.SASToken`; failing that, from the environment variable
+   named by `AzureOptions.SASTokenEnv` (the dataset config's `storage.azure.sasTokenEnv` key);
+   failing that, from the well-known `AZURE_STORAGE_SAS_TOKEN` environment variable. The client is
+   built with `azblob.NewClientWithNoCredential` against the service URL with the token appended
+   as a query string.
+2. **A shared account key** — from `AzureOptions.AccountKey`; failing that, from the environment
+   variable named by `AzureOptions.AccountKeyEnv` (`storage.azure.accountKeyEnv`); failing that,
+   from the well-known `AZURE_STORAGE_KEY`. Built with `azblob.NewSharedKeyCredential` and
+   `azblob.NewClientWithSharedKeyCredential`.
 3. **Anonymous access** — selected explicitly with `AzureOptions.Anonymous` (the dataset config's
    `storage.azure.anonymous` key), for a public container. Built with
    `azblob.NewClientWithNoCredential` against the plain service URL, no token attached.
@@ -111,11 +114,19 @@ order:
    - **The Azure CLI** — the identity of an `az login` session on the machine polytable runs on,
      for local development.
 
-Credentials are never a configuration-file field. `AzureStorageConfig`
-(`pkg/conversion/config.go`) exposes only `endpoint`, `accountName`, and `anonymous` — a SAS token
-or an account key must reach polytable through the environment, because a dataset config file gets
-committed, logged, and POSTed to the REST service, and a secret in any of those places is a leak
-waiting to happen. This mirrors `S3Options`, which has no credential fields either.
+An unset or empty named variable — `sasTokenEnv` or `accountKeyEnv` pointing at a variable that
+was never set, or set to the empty string — is an error naming the variable, not a silent
+fall-through to the next credential mode. A typo in either key would otherwise surface several
+steps later as a confusing Entra ID 403, far from the actual mistake.
+
+Credentials are never a configuration-file field. `AzureStorageConfig` (`pkg/conversion/config.go`)
+holds `endpoint`, `accountName`, `anonymous`, and now `accountKeyEnv`/`sasTokenEnv` — but the last
+two name a variable, never a secret. A SAS token or an account key must reach polytable through the
+environment, because a dataset config file gets committed, logged, and POSTed to the REST service,
+and a secret in any of those places is a leak waiting to happen. Naming the variable rather than
+hardcoding `AZURE_STORAGE_KEY`/`AZURE_STORAGE_SAS_TOKEN` also lets one process serve several
+storage accounts, each dataset's config pointing at a different variable holding that account's own
+secret. This mirrors `S3Options`, which has no credential fields either.
 
 ## Endpoints
 
@@ -183,6 +194,38 @@ export AZURE_STORAGE_KEY="<your-account-key>"
 ./bin/polytable sync --datasetConfig adls-shared-key.yaml
 ```
 
+### Two datasets, two storage accounts, one process
+
+`AZURE_STORAGE_KEY` is process-wide, so it cannot hold two accounts' keys at once. Name a variable
+per dataset with `accountKeyEnv` instead — the config still carries no secret, only the name of
+where to find one:
+
+```yaml
+sourceFormat: DELTA
+targetFormats:
+  - ICEBERG
+datasets:
+  - tableBasePath: abfss://sales@acct1.dfs.core.windows.net/tables/sales
+    tableName: sales
+    storage:
+      azure:
+        accountKeyEnv: ACCT1_STORAGE_KEY
+  - tableBasePath: abfss://events@acct2.dfs.core.windows.net/tables/events
+    tableName: events
+    storage:
+      azure:
+        accountKeyEnv: ACCT2_STORAGE_KEY
+```
+
+```shell
+export ACCT1_STORAGE_KEY="<acct1's-account-key>"
+export ACCT2_STORAGE_KEY="<acct2's-account-key>"
+./bin/polytable sync --datasetConfig two-accounts.yaml
+```
+
+An unset or empty `ACCT1_STORAGE_KEY` fails with an error naming that variable rather than falling
+back to `AZURE_STORAGE_KEY` or the Entra ID chain — the same rule applies to `sasTokenEnv`.
+
 ### OneLake with Entra ID
 
 The workspace is the container and `onelake` is always the account; with no other credential
@@ -248,24 +291,34 @@ export AZURE_STORAGE_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVE
   audience — the only audience OneLake accepts. Full detail on the `auth`/`token`/`scope`
   properties, and on `entra`/`entra-id`/`azure` as equivalent spellings, is in
   [Sync to an Iceberg REST catalog](iceberg-rest-catalog.md#authentication-properties).
-- **OneLake's own Iceberg REST endpoint does not work yet**, for two reasons that have nothing to
-  do with authentication. Microsoft publishes it at
+- **OneLake's own Iceberg REST endpoint** is at
   `https://onelake.table.fabric.microsoft.com/iceberg`, addressed by a warehouse of
-  `<WorkspaceID>/<DataItemID>` or `<WorkspaceName>/<DataItemName>.<DataItemType>`.
+  `<WorkspaceID>/<DataItemID>` or `<WorkspaceName>/<DataItemName>.<DataItemType>`. Set that
+  warehouse in the catalog entry's `properties`:
 
-  First, it requires prefix negotiation. A client calls `GET /v1/config?warehouse=<Warehouse>`
-  first, and the response's `overrides.prefix` goes into every later path as
-  `/v1/{prefix}/namespaces/...`. polytable builds `/v1/namespaces/...` with no prefix segment
-  (`pkg/catalog/rest.go`, `pkg/catalog/rest_conversion.go`), so every request misses. This is
-  tracked as T53 in [the improvement plan](improvement-plan.md).
+  ```yaml
+  catalogs:
+    - type: ICEBERG_REST
+      uri: https://onelake.table.fabric.microsoft.com/iceberg
+      databaseName: dbo
+      properties:
+        auth: entra
+        warehouse: <WorkspaceID>/<DataItemID>
+  ```
 
-  Second, the endpoint is read-only. Its advertised operations are `GET` and `HEAD` over
-  namespaces and tables; there is no create or commit route, so registering a polytable-written
-  table into a Fabric workspace through this endpoint is not possible at all. Reading a Fabric
-  table as a conversion source is the reachable half.
+  `databaseName` is the Iceberg namespace — `dbo` in Microsoft's examples — not the workspace. The
+  workspace and item together are the warehouse, which is why they are separate keys.
 
-  Writing table data to OneLake through `abfss://` is unaffected by both points — it goes through
-  the storage backend, not the catalog.
+  polytable calls `GET /v1/config?warehouse=...` first and puts the returned prefix into every
+  later path, which is what this endpoint requires. **No request has yet reached a Fabric
+  workspace**, so treat the whole path as unexercised.
+
+  The endpoint is read-only: its advertised operations are `GET` and `HEAD`, so it can serve a
+  conversion source but never accept a registration. polytable refuses a write against it with an
+  error saying the catalog is read-only rather than a bare status code.
+
+  Writing table data to OneLake through `abfss://` is unaffected — that goes through the storage
+  backend, not the catalog.
 - **Unity Catalog** is reachable the same way, through its own Iceberg REST endpoint
   (`https://<workspace-host>/api/2.1/unity-catalog/iceberg`) with a Databricks token in
   `properties.token` instead of `auth: entra` — see
@@ -274,13 +327,10 @@ export AZURE_STORAGE_KEY="Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVE
 - **Hive Metastore** (`CatalogTypeHMS`) is declared as a catalog type for configuration
   compatibility but has no client: selecting it fails with `ErrCatalogNotImplemented`
   (`pkg/catalog/catalog.go`).
-- **`ListTables` is unavailable for REST catalogs** —
-  `IcebergRESTConversionSource.ListTables` (`pkg/catalog/rest_conversion.go`) always returns
-  `ErrCatalogNotImplemented`. `polytable sync --catalog ... --database ...` discovery is
-  Glue-only today (`parseCatalogTypeFlag` in `cmd/polytable/main.go` accepts only `"glue"`), so it
-  cannot scan a Fabric workspace or any other REST catalog for tables to sync; a REST-catalog
-  source or target must be named explicitly in a dataset config.
-
+- **Table discovery from the CLI is Glue-only.** `IcebergRESTConversionSource.ListTables` is
+  implemented and paginates, but `polytable sync --catalog ... --database ...` accepts only
+  `"glue"` (`parseCatalogTypeFlag` in `cmd/polytable/main.go`), so a REST-catalog source or target
+  is named explicitly in a dataset config rather than discovered.
 ## Local development with Azurite
 
 `test/dockertest_azurite_test.go` starts the emulator with:

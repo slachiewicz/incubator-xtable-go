@@ -241,6 +241,46 @@ func TestStorageConfig_ToOptionFuncs_AzureAnonymousOnly(t *testing.T) {
 	assert.True(t, opts.Azure.Anonymous)
 }
 
+func TestStorageConfig_ToOptionFuncs_AzureAccountKeyEnvOnly(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Azure: &conversion.AzureStorageConfig{
+			AccountKeyEnv: "ACCT1_STORAGE_KEY",
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 1, "Azure account-key-env-only config should produce one option function")
+
+	opts := &io.Options{}
+	optFns[0](opts)
+
+	assert.Equal(t, "ACCT1_STORAGE_KEY", opts.Azure.AccountKeyEnv)
+	assert.Empty(t, opts.Azure.SASTokenEnv)
+}
+
+func TestStorageConfig_ToOptionFuncs_AzureSASTokenEnvOnly(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Azure: &conversion.AzureStorageConfig{ //nolint:gosec // SASTokenEnv names an env var, holds no secret
+			SASTokenEnv: "ACCT1_SAS_TOKEN",
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 1, "Azure SAS-token-env-only config should produce one option function")
+
+	opts := &io.Options{}
+	optFns[0](opts)
+
+	assert.Empty(t, opts.Azure.AccountKeyEnv)
+	assert.Equal(t, "ACCT1_SAS_TOKEN", opts.Azure.SASTokenEnv)
+}
+
 func TestStorageConfig_ToOptionFuncs_AllFieldsS3AndAzure(t *testing.T) {
 	t.Parallel()
 
@@ -248,16 +288,18 @@ func TestStorageConfig_ToOptionFuncs_AllFieldsS3AndAzure(t *testing.T) {
 		Region:       "us-west-2",
 		Endpoint:     "https://minio.example.com",
 		UsePathStyle: true,
-		Azure: &conversion.AzureStorageConfig{
-			Endpoint:    "https://myaccount.blob.core.windows.net",
-			AccountName: "myaccount",
-			Anonymous:   true,
+		Azure: &conversion.AzureStorageConfig{ //nolint:gosec // AccountKeyEnv/SASTokenEnv name env vars, hold no secret
+			Endpoint:      "https://myaccount.blob.core.windows.net",
+			AccountName:   "myaccount",
+			AccountKeyEnv: "ACCT1_STORAGE_KEY",
+			SASTokenEnv:   "ACCT1_SAS_TOKEN",
+			Anonymous:     true,
 		},
 	}
 
 	optFns := config.ToOptionFuncs()
 
-	require.Len(t, optFns, 6, "fully populated config should produce six option functions")
+	require.Len(t, optFns, 8, "fully populated config should produce eight option functions")
 
 	opts := &io.Options{}
 	for _, fn := range optFns {
@@ -269,6 +311,8 @@ func TestStorageConfig_ToOptionFuncs_AllFieldsS3AndAzure(t *testing.T) {
 	assert.True(t, opts.S3.UsePathStyle)
 	assert.Equal(t, "https://myaccount.blob.core.windows.net", opts.Azure.Endpoint)
 	assert.Equal(t, "myaccount", opts.Azure.AccountName)
+	assert.Equal(t, "ACCT1_STORAGE_KEY", opts.Azure.AccountKeyEnv)
+	assert.Equal(t, "ACCT1_SAS_TOKEN", opts.Azure.SASTokenEnv)
 	assert.True(t, opts.Azure.Anonymous)
 }
 

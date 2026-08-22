@@ -45,7 +45,10 @@ type StorageConfig struct {
 //
 // It holds no credentials on purpose, matching S3: secrets reach the process through the
 // environment or the Entra ID credential chain, never through a configuration file that gets
-// committed, logged or POSTed to the REST service.
+// committed, logged or POSTed to the REST service. AccountKeyEnv and SASTokenEnv follow the same
+// rule at one remove — they name the environment variable holding a secret, never the secret
+// itself, so a config file naming two different variables lets one process serve two storage
+// accounts with different keys.
 type AzureStorageConfig struct {
 	// Endpoint overrides the blob service URL derived from the path's host. Azurite needs it, and
 	// so does any deployment whose blob host is not derivable from its abfss:// host.
@@ -53,6 +56,15 @@ type AzureStorageConfig struct {
 	// AccountName overrides the storage account parsed from the path's host. Azurite needs it:
 	// its service URL carries the account in the path rather than the host.
 	AccountName string `json:"accountName,omitempty" yaml:"accountName,omitempty"`
+	// AccountKeyEnv names the environment variable that holds the shared account key — never
+	// the key itself. This lets a daemon serving multiple datasets point each one at a
+	// different account's key without the two colliding on the well-known AZURE_STORAGE_KEY,
+	// and without ever writing the secret into a config file that gets committed, logged, or
+	// POSTed to the REST service.
+	AccountKeyEnv string `json:"accountKeyEnv,omitempty" yaml:"accountKeyEnv,omitempty"`
+	// SASTokenEnv names the environment variable that holds the SAS token — never the token
+	// itself, for the same reason as AccountKeyEnv.
+	SASTokenEnv string `json:"sasTokenEnv,omitempty" yaml:"sasTokenEnv,omitempty"`
 	// Anonymous selects unauthenticated access, for a public container.
 	Anonymous bool `json:"anonymous,omitempty" yaml:"anonymous,omitempty"`
 }
@@ -154,7 +166,7 @@ func (c *StorageConfig) ToOptionFuncs() []func(*io.Options) {
 		return nil
 	}
 
-	optFns := make([]func(*io.Options), 0, 6)
+	optFns := make([]func(*io.Options), 0, 8)
 
 	if c.Region != "" {
 		optFns = append(optFns, func(opts *io.Options) {
@@ -187,6 +199,18 @@ func (c *StorageConfig) ToOptionFuncs() []func(*io.Options) {
 	if c.Azure.AccountName != "" {
 		optFns = append(optFns, func(opts *io.Options) {
 			opts.Azure.AccountName = c.Azure.AccountName
+		})
+	}
+
+	if c.Azure.AccountKeyEnv != "" {
+		optFns = append(optFns, func(opts *io.Options) {
+			opts.Azure.AccountKeyEnv = c.Azure.AccountKeyEnv
+		})
+	}
+
+	if c.Azure.SASTokenEnv != "" {
+		optFns = append(optFns, func(opts *io.Options) {
+			opts.Azure.SASTokenEnv = c.Azure.SASTokenEnv
 		})
 	}
 
