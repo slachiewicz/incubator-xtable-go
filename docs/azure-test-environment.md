@@ -155,6 +155,32 @@ explicit `--from-to`, for example
 `azcopy copy ./local /path?<sas> --from-to LocalBlob`. Against real Azure the
 switch is unnecessary.
 
+## The two halves need different things
+
+The storage half and the OneLake half are licensed separately, and confusing
+them wastes time:
+
+- **ADLS Gen2 storage needs an Azure subscription.** A storage account is a
+  subscription resource, so without one `az login` fails outright with "No
+  subscriptions found" and nothing below the storage sandbox will work. An
+  Azure free account covers it.
+- **OneLake and Fabric need a tenant and a Fabric licence, not an Azure
+  subscription.** A Fabric workspace lives in Microsoft Entra ID, and
+  polytable reaches it with an Entra token in the `Storage` audience. If your
+  work or school account has a Fabric trial, you can test the OneLake path
+  with no Azure subscription at all:
+
+  ```shell
+  az login --allow-no-subscriptions
+  az account get-access-token --resource https://storage.azure.com/
+  ```
+
+  `--allow-no-subscriptions` is the flag that makes a plain `az login` succeed
+  for a tenant that has none.
+
+So the OneLake half may be reachable to you before the storage half is, which
+is the opposite of the order this page presents them in.
+
 ## Prerequisites
 
 - **Azure CLI.** Install it with `brew install azure-cli`. The storage
