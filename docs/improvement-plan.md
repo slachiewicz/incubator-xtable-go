@@ -3632,9 +3632,42 @@ re-authenticating today.
 **Related but distinct:** T59's SigV4 and OAuth2 work is about authenticating *to the catalog*. This
 is about the catalog authenticating you *to the storage*. Do not conflate them.
 
+### Observed, not inferred: Snowflake
+
+Filed from reading R2's advertised endpoints. Snowflake then supplied the failure and the fix in one
+response, on 2026-08-22 against a live account.
+
+A Snowflake-managed Iceberg table resolves correctly through the catalog — `ListTables` finds it,
+`GetSourceTable` returns `format=ICEBERG` with a base path in **Snowflake's own managed bucket**,
+`s3://sfc-prod3-...-customer-interop-fs-.../iceberg/<db>/<schema>/<table>.<suffix>`. Nobody has
+credentials for that bucket, and nobody can be given them: it is Snowflake's, not the customer's.
+
+Pointing `polytable inspect` at that path fails:
+
+```
+failed to list s3 objects ...: api error PermanentRedirect: The bucket you are attempting to access
+must be addressed using the specified endpoint.
+```
+
+Meanwhile `GET /v1/{prefix}/namespaces/{ns}/tables/{table}` with
+`X-Iceberg-Access-Delegation: vended-credentials` returns exactly what is needed:
+
+```
+keys:        ["metadata-location", "metadata", "config", "storage-credentials"]
+config keys: ["s3.access-key-id", "s3.secret-access-key", "s3.session-token",
+              "expiration-time", "client.region"]
+```
+
+So this is not a convenience. **For a Snowflake-managed Iceberg table, catalog-vended credentials
+are the only way to read the data at all** — there is no bucket-wide credential a user could
+configure instead. `client.region` in that same response is also the answer to the 301 above, which
+is a second reason the config block cannot be ignored.
+
 **Acceptance:** a table resolved from a credential-vending catalog is readable using only the
 credentials that catalog returned, with no bucket-wide credentials configured; the credentials
 refresh before expiry on a long sync; and a catalog that vends nothing behaves exactly as today.
+Verify against a Snowflake-managed Iceberg table, since that case cannot be faked with static
+credentials — it is the one that proves the feature rather than exercising it.
 
 **Commit:** `feat: use storage credentials vended by the catalog`
 
