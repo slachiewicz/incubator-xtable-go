@@ -2433,6 +2433,17 @@ asserts every `FileInfo.Path` that `List` returns starts with `abfss://` and par
 `ParseAzureURI` to the same container, host and blob. `go test -count=1 ./test/...` is green with
 the MinIO and Iceberg REST suites alongside it, so the `ToOptionFuncs` change did not regress them.
 
+**The CLI path was driven by hand as well, which the suite does not cover.** A delta-rs-written
+Delta table — the `delta-rs-checkpoint` fixture, whose early commits were expired by log retention —
+was uploaded into Azurite and synced with `polytable sync --datasetConfig` over `abfss://`: both
+Iceberg and Hudi targets reported `SUCCESS`. Re-running the same command reported `NO_OP` for both,
+which is the check that matters, since it proves `TableSyncMetadata` was written into the target and
+read back out of Azure rather than the table being resynced blind. `--dry-run` behaved. All three
+formats then read back through `polytable inspect` with the new `--azure-endpoint` and
+`--azure-account` flags, reporting the same schema, the same `region` partition field and the same
+six data files. That exercises the flag plumbing, the config path and the sync-metadata round trip,
+none of which the library-level suite touches.
+
 **Two flags are load-bearing for the emulator, and both cost a debugging cycle to find.** Azurite
 needs `--blobHost 0.0.0.0`, because the listener otherwise binds the container's loopback and a
 published port resets rather than answering; and `--skipApiVersionCheck`, because `azblob` sends a

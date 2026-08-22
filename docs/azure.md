@@ -315,6 +315,45 @@ exactly what those two overrides exist for. See
 through `AZURE_STORAGE_KEY` rather than a config field, the same as any other shared-key
 deployment.
 
+## Check that a setup works
+
+These three commands prove a configuration end to end, and they work the same against Azurite and
+against a real account. Run them after any change to credentials, endpoint, or account.
+
+First, sync a table and read the verdict:
+
+```shell
+polytable sync --datasetConfig azure.yaml --output json
+```
+
+Every target should report `"verdict": "SUCCESS"`. A failure here names which of storage, format, or
+credentials broke.
+
+Second, run exactly the same command again:
+
+```shell
+polytable sync --datasetConfig azure.yaml --output json
+```
+
+Every target should now report `"verdict": "NO_OP"`. This is the more interesting check of the two:
+`NO_OP` means polytable wrote its sync metadata into the target on the first run and read it back
+from Azure on the second. A second `SUCCESS` instead means the metadata did not round-trip, and
+every later sync would redo the whole table.
+
+Third, inspect each format at the same base path:
+
+```shell
+polytable inspect --basePath "abfss://<container>@<account>.dfs.core.windows.net/<path>" --format DELTA
+polytable inspect --basePath "abfss://<container>@<account>.dfs.core.windows.net/<path>" --format ICEBERG
+```
+
+The schema, partition fields, and active data file count should be identical across formats. A
+differing file count means a target's write and its own reader disagree.
+
+This sequence has been run against Azurite with a delta-rs-written source table, syncing to Iceberg
+and Hudi. It has not been run against a real Azure account — see
+[Set up an Azure test environment](azure-test-environment.md).
+
 ## WebAssembly
 
 Azure is excluded from the `js/wasm` build behind `//go:build !js`, the same as S3 and Glue.
