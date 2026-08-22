@@ -24,7 +24,7 @@ added from the review of commits `d34ed36..ddd157a` — T10 was a release blocke
 parity gaps against Java XTable; T14 and T15 have since landed under other numbers, and T13 stays
 unscheduled by decision. **T16–T19** came out of later reviews and are all resolved. **T20–T37** come
 from the 2026-08-21 upstream survey and the reviews after it. **T38–T50** turn `docs/roadmap.md`
-into work. Every task from T20 on is written to be picked up cold by an agent, with the evidence, the
+into work, and **T51–T52** are Azure, added the same day by maintainer decision. Every task from T20 on is written to be picked up cold by an agent, with the evidence, the
 scope and the acceptance criteria in the task itself.
 
 Every file path, line number, signature and command output below was read out of the tree or run
@@ -1112,14 +1112,14 @@ Deletion-vector code exists only in `pkg/formats/delta/{source,target}.go` and `
 `pkg/formats/iceberg` and `pkg/formats/hudi` contain none.
 
 The README overclaimed this — the format matrix marked Iceberg "✅ (Equality/Positional)" and Hudi
-"✅" — and was corrected on 2026-08-21 to `—` for both, in the same spirit as T9. `SPEC.md:183` was
+"✅" — and was corrected on 2026-08-21 to `—` for both, in the same spirit as T9. `SPEC.md:189` was
 already accurate, scoping the claim to the Delta adapter.
 
 That correction makes the docs honest; it does not close the gap. Upstream tracks the real work as
 #345 and #346 (read Delta and Iceberg deletion vectors into the internal representation), #347 and
 #348 (write them to the Delta and Iceberg targets), #640 (the snapshot case) and open PR #661.
 
-The decision to make first: `SPEC.md:384` records the INV-1 consequence — deletion vectors are
+The decision to make first: `SPEC.md:390` records the INV-1 consequence — deletion vectors are
 translated as descriptors, never decoded, because decoding would mean reading data files. Iceberg
 positional deletes are a *separate Parquet file of row positions*, not a bitmap descriptor, so
 Delta↔Iceberg deletion-vector translation may not be expressible without violating INV-1. Resolve
@@ -1783,14 +1783,15 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, and T38–T50 from the roadmap |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T51–T52 for Azure |
 
-**Picking up the queue.** By value: **T40** first — the Iceberg source has no incremental sync at
-all, which is a correctness defect rather than a gap — then T45 (the Parquet source crawls other
-formats' metadata as data), then T37's 1.x timeline, then T34.
+**Picking up the queue.** **T51** is the one item with a stated external requirement behind it, so
+it outranks value ordering; **T52** follows it. Otherwise by value: **T40** first — the Iceberg
+source has no incremental sync at all, which is a correctness defect rather than a gap — then T45
+(the Parquet source crawls other formats' metadata as data), then T37's 1.x timeline, then T34.
 
 Three tasks are decisions before they are code, and each says so in its own text: T24 (read
-`SPEC.md:384` first, and do not start an Iceberg deletion-vector translator until the INV-1 question
+`SPEC.md:390` first, and do not start an Iceberg deletion-vector translator until the INV-1 question
 is answered), T42 (whether a rollback is expressible across formats at all) and T49 (where a
 per-target catalog identifier lives).
 
@@ -1805,6 +1806,7 @@ T40 ─────> T46-deletes  (a real incremental reader needs a fixture tha
 T45 ─────> T48          (auto-detection must not point a Parquet source at a Delta table)
 T44 ─────> T40          (pin path canonicalization before a second reader can diverge from it)
 T31/T34 ─ share the Avro codec; T34 reuses it for Paimon manifests
+T51 ─────> T52          (a OneLake catalog cannot read a table polytable cannot open)
 T13 ────── unscheduled by decision, not by omission
 ```
 
@@ -1851,7 +1853,7 @@ any OneLake work is blocked on an Azure/`abfss://` storage backend either way (s
 
 ---
 
-## Roadmap queue — T38–T50
+## Roadmap queue — T38–T52
 
 `docs/roadmap.md` sets direction; these are its items turned into work, with the evidence read out
 of the tree on 2026-08-22. Three roadmap bullets became no task: the doc-version guard is already
@@ -2297,12 +2299,113 @@ The point is not to adopt #715: it is unmerged, and unmerged upstream mechanisms
 than spec. The point is to know where the two have diverged before the divergence is expensive, and
 to record each difference as deliberate or accidental.
 
+One local drift is already known and belongs in the same pass: the daemon accepts a `storage` object
+on both requests (`pkg/daemon/types.go:38`, `:55`) and `spec/rest-service-open-api.yaml` documents no
+such property on either `ConvertTableRequest` or `InspectTableRequest`. That is this repository's own
+spec falling behind its own server, not upstream divergence.
+
 **Acceptance:** a written diff of the two specs, each difference marked as adopted, deliberately
-divergent, or an accidental drift to fix; anything adopted regenerates through `spec/Makefile` in
+divergent, or an accidental drift to fix; the undocumented `storage` property is either specified or
+removed; anything adopted regenerates through `spec/Makefile` in
 the same commit; `docs/upstream-watch.md`'s #715 line updates to name the outcome.
 
 **Commit:** `docs: record the REST spec divergence from upstream #715`
 
+
+---
+
+## T51 — Azure storage: ADLS Gen2, `abfss://`, and the OneLake path shape
+
+**A stated requirement, not an extension** (maintainer decision, 2026-08-22), and the reason the
+GCS/Azure non-goal was withdrawn: its stated precondition — T3's unreachable storage configuration —
+was closed by T12.
+
+**Where the scheme dies today.** `NewStorageForPathWithOptions` (`pkg/io/storage.go:164`) matches
+literal prefixes: `s3://`/`s3a://` (`:165`), `mem://` (`:168`), then any other `<scheme>://` is
+refused at `:174`, with `abfss://` reaching the same branch as `gs://` and `hdfs://`. The error
+(`:175`) names the scheme and lists the supported ones — deliberate, and correct until a backend
+exists. `pkg/io/storage_scheme_test.go:46` already pins the `abfss://` refusal, so that assertion
+flips when this task lands; treat the flip as the acceptance signal rather than deleting it quietly.
+
+**Three structural problems the survey turned up, none of them "add a client":**
+
+1. **`uriSchemes` (`pkg/io/storage.go:43`) is `s3://, s3a://, gs://, mem://, file://` — no Azure
+   scheme.** That list is not decoration: `JoinPath` (`:75`), `TrimScheme` (`:100`) and
+   `RelativizePath` (`:120`) all iterate it, and `RelativizePath:139` treats a path with no
+   recognized scheme as *already relative*. So an `abfss://` data-file path is silently mangled by
+   the same helper T35 introduced to stop paths being mangled. Add the Azure schemes to `uriSchemes`
+   **before** adding a backend — the fix is independently correct, and it is what makes foreign
+   Azure-written metadata round-trip even where polytable cannot read the bytes.
+2. **The public option type is S3-specific.** The signature is
+   `NewStorageForPathWithOptions(ctx, path string, optFns ...func(*S3Options))`. Every caller —
+   `cmd/polytable/main.go:330`, `pkg/daemon/daemon.go:95`, `bindings/c/polytable.go:80` — passes
+   `ds.Storage.ToS3OptionFuncs()` (`pkg/conversion/config.go:130`). Azure needs its own options, so
+   this is a public-API change; decide its shape here rather than bolting Azure fields onto
+   `S3Options`.
+3. **Credentials are not modeled at all.** `S3Options` (`pkg/io/s3.go:46`) is
+   `Region`/`Endpoint`/`UsePathStyle`/`CustomHTTPClient` — no credential fields; S3 relies entirely
+   on `awsconfig.LoadDefaultConfig` (`:68`) and the MinIO suite sets `AWS_ACCESS_KEY_ID` env vars
+   (`test/dockertest_minio_matrix_test.go:102`). Azure has no single equivalent chain that covers
+   every deployment, so credential coverage **is** the scope: Entra ID workload identity, managed
+   identity, service principal, SAS, and account key. A backend accepting one of them is not
+   deployable.
+
+**Two places already duplicate the option plumbing** and will both need the Azure equivalent:
+`pkg/daemon/server.go:72` re-implements `ToS3OptionFuncs` inline instead of calling it, and
+`cmd/polytable/main.go:392` plus `cmd/polytable-wasm/main.go:60`/`:122` use the no-options
+`NewStorageForPath`, so storage configuration is unreachable from `inspect` today. Fold that
+consolidation in rather than tripling it.
+
+**WASM constraint, non-negotiable.** §9.4 of `SPEC.md` records that keeping `aws-sdk-go-v2` out of
+the `js/wasm` build took 103 packages and 7.2 MiB off the artifact. An Azure SDK gets the identical
+treatment: `//go:build !js` on the real backend, a `js` stub returning `ErrAzureUnsupported`
+alongside `ErrS3Unsupported` (`pkg/io/s3_js.go:30`) and `ErrGlueUnsupported`
+(`pkg/catalog/glue_js.go:29`). `go.mod` has no Azure dependency today — the only `Azure/` line is
+`go-ansiterm`, indirect via dockertest.
+
+**Acceptance:** an `abfss://` table syncs end to end against Azurite in the dockertest matrix, the
+way MinIO covers S3; each credential mode above is either exercised or documented as untested with
+the reason; `GOOS=js GOARCH=wasm go list -deps ./cmd/polytable-wasm` reports zero Azure SDK
+packages; `pkg/io/storage_scheme_test.go` still refuses `gs://`, `hdfs://` and `wasbs://` if the
+last is out of scope — and `wasbs://` is currently untested either way, so state which it is.
+
+**Commit:** `feat: add an Azure Data Lake Storage backend`
+
+---
+
+## T52 — OneLake and Fabric as a catalog
+
+Blocked on T51 for data access, and separate work: OneLake's read API is Iceberg-REST compatible, so
+`pkg/catalog/rest.go` is the entry point rather than a new client — but the authentication and
+identifier surfaces are both new. Upstream tracks the same idea as #810 and has not built it, so
+there is no reference implementation.
+
+**The auth gap is concrete.** The Iceberg REST client supports a static bearer token and nothing
+else: `IcebergRESTCatalogClient` reads `cfg.Properties["token"]` (`pkg/catalog/rest.go:53`) and sets
+`Authorization: Bearer` on each of its three calls (`:104`, `:137`, `:172`), with a hardcoded 30-second
+`http.Client` (`:59`) and no injection seam. There is no OAuth2 client-credentials flow, no refresh,
+no 401 retry, no custom headers. Entra ID tokens expire, so a long-running daemon sync fails partway
+through with a static token.
+
+**The asymmetry that decides the design.** The read side already has the seam —
+`NewIcebergRESTConversionSourceWithClient(client *http.Client, …)`
+(`pkg/catalog/rest_conversion.go:77`) — which is exactly where a token-refreshing `RoundTripper`
+belongs. The sync client has no equivalent constructor. Give it one, and Entra ID becomes a
+`RoundTripper` rather than auth logic spread through both files.
+
+Also note `ListTables` yields `ErrCatalogNotImplemented` for REST catalogs
+(`pkg/catalog/rest_conversion.go:161`), so T23's `--catalog … --database` discovery does not reach a
+OneLake workspace. Whether Fabric's API supports listing, and whether a workspace maps to a
+`DatabaseName`, is part of this task: `catalog.Config` (`pkg/catalog/catalog.go:52`) has `URI`,
+`DatabaseName` and `Properties`, and Fabric addresses a table by workspace and lakehouse, which may
+not fit `DatabaseName` alone.
+
+**Acceptance:** a Fabric lakehouse table resolves as a conversion source by identifier and converts;
+a token that expires mid-sync is refreshed rather than failing the run; `CatalogTypeOneLake` either
+exists as a distinct type or the task records why `ICEBERG_REST` with properties is the right
+spelling; `docs/iceberg-rest-catalog.md` and `docs/cloud-storage.md` state which is supported.
+
+**Commit:** `feat: authenticate the Iceberg REST catalog with Entra ID for OneLake`
 
 ## Non-goals
 

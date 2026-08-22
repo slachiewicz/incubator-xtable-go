@@ -165,6 +165,12 @@ type Storage interface {
 4. **Dynamic Storage Router (`NewStorageForPath`)**:
    - Automatically selects storage driver (`S3Storage`, `LocalStorage`, `MemoryStorage`) based on URI scheme.
    - `JoinPath()`: URI scheme-preserving path joining.
+   - A scheme with no backend — `gs://`, `abfss://`, `hdfs://` — is refused by name rather than
+     falling through to local storage, which would treat `gs://bucket/table` as a relative directory.
+5. **Azure Data Lake Storage — planned, not implemented**:
+   - `abfss://` and OneLake are a stated requirement rather than an extension; scheduled as T51 in
+     `docs/improvement-plan.md`, with the OneLake catalog as T52. Until then an Azure path is
+     refused by the router above. Google Cloud Storage stays unscheduled.
 
 ---
 
