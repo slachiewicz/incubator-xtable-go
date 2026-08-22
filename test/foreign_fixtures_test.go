@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -75,6 +76,16 @@ type fixtureBounds struct {
 	Max float64 `json:"max"`
 }
 
+// fixtureCommit is one _delta_log commit as generate.py's `_delta_commits` read it back: the paths
+// it added and removed, relative to the table directory exactly as the writer's `add`/`remove`
+// action recorded them.
+type fixtureCommit struct {
+	Version   int      `json:"version"`
+	Operation string   `json:"operation"`
+	Added     []string `json:"added"`
+	Removed   []string `json:"removed"`
+}
+
 // fixtureManifest is the record generate.py leaves beside each fixture.
 type fixtureManifest struct {
 	ManifestEncoding  string                   `json:"manifest_encoding"`
@@ -93,7 +104,18 @@ type fixtureManifest struct {
 	ColumnBounds      map[string]fixtureBounds `json:"column_bounds"`
 	DataFiles         []fixtureDataFile        `json:"data_files"`
 	PathPlaceholder   string                   `json:"path_placeholder"`
-	SchemaEvolution   struct {
+	// Commits is populated only by the delete and compaction fixtures: the per-commit add/remove
+	// paths generate.py's `_delta_commits` read directly out of the _delta_log, in commit order.
+	Commits []fixtureCommit `json:"commits"`
+	// DeleteCommits names, for the deletes fixture, which commit is the pure partition delete and
+	// which is the rewrite (add+remove) delete.
+	DeleteCommits struct {
+		PartitionDelete string `json:"partition_delete"`
+		RewriteDelete   string `json:"rewrite_delete"`
+	} `json:"delete_commits"`
+	// CompactionCommit names, for the compaction fixture, which commit is the optimize.compact() run.
+	CompactionCommit string `json:"compaction_commit"`
+	SchemaEvolution  struct {
 		AddedColumn   string `json:"added_column"`
 		AddedAtCommit string `json:"added_at_commit"`
 	} `json:"schema_evolution"`
@@ -383,6 +405,38 @@ func relativeFilePaths(t *testing.T, tableDir string, files []*model.DataFile) m
 	return byPath
 }
 
+// relativeFilePathSet is relativeFilePaths without the record count, for a removed-file list: a
+// remove action carries no row count, so the map value there would be meaningless.
+func relativeFilePathSet(t *testing.T, tableDir string, files []*model.DataFile) map[string]struct{} {
+	t.Helper()
+
+	paths := make(map[string]struct{}, len(files))
+	for path := range relativeFilePaths(t, tableDir, files) {
+		paths[path] = struct{}{}
+	}
+	return paths
+}
+
+// pathSet turns a plain list of relative paths, such as a fixtureCommit's Added or Removed, into a
+// set for order-independent comparison.
+func pathSet(paths []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		set[path] = struct{}{}
+	}
+	return set
+}
+
+// commitsByVersion indexes a fixture's per-commit record by the version string a TableChange's
+// SourceIdentifier carries.
+func commitsByVersion(commits []fixtureCommit) map[string]fixtureCommit {
+	byVersion := make(map[string]fixtureCommit, len(commits))
+	for _, commit := range commits {
+		byVersion[strconv.Itoa(commit.Version)] = commit
+	}
+	return byVersion
+}
+
 // TestForeignFixtures_ReadTable is the part both fixtures pass: the table descriptor and schema,
 // including the mid-history column addition and the partition spec.
 func TestForeignFixtures_ReadTable(t *testing.T) {
@@ -513,6 +567,168 @@ func TestForeignFixtures_ReadDeltaHistory(t *testing.T) {
 		assert.Nil(t, field, "commit %s predates %s but already reports it", change.SourceIdentifier, added)
 	}
 	assert.Equal(t, manifest.TotalRows, total, "the commits do not add up to the table")
+}
+
+// changeForVersion returns the TableChange whose SourceIdentifier is version, or nil.
+func changeForVersion(changes []*model.TableChange, version string) *model.TableChange {
+	for _, change := range changes {
+		if change.SourceIdentifier == version {
+			return change
+		}
+	}
+	return nil
+}
+
+// assertChangesMatchCommits checks that every TableChange GetChangesSince returned reports exactly
+// the add and remove paths the fixture's own commits array recorded for that version, read straight
+// out of the _delta_log — not merely a non-empty FilesRemoved, but the same set of paths the log
+// says were removed. This is the assertion T46 exists for: a reader that reports commit-level diffs
+// as adds-only passes every fixture in the tree before this one and fails here.
+func assertChangesMatchCommits(t *testing.T, tableDir string, manifest *fixtureManifest, changes []*model.TableChange) {
+	t.Helper()
+
+	require.NotEmpty(t, manifest.Commits, "fixture manifest carries no per-commit record")
+	require.Len(t, changes, len(manifest.Commits))
+	byVersion := commitsByVersion(manifest.Commits)
+
+	for _, change := range changes {
+		commit, ok := byVersion[change.SourceIdentifier]
+		require.True(t, ok, "no manifest commit for version %s", change.SourceIdentifier)
+
+		addedPaths := relativeFilePathSet(t, tableDir, change.FilesDiff.FilesAdded)
+		assert.Equal(t, pathSet(commit.Added), addedPaths, "commit %s: added files", change.SourceIdentifier)
+
+		removedPaths := relativeFilePathSet(t, tableDir, change.FilesDiff.FilesRemoved)
+		assert.Equal(t, pathSet(commit.Removed), removedPaths, "commit %s: removed files", change.SourceIdentifier)
+	}
+}
+
+// convertDeltaFixtureAndReadBack syncs a Delta fixture already copied into tableDir into Iceberg and
+// Hudi and reads each back through that format's own source, checking the file list matches the
+// fixture's post-operation manifest state. This is the other half of what a delete or compaction
+// fixture has to prove: the removal has to survive a real conversion, not just a Delta-native read.
+//
+// Parquet and Paimon are deliberately not checked here: TestForeignFixtures_ConvertDelta already
+// exercises both against the append-only fixture, and this function's job is the two targets whose
+// schema is asserted the same way the Delta source itself reports it (assertSchemaMatchesManifest),
+// which Parquet and Paimon's schema recovery does not do identically (see
+// assertParquetSchemaFromDataFiles).
+func convertDeltaFixtureAndReadBack(t *testing.T, tableDir string, manifest *fixtureManifest) {
+	t.Helper()
+	ctx := context.Background()
+	storage := io.NewLocalStorage()
+
+	for _, target := range []model.TableFormat{model.TableFormatIceberg, model.TableFormatHudi} {
+		t.Run(strings.ToLower(string(target)), func(t *testing.T) {
+			t.Parallel()
+
+			results, err := conversion.NewController(storage).Sync(ctx, &conversion.DatasetConfig{
+				SourceFormat:  model.TableFormatDelta,
+				TargetFormats: []model.TableFormat{target},
+				TableBasePath: tableDir,
+				TableName:     manifest.TableName,
+				SyncMode:      spi.SyncModeFull,
+			})
+			require.NoError(t, err)
+			require.Equal(t, spi.SyncStatusSuccess, results[target].StatusCode, results[target].Error)
+
+			source, err := formats.NewSource(target, storage, tableDir)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = source.Close() })
+
+			snapshot, err := source.GetCurrentSnapshot(ctx)
+			require.NoError(t, err)
+			assertFileListMatchesManifest(t, target, tableDir, manifest, snapshot.DataFiles)
+			assertSchemaMatchesManifest(t, manifest, snapshot.Table.ReadSchema)
+		})
+	}
+}
+
+// TestForeignFixtures_DeltaDeletes reads delta-rs's own DeltaTable.delete(): T46's evidence table
+// found zero `remove` actions across every Delta fixture in the tree, so this is the first time the
+// Delta reader meets one. The fixture carries two shapes of delete in the same log: a whole
+// partition dropped outright (a pure remove, no compensating add) and a single row deleted out of a
+// multi-row file (delta-rs rewrites that as a remove of the old file plus an add of the
+// replacement, in one commit).
+func TestForeignFixtures_DeltaDeletes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	tableDir, manifest := loadFixture(t, "delta-rs-deletes")
+	require.NotEmpty(t, manifest.DeleteCommits.PartitionDelete, "manifest is missing delete_commits")
+	require.NotEmpty(t, manifest.DeleteCommits.RewriteDelete, "manifest is missing delete_commits")
+
+	source, err := formats.NewSource(model.TableFormatDelta, io.NewLocalStorage(), tableDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = source.Close() })
+
+	// The current snapshot has to reflect both deletes: only the surviving, rewritten west file.
+	snapshot, err := source.GetCurrentSnapshot(ctx)
+	require.NoError(t, err)
+	assertFileListMatchesManifest(t, model.TableFormatDelta, tableDir, manifest, snapshot.DataFiles)
+
+	changes, err := source.GetChangesSince(ctx, 0)
+	require.NoError(t, err)
+	assertChangesMatchCommits(t, tableDir, manifest, changes.TableChanges)
+
+	// This is the point of the fixture: the incremental path has to carry a genuine removal, both
+	// for the commit that removes without adding and for the one that rewrites.
+	partitionDelete := changeForVersion(changes.TableChanges, manifest.DeleteCommits.PartitionDelete)
+	require.NotNil(t, partitionDelete, "no TableChange for the partition-delete commit")
+	assert.NotEmpty(t, partitionDelete.FilesDiff.FilesRemoved, "the partition-delete commit reported no removal")
+	assert.Empty(t, partitionDelete.FilesDiff.FilesAdded, "the partition-delete commit reported an add it did not make")
+
+	rewriteDelete := changeForVersion(changes.TableChanges, manifest.DeleteCommits.RewriteDelete)
+	require.NotNil(t, rewriteDelete, "no TableChange for the rewrite-delete commit")
+	assert.NotEmpty(t, rewriteDelete.FilesDiff.FilesRemoved, "the rewrite-delete commit reported no removal")
+	assert.NotEmpty(t, rewriteDelete.FilesDiff.FilesAdded, "the rewrite-delete commit reported no replacement add")
+
+	convertDeltaFixtureAndReadBack(t, tableDir, manifest)
+}
+
+// TestForeignFixtures_DeltaCompaction reads delta-rs's optimize.compact(): the case T46 asks for
+// that a delete does not cover, where the entire file set changes with not one row added, changed
+// or removed. It is also, on its own, the tree's first unpartitioned Delta fixture — every other one
+// is partitioned by region, so convertAddAction's empty-partitionValues path and an unpartitioned
+// conversion target have never been exercised before this fixture.
+func TestForeignFixtures_DeltaCompaction(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	tableDir, manifest := loadFixture(t, "delta-rs-compaction")
+	require.NotEmpty(t, manifest.CompactionCommit, "manifest is missing compaction_commit")
+	require.Empty(t, manifest.PartitionColumns, "this fixture is meant to be unpartitioned")
+
+	source, err := formats.NewSource(model.TableFormatDelta, io.NewLocalStorage(), tableDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = source.Close() })
+
+	table, err := source.GetCurrentTable(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, table.PartitioningFields, "the reader synthesized a partition for an unpartitioned table")
+
+	snapshot, err := source.GetCurrentSnapshot(ctx)
+	require.NoError(t, err)
+	assertFileListMatchesManifest(t, model.TableFormatDelta, tableDir, manifest, snapshot.DataFiles)
+
+	changes, err := source.GetChangesSince(ctx, 0)
+	require.NoError(t, err)
+	assertChangesMatchCommits(t, tableDir, manifest, changes.TableChanges)
+
+	// This is the point of the fixture: compaction is a pure metadata rewrite, four removes and one
+	// add in a single commit, with the row total unchanged across the whole backlog.
+	compaction := changeForVersion(changes.TableChanges, manifest.CompactionCommit)
+	require.NotNil(t, compaction, "no TableChange for the compaction commit")
+	assert.Len(t, compaction.FilesDiff.FilesRemoved, 4, "the compaction commit did not report all four superseded files removed")
+	assert.Len(t, compaction.FilesDiff.FilesAdded, 1, "the compaction commit did not report the single compacted file added")
+
+	// A removed file's RecordCount is 0 by protocol, not by reader defect: a Delta `remove` action
+	// carries no `stats`, only an `add` does. So the row total this fixture preserves through
+	// compaction is checked where it can be — the final snapshot's DataFiles, already asserted above
+	// against manifest.TotalRows by assertFileListMatchesManifest — rather than by netting the
+	// backlog's adds and removes against each other.
+
+	convertDeltaFixtureAndReadBack(t, tableDir, manifest)
 }
 
 // TestForeignFixtures_ReadIcebergSnapshot is what T31 unblocked: the file list of a table written

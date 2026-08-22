@@ -51,6 +51,8 @@ values, and column bounds.
 | :--- | :--- | :--- |
 | `delta-rs/sales` | delta-rs (`deltalake`) | Partitioned Delta table with a mid-history schema change |
 | `delta-rs-checkpoint/orders` | delta-rs | Table whose pre-checkpoint JSON commits were deleted by log cleanup; state is only recoverable through the Parquet checkpoint |
+| `delta-rs-deletes/returns` | delta-rs | `DeltaTable.delete()`: a whole-partition delete (pure `remove`, no `add`) and a single-row delete that forces a rewrite (`remove` + `add` in one commit) |
+| `delta-rs-compaction/clicks` | delta-rs | Unpartitioned table, `optimize.compact()`: four small files replaced by one, no row changed |
 | `pyiceberg/events` | pyiceberg | Iceberg v2 table with Avro manifests and multiple snapshots |
 
 `test/fixtures/generate.py` regenerates them; the manifest records the writer library and version.
@@ -95,8 +97,13 @@ write through a real engine, sync, read the source and every target back through
 and compare full datasets — across upserts and deletes, compaction, concurrent writes, time
 travel, partition specs, both sync modes, out-of-sync incremental recovery, and corrupted-snapshot
 recovery. polytable currently matches the method (foreign engines on both sides) and exceeds it in
-engine diversity, but most fixtures are insert-only; widening the scenario dimension is tracked in
-`docs/improvement-plan.md` (T30 and the T37 fixture work).
+engine diversity; deletes and compaction now have a Delta-side fixture each (T46), but time travel,
+concurrent writes, and the Iceberg-side delete/compaction fixtures remain gaps. Column rename under
+Delta column mapping is untested by design, not by omission: `deltalake` 1.6.3 — the pinned fixture
+writer — refuses `delta.columnMapping.mode` outright, at `CREATE TABLE` and at `SET TBLPROPERTIES`
+alike, and exposes no rename API anywhere in the package, so no fixture at this writer version can
+exercise it. Widening the remaining scenario dimensions is tracked in `docs/improvement-plan.md`
+(T30 and the T37 fixture work).
 
 ## Unit-test conventions
 

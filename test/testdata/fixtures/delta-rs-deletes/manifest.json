@@ -1,0 +1,92 @@
+{
+  "commit_count": 4,
+  "commits": [
+    {
+      "added": [
+        "region=east/part-00000-00b70ce8-3b7c-45f3-ac0b-9d548ec629d1-c000.snappy.parquet"
+      ],
+      "operation": "WRITE",
+      "removed": [],
+      "version": 0
+    },
+    {
+      "added": [
+        "region=west/part-00000-f7600b61-3e20-4775-b376-80cdaf0eaa5b-c000.snappy.parquet"
+      ],
+      "operation": "WRITE",
+      "removed": [],
+      "version": 1
+    },
+    {
+      "added": [],
+      "operation": "DELETE",
+      "removed": [
+        "region=east/part-00000-00b70ce8-3b7c-45f3-ac0b-9d548ec629d1-c000.snappy.parquet"
+      ],
+      "version": 2
+    },
+    {
+      "added": [
+        "region=west/part-00000-08badd28-0860-4b22-aba8-92374dfc1d99-c000.zstd.parquet"
+      ],
+      "operation": "DELETE",
+      "removed": [
+        "region=west/part-00000-f7600b61-3e20-4775-b376-80cdaf0eaa5b-c000.snappy.parquet"
+      ],
+      "version": 3
+    }
+  ],
+  "data_file_count": 1,
+  "data_files": [
+    {
+      "partition_values": {
+        "region": "west"
+      },
+      "path": "region=west/part-00000-08badd28-0860-4b22-aba8-92374dfc1d99-c000.zstd.parquet",
+      "record_count": 2,
+      "size_bytes": 843
+    }
+  ],
+  "delete_commits": {
+    "partition_delete": "2",
+    "rewrite_delete": "3"
+  },
+  "format": "DELTA",
+  "latest_commit_id": "3",
+  "notes": [
+    "Written by delta-rs; polytable has never touched this directory.",
+    "Commit 2 deletes the whole 'east' partition: a remove with no compensating add.",
+    "Commit 3 deletes one row ('id = 5') out of a multi-row 'west' file, which delta-rs",
+    "rewrites as a remove of the old file and an add of the replacement in the same commit."
+  ],
+  "partition_columns": [
+    "region"
+  ],
+  "partition_values": [
+    "west"
+  ],
+  "schema": [
+    {
+      "name": "id",
+      "nullable": false,
+      "type": "LONG"
+    },
+    {
+      "name": "region",
+      "nullable": false,
+      "type": "STRING"
+    },
+    {
+      "name": "amount",
+      "nullable": true,
+      "type": "DOUBLE"
+    }
+  ],
+  "table_dir": "returns",
+  "table_name": "returns",
+  "total_rows": 2,
+  "writer": {
+    "library": "deltalake",
+    "version": "1.6.3"
+  }
+}

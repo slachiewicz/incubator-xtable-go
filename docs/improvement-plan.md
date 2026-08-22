@@ -1783,7 +1783,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, and T38–T50 from the roadmap |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T57 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -2192,7 +2192,10 @@ is claimed in `docs/testing.md` that has no fixture behind it.
 **Delta half landed, Iceberg half still open.** `test/testdata/fixtures/delta-rs-deletes/returns`
 (`DeltaTable.delete()`: a whole-partition delete and a single-row delete that forces a rewrite) and
 `delta-rs-compaction/clicks` (`optimize.compact()`, and the tree's first unpartitioned Delta fixture)
-close the deletes and compaction rows of the table above on the Delta side.
+close the deletes and compaction rows of the table above on the Delta side. `generate.py`'s
+docstring now pins the install line (`deltalake==1.6.3 pyarrow==25.0.1
+'pyiceberg[sql-sqlite]==0.11.1'`) rather than leaving it bare, matching what the manifests already
+recorded; `delta-rs/sales` keeps its 1.6.2 writer on purpose, as a deliberately old version.
 `test/foreign_fixtures_test.go`'s `TestForeignFixtures_DeltaDeletes` and
 `TestForeignFixtures_DeltaCompaction` assert the per-commit `FilesRemoved`/`FilesAdded` against a
 `commits` array the generator reads straight out of `_delta_log`, not merely that it is non-empty —
@@ -2958,6 +2961,44 @@ and `Exists` fails closed in all four cases — which is the behavior the task w
 check came back clean, so the next person reading `Exists` does not have to re-derive it. Azurite's
 `403` and real Azure's `401`/`403` differ in code but agree in kind, so
 `AnonymousAccessFailsClosed` in the emulator suite pins the right behavior after all.
+
+---
+
+## T57 — Delta field identity is the name, not the column-mapping id
+
+Found by reading `pkg/formats/delta/schema.go` while building T46's Delta fixtures, not by a failing
+test — and it cannot currently be caught by one, which is the reason to write it down.
+
+`DeltaStructField` (`pkg/formats/delta/schema.go:34`) parses `metadata`, and `DeltaJSONToSchema`
+reads it for `MetadataKeyDecimalPrecision` and `MetadataKeyDecimalScale` (`:127`, `:130`) — but
+nothing reads `delta.columnMapping.id` or `delta.columnMapping.physicalName`. `grep -rn FieldID
+pkg/formats/delta/*.go` on the non-test files returns **nothing**: `model.Field.FieldID` is never
+populated for a Delta source at all.
+
+Under Delta column mapping, the column-mapping id is the *only* correct source of field identity: a
+rename changes the name and keeps the id. With identity taken from the name, a renamed column
+reaches an Iceberg or Hudi target as a drop plus an add, losing the column's history and its
+statistics. That is exactly upstream #711, which is open there.
+
+**It is not reproducible at the pinned writer version**, and the T46 work established that with
+evidence rather than assumption: `deltalake==1.6.3` refuses column mapping on both paths —
+`write_deltalake(..., configuration={"delta.columnMapping.mode": "name"})` and
+`DeltaTable.alter.set_table_properties(...)` both fail with
+`Column mapping is not supported for write operation ... yet`, and the package exposes no rename API
+at all. So a fixture needs either a newer delta-rs or a Spark-written table, which puts it in T30's
+JVM lane.
+
+**Scope.** Read the column-mapping keys into `model.Field.FieldID` when the table properties enable
+column mapping, and decide what `FieldID` means when they do not — Delta without column mapping has
+no stable id, so inventing one would be worse than leaving it unset. Check what the Iceberg and Hudi
+targets do with a source field that has no id before changing either.
+
+**Acceptance:** a Delta table with `delta.columnMapping.mode=name` and a renamed column converts to
+Iceberg with the field id preserved and the column reported as renamed, not dropped and re-added;
+a Delta table without column mapping behaves exactly as it does today. The fixture is the blocker,
+so this task starts by getting one — newer delta-rs, or Spark under T30.
+
+**Commit:** `fix: take Delta field identity from the column-mapping id`
 
 ---
 

@@ -1,0 +1,89 @@
+{
+  "commit_count": 5,
+  "commits": [
+    {
+      "added": [
+        "part-00000-16b44045-4c38-4fe9-94d4-89c5c89c9128-c000.snappy.parquet"
+      ],
+      "operation": "WRITE",
+      "removed": [],
+      "version": 0
+    },
+    {
+      "added": [
+        "part-00000-b75a90f6-a098-4718-bfc5-0a4627233178-c000.snappy.parquet"
+      ],
+      "operation": "WRITE",
+      "removed": [],
+      "version": 1
+    },
+    {
+      "added": [
+        "part-00000-6315ffc5-899e-444c-a775-2f88ccaf3929-c000.snappy.parquet"
+      ],
+      "operation": "WRITE",
+      "removed": [],
+      "version": 2
+    },
+    {
+      "added": [
+        "part-00000-e5ca91fe-0d8e-4a02-8223-4323e02eb582-c000.snappy.parquet"
+      ],
+      "operation": "WRITE",
+      "removed": [],
+      "version": 3
+    },
+    {
+      "added": [
+        "part-00000-7ea1ddca-e9f9-44e9-bba0-77ba224feb2e-c000.zstd.parquet"
+      ],
+      "operation": "OPTIMIZE",
+      "removed": [
+        "part-00000-16b44045-4c38-4fe9-94d4-89c5c89c9128-c000.snappy.parquet",
+        "part-00000-6315ffc5-899e-444c-a775-2f88ccaf3929-c000.snappy.parquet",
+        "part-00000-b75a90f6-a098-4718-bfc5-0a4627233178-c000.snappy.parquet",
+        "part-00000-e5ca91fe-0d8e-4a02-8223-4323e02eb582-c000.snappy.parquet"
+      ],
+      "version": 4
+    }
+  ],
+  "compaction_commit": "4",
+  "data_file_count": 1,
+  "data_files": [
+    {
+      "partition_values": {},
+      "path": "part-00000-7ea1ddca-e9f9-44e9-bba0-77ba224feb2e-c000.zstd.parquet",
+      "record_count": 8,
+      "size_bytes": 881
+    }
+  ],
+  "format": "DELTA",
+  "latest_commit_id": "4",
+  "notes": [
+    "Written by delta-rs; polytable has never touched this directory.",
+    "Unpartitioned, unlike every other Delta fixture in this tree.",
+    "Commit 4 is optimize.compact(): it removes the four files",
+    "the four prior commits each added and replaces them with one, with no row changed."
+  ],
+  "partition_columns": [],
+  "partition_values": [],
+  "schema": [
+    {
+      "name": "id",
+      "nullable": false,
+      "type": "LONG"
+    },
+    {
+      "name": "amount",
+      "nullable": true,
+      "type": "DOUBLE"
+    }
+  ],
+  "table_dir": "clicks",
+  "table_name": "clicks",
+  "total_rows": 8,
+  "writer": {
+    "library": "deltalake",
+    "version": "1.6.3"
+  }
+}

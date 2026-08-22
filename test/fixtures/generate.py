@@ -25,8 +25,22 @@ against the `manifest.json` this script emits next to each one.
 Run it from a virtualenv that is not committed:
 
     python3 -m venv .venv
-    .venv/bin/pip install deltalake pyarrow 'pyiceberg[sql-sqlite]'
+    .venv/bin/pip install deltalake==1.6.3 pyarrow==25.0.1 'pyiceberg[sql-sqlite]==0.11.1'
     .venv/bin/python test/fixtures/generate.py
+
+With no arguments this rewrites every fixture under `test/testdata/fixtures`. Each generator mints
+its own table UUIDs, file names and commit timestamps per run, so a full run churns every fixture
+already committed to the tree even when only one of them changed. Pass the output directory and one
+or more fixture names (see `FIXTURES` below) to regenerate only those:
+
+    .venv/bin/python test/fixtures/generate.py test/testdata/fixtures delta-rs-deletes
+
+The install line is pinned to what every fixture in the tree was regenerated with most recently,
+and is the writer version each new fixture should be added at unless the point of the fixture is a
+version boundary — `delta-rs/sales` predates the pin and still records `deltalake` 1.6.2 in its own
+manifest.json for exactly that reason: regenerating it would erase evidence of a version this repo
+has already tested against, for no benefit. Re-running this script never rewrites the pin to match
+whatever is installed; it is a separate, deliberate edit when the fixtures move to a newer writer.
 
 Determinism has limits the writers impose. Row values, row counts, column order, partition values
 and the commit sequence are fixed here, so the metadata a rerun produces describes the same table.
@@ -276,6 +290,245 @@ def generate_delta_checkpoint(out_dir: Path) -> dict:
     return manifest
 
 
+def _delta_commits(table_dir: Path) -> list[dict]:
+    """Read every _delta_log/*.json commit and record its add and remove paths, in commit order.
+
+    This is what T46 needs that the other two Delta generators do not: a per-commit record of which
+    paths were added and which were removed, read straight out of the log the writer produced rather
+    than inferred from the final `get_add_actions()` snapshot. A snapshot cannot tell a `remove`
+    action happened at all once the same path is gone from both the old and new file list.
+    """
+    commits = []
+    for log_file in sorted((table_dir / "_delta_log").glob("*.json")):
+        added: list[str] = []
+        removed: list[str] = []
+        operation = ""
+        for line in log_file.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            action = json.loads(line)
+            if "add" in action:
+                added.append(action["add"]["path"])
+            if "remove" in action:
+                removed.append(action["remove"]["path"])
+            if "commitInfo" in action:
+                operation = action["commitInfo"].get("operation", "")
+        commits.append(
+            {
+                "version": int(log_file.stem),
+                "operation": operation,
+                "added": sorted(added),
+                "removed": sorted(removed),
+            }
+        )
+    return commits
+
+
+def generate_delta_deletes(out_dir: Path) -> dict:
+    """Write a Delta table with a real `remove` action, from `DeltaTable.delete()`.
+
+    Every fixture generate_delta() produces is append-only (T46's evidence table: zero `remove`
+    actions in any committed fixture). This one carries two delete commits shaped differently on
+    purpose:
+
+      - version 2 deletes the whole `east` partition, which drops the file outright: a pure remove,
+        zero adds, in one commit.
+      - version 3 deletes a single row out of a multi-row `west` file, which forces delta-rs to
+        rewrite the file: a remove of the old file and an add of the replacement, in the same commit.
+        This is the shape a partial delete takes in production, and it is the one most likely to
+        expose a reader that reports commit-level diffs as adds-only.
+    """
+    import deltalake
+    from deltalake import DeltaTable, write_deltalake
+
+    _rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    table_dir = out_dir / "returns"
+
+    schema = pa.schema(
+        [
+            pa.field("id", pa.int64(), nullable=False),
+            pa.field("region", pa.string(), nullable=False),
+            pa.field("amount", pa.float64(), nullable=True),
+        ]
+    )
+
+    def batch(ids, regions, amounts):
+        return pa.table({"id": ids, "region": regions, "amount": amounts}, schema=schema)
+
+    write_deltalake(
+        table_dir,
+        batch([1, 2, 3], ["east", "east", "east"], [10.0, 20.0, 30.0]),
+        mode="error",
+        partition_by=["region"],
+        name="returns",
+    )
+    write_deltalake(table_dir, batch([4, 5, 6], ["west", "west", "west"], [40.0, 50.0, 60.0]), mode="append")
+
+    table = DeltaTable(table_dir)
+    partition_delete = table.delete("region = 'east'")
+    if partition_delete["num_added_files"] != 0 or partition_delete["num_removed_files"] != 1:
+        raise RuntimeError(f"expected a pure partition delete, got {partition_delete}")
+
+    table = DeltaTable(table_dir)
+    row_delete = table.delete("id = 5")
+    if row_delete["num_added_files"] != 1 or row_delete["num_removed_files"] != 1:
+        raise RuntimeError(f"expected a rewrite delete (add + remove), got {row_delete}")
+
+    table = DeltaTable(table_dir)
+    commits = _delta_commits(table_dir)
+    if not any(c["removed"] and not c["added"] for c in commits):
+        raise RuntimeError("fixture must carry a commit that removes files without adding any")
+    if not any(c["removed"] and c["added"] for c in commits):
+        raise RuntimeError("fixture must carry a commit that both adds and removes files")
+
+    adds = pa.table(table.get_add_actions(flatten=True)).to_pylist()
+    data_files = [
+        {
+            "path": add["path"],
+            "record_count": add["num_records"],
+            "size_bytes": add["size_bytes"],
+            "partition_values": {"region": add["partition.region"]},
+        }
+        for add in sorted(adds, key=lambda a: a["path"])
+    ]
+
+    schema_out = [
+        {
+            "name": field.name,
+            "type": DELTA_TYPE_NAMES[field.type.type],
+            "nullable": field.nullable,
+        }
+        for field in table.schema().fields
+    ]
+
+    manifest = {
+        "format": "DELTA",
+        "table_name": "returns",
+        "table_dir": "returns",
+        "writer": {"library": "deltalake", "version": deltalake.__version__},
+        "commit_count": table.version() + 1,
+        "latest_commit_id": str(table.version()),
+        "total_rows": sum(f["record_count"] for f in data_files),
+        "data_file_count": len(data_files),
+        "schema": schema_out,
+        "partition_columns": ["region"],
+        "partition_values": sorted({f["partition_values"]["region"] for f in data_files}),
+        "data_files": data_files,
+        "commits": commits,
+        "delete_commits": {
+            "partition_delete": str(2),
+            "rewrite_delete": str(3),
+        },
+        "notes": [
+            "Written by delta-rs; polytable has never touched this directory.",
+            "Commit 2 deletes the whole 'east' partition: a remove with no compensating add.",
+            "Commit 3 deletes one row ('id = 5') out of a multi-row 'west' file, which delta-rs",
+            "rewrites as a remove of the old file and an add of the replacement in the same commit.",
+        ],
+    }
+    _write_manifest(out_dir, manifest)
+    return manifest
+
+
+def generate_delta_compaction(out_dir: Path) -> dict:
+    """Write an unpartitioned Delta table, then run `optimize.compact()` over four tiny files.
+
+    Unpartitioned is deliberate and is new coverage on its own: every other Delta fixture in this
+    tree is partitioned by region, so an unpartitioned table has never gone through
+    `convertAddAction`'s empty-`partitionValues` path or an unpartitioned conversion target.
+
+    Compaction is the case T46 asks for that a row-level delete does not cover: the file set changes
+    completely — every one of the four small files is replaced by one big one — while not a single
+    row is added, changed or removed. `dataChange` on both the four removes and the one add is
+    `false`, which is what marks this as a metadata-only rewrite rather than a data change.
+    """
+    import deltalake
+    from deltalake import DeltaTable, write_deltalake
+
+    _rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    table_dir = out_dir / "clicks"
+
+    schema = pa.schema(
+        [
+            pa.field("id", pa.int64(), nullable=False),
+            pa.field("amount", pa.float64(), nullable=True),
+        ]
+    )
+
+    def batch(ids, amounts):
+        return pa.table({"id": ids, "amount": amounts}, schema=schema)
+
+    write_deltalake(table_dir, batch([1, 2], [1.5, 2.5]), mode="error", name="clicks")
+    write_deltalake(table_dir, batch([3, 4], [3.5, 4.5]), mode="append")
+    write_deltalake(table_dir, batch([5, 6], [5.5, 6.5]), mode="append")
+    write_deltalake(table_dir, batch([7, 8], [7.5, 8.5]), mode="append")
+
+    table = DeltaTable(table_dir)
+    rows_before = sum(pa.table(table.get_add_actions(flatten=True)).to_pylist()[i]["num_records"] for i in range(4))
+
+    compaction = table.optimize.compact()
+    if compaction["numFilesAdded"] != 1 or compaction["numFilesRemoved"] != 4:
+        raise RuntimeError(f"expected 4 files compacted into 1, got {compaction}")
+
+    table = DeltaTable(table_dir)
+    commits = _delta_commits(table_dir)
+    compact_commit = commits[-1]
+    if not compact_commit["removed"] or len(compact_commit["added"]) != 1:
+        raise RuntimeError(f"the compaction commit does not read back as add+removes: {compact_commit}")
+
+    adds = pa.table(table.get_add_actions(flatten=True)).to_pylist()
+    if len(adds) != 1:
+        raise RuntimeError(f"expected exactly one file after compaction, got {len(adds)}")
+    data_files = [
+        {
+            "path": add["path"],
+            "record_count": add["num_records"],
+            "size_bytes": add["size_bytes"],
+            "partition_values": {},
+        }
+        for add in adds
+    ]
+    rows_after = sum(f["record_count"] for f in data_files)
+    if rows_after != rows_before:
+        raise RuntimeError(f"compaction changed row count: {rows_before} -> {rows_after}")
+
+    schema_out = [
+        {
+            "name": field.name,
+            "type": DELTA_TYPE_NAMES[field.type.type],
+            "nullable": field.nullable,
+        }
+        for field in table.schema().fields
+    ]
+
+    manifest = {
+        "format": "DELTA",
+        "table_name": "clicks",
+        "table_dir": "clicks",
+        "writer": {"library": "deltalake", "version": deltalake.__version__},
+        "commit_count": table.version() + 1,
+        "latest_commit_id": str(table.version()),
+        "total_rows": rows_after,
+        "data_file_count": len(data_files),
+        "schema": schema_out,
+        "partition_columns": [],
+        "partition_values": [],
+        "data_files": data_files,
+        "commits": commits,
+        "compaction_commit": str(compact_commit["version"]),
+        "notes": [
+            "Written by delta-rs; polytable has never touched this directory.",
+            "Unpartitioned, unlike every other Delta fixture in this tree.",
+            f"Commit {compact_commit['version']} is optimize.compact(): it removes the four files",
+            "the four prior commits each added and replaces them with one, with no row changed.",
+        ],
+    }
+    _write_manifest(out_dir, manifest)
+    return manifest
+
+
 # ---------------------------------------------------------------------------- Iceberg (pyiceberg)
 
 
@@ -434,25 +687,48 @@ def generate_iceberg(out_dir: Path) -> dict:
         shutil.rmtree(staging, ignore_errors=True)
 
 
+# Every fixture this script can write, keyed by the name `main`'s optional filter argument
+# selects. Each generator mints its own table UUIDs, file names and timestamps per run, so running
+# an entry that is not being worked on churns a fixture already committed to the tree for no reason
+# — the filter lets a change to one generator regenerate only that fixture.
+FIXTURES = {
+    "delta-rs": lambda out_root: generate_delta(out_root / "delta-rs"),
+    "delta-rs-checkpoint": lambda out_root: generate_delta_checkpoint(out_root / "delta-rs-checkpoint"),
+    "delta-rs-deletes": lambda out_root: generate_delta_deletes(out_root / "delta-rs-deletes"),
+    "delta-rs-compaction": lambda out_root: generate_delta_compaction(out_root / "delta-rs-compaction"),
+    "pyiceberg": lambda out_root: generate_iceberg(out_root / "pyiceberg"),
+}
+
+
+def _describe(name: str, manifest: dict) -> str:
+    if "checkpoint_version" in manifest:
+        return (
+            f"{name}: checkpoint at v{manifest['checkpoint_version']}, "
+            f"{manifest['data_file_count']} files, {manifest['total_rows']} rows"
+        )
+    if "snapshot_count" in manifest:
+        return (
+            f"{name}: {manifest['snapshot_count']} snapshots, {manifest['data_file_count']} files, "
+            f"{manifest['total_rows']} rows"
+        )
+    return (
+        f"{name}: {manifest['commit_count']} commits, {manifest['data_file_count']} files, "
+        f"{manifest['total_rows']} rows"
+    )
+
+
 def main() -> int:
     out_root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else DEFAULT_OUT
-    out_root.mkdir(parents=True, exist_ok=True)
+    names = sys.argv[2:] or list(FIXTURES)
+    unknown = [n for n in names if n not in FIXTURES]
+    if unknown:
+        print(f"unknown fixture(s): {', '.join(unknown)}; known: {', '.join(FIXTURES)}", file=sys.stderr)
+        return 1
 
-    delta = generate_delta(out_root / "delta-rs")
-    print(
-        f"delta-rs: {delta['commit_count']} commits, {delta['data_file_count']} files, "
-        f"{delta['total_rows']} rows"
-    )
-    checkpointed = generate_delta_checkpoint(out_root / "delta-rs-checkpoint")
-    print(
-        f"delta-rs-checkpoint: checkpoint at v{checkpointed['checkpoint_version']}, "
-        f"{checkpointed['data_file_count']} files, {checkpointed['total_rows']} rows"
-    )
-    iceberg = generate_iceberg(out_root / "pyiceberg")
-    print(
-        f"pyiceberg: {iceberg['snapshot_count']} snapshots, {iceberg['data_file_count']} files, "
-        f"{iceberg['total_rows']} rows"
-    )
+    out_root.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        manifest = FIXTURES[name](out_root)
+        print(_describe(name, manifest))
 
     total = sum(
         os.path.getsize(os.path.join(root, name))
