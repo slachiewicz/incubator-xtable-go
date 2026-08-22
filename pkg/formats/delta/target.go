@@ -103,7 +103,13 @@ func (t *Target) CommitSnapshot(ctx context.Context, snapshot *model.Snapshot) e
 		return fmt.Errorf("failed to convert schema to delta JSON: %w", err)
 	}
 
-	var partitionColumns []string
+	// Initialised rather than declared nil, because encoding/json renders a nil slice as null and
+	// the Delta protocol requires partitionColumns to be an array -- empty for an unpartitioned
+	// table. delta-kernel-rs enforces that and refuses the whole log with "unmasked nulls in
+	// non-nullable StructArray child", so a null here makes the table unreadable by DuckDB and
+	// anything else built on the kernel. Every fixture in this repository is partitioned, which is
+	// why nothing caught it until an unpartitioned Snowflake table was converted.
+	partitionColumns := make([]string, 0, len(snapshot.Table.PartitioningFields))
 	for _, pf := range snapshot.Table.PartitioningFields {
 		partitionColumns = append(partitionColumns, pf.SourceField.Name)
 	}
@@ -190,7 +196,9 @@ func (t *Target) CommitChanges(ctx context.Context, changes *model.IncrementalTa
 		var actions []SingleAction
 
 		// Metadata Action
-		var partitionColumns []string
+		// Non-nil for the same reason as the snapshot path above: a nil slice marshals to null,
+		// and delta-kernel-rs rejects a log whose partitionColumns is null.
+		partitionColumns := make([]string, 0, len(change.TableAsOfChange.PartitioningFields))
 		for _, pf := range change.TableAsOfChange.PartitioningFields {
 			partitionColumns = append(partitionColumns, pf.SourceField.Name)
 		}

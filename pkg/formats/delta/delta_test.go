@@ -204,6 +204,17 @@ func TestDelta_MetadataCarriesKernelRequiredKeys(t *testing.T) {
 	// Every field at every depth, not just the top level.
 	assert.Equal(t, 3, strings.Count(metaAction.SchemaString, `"metadata":{}`))
 	assert.NotContains(t, metaAction.SchemaString, `"metadata":null`)
+
+	// partitionColumns must be an array, empty for this unpartitioned table, never null. Go
+	// marshals a nil slice as null, and delta-kernel-rs then refuses the entire log with
+	// "unmasked nulls in non-nullable StructArray child" -- so a null makes the table unreadable
+	// by DuckDB and everything else on the kernel, while polytable's own reader is untroubled.
+	// Found by converting an unpartitioned Snowflake table and reading the result with DuckDB;
+	// every Delta fixture here is partitioned, so no test could have found it.
+	assert.Contains(t, string(encoded), `"partitionColumns":[]`,
+		"an unpartitioned table must write an empty array, not null")
+	assert.NotContains(t, string(encoded), `"partitionColumns":null`)
+	assert.NotNil(t, metaAction.PartitionColumns)
 }
 
 func TestDelta_DeletionVectors(t *testing.T) {

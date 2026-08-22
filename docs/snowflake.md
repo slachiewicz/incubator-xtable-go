@@ -17,172 +17,122 @@
   under the License.
 -->
 
-# Snowflake Open Catalog
+# Snowflake Horizon Catalog
 
-polytable can register an Iceberg target in Snowflake Open Catalog, because Open Catalog speaks
-the same [Iceberg REST catalog protocol](iceberg-rest-catalog.md) as Nessie, Apache Polaris, Unity
-Catalog, and R2 Data Catalog. This page is the reference and the setup recipe together, the same
-shape as [Cloudflare R2 and R2 Data Catalog](cloudflare.md), because Open Catalog's surface here is
-one account, one connection, and one catalog entry — not enough to justify splitting a reference
-page from a separate test-environment page the way [Azure](azure.md) and
-[Azure test environment](azure-test-environment.md) do.
+Snowflake's Iceberg REST catalog speaks the same
+[Iceberg REST catalog protocol](iceberg-rest-catalog.md) as Nessie, Apache Polaris, Unity Catalog,
+and R2 Data Catalog, because it is Apache Polaris running inside Snowflake. This page is the
+reference and the setup recipe together, the same shape as
+[Cloudflare R2 and R2 Data Catalog](cloudflare.md), because the surface here is one connection and
+one catalog entry — not enough to justify a separate test-environment page the way
+[Azure](azure.md) and [Azure test environment](azure-test-environment.md) split theirs.
 
 ## Status
 
-**Nothing in this repository has ever connected to Snowflake.** Everything below comes from
-Snowflake's own documentation, not from a request that reached a Snowflake account.
+This page was rewritten from a live Snowflake account on 2026-08-22, replacing an earlier version
+written from documentation before anything had connected. Verified against that account:
 
-polytable does have code for the authentication Open Catalog requires: `restHTTPClient`
-(`pkg/catalog/rest_auth.go`) now recognizes `auth: oauth2` (also spelled `oauth` or
-`client-credentials`), which exchanges a client id and secret for a bearer token at the catalog's
-`/v1/oauth/tokens` endpoint and refreshes it before it expires — this is the OAuth2
-client-credentials mechanism the Iceberg REST specification itself defines, and the one both Apache
-Polaris and Snowflake Open Catalog speak. That lands the OAuth2 half of **T59** in
-`docs/improvement-plan.md` (its SigV4 half landed separately, for AWS's native endpoints).
+- Token exchange, catalog listing, and table resolution all work end to end, using `auth: oauth2`
+  (`pkg/catalog/oauth2.go`), the same code path documented for
+  [Apache Polaris](iceberg-rest-catalog.md) and covered by a live-Polaris dockertest suite
+  (`test/dockertest_polaris_test.go`, T59 in `docs/improvement-plan.md`).
+- Reaching Snowflake surfaced one real defect, since fixed: polytable sent an OAuth2 `client_id`
+  that Snowflake rejects. See [Authentication is a token exchange](#authentication-is-a-token-exchange)
+  below.
+- **Reading a Snowflake-managed table's data does not work.** A table created without an external
+  volume stores its data in a bucket only Snowflake holds credentials for. See
+  [Tables resolve, but reading their data does not work yet](#tables-resolve-but-reading-their-data-does-not-work-yet).
+- **Reading a table on an external volume works today, with no code changes.** When the table's
+  data lands in storage you control, polytable reads it with the same credentials you'd give any
+  other S3, Azure, or GCS path. See
+  [External volumes put the data in your own bucket](#external-volumes-put-the-data-in-your-own-bucket)
+  below, verified end to end against a live account.
 
-**That code is verified only against `httptest` fakes standing in for a token endpoint**
-(`pkg/catalog/oauth2_test.go` says so in its own file comment: "None of this reaches, or claims to
-reach, a live Apache Polaris deployment or Snowflake Open Catalog: that leg is unverified.") No
-request built by this code has reached a real Polaris container, let alone Snowflake. Treat
-everything past this paragraph as the documented shape of an untested path, not a confirmed one.
+Not verified: key-pair/JWT authentication, External OAuth, the Azure and GCS external volume
+shapes (documented but not run — see
+[Azure and GCS external volumes](#azure-and-gcs-external-volumes-documented-not-run)), and anything
+beyond a single account's behavior — Snowflake's rollout, region, or edition could differ.
 
-## Open Catalog is not the Snowflake warehouse
+## Open Catalog is closed to new customers
 
-The first thing to get right, because it is the thing a reader familiar with Snowflake gets wrong
-first: **polytable talks to Snowflake Open Catalog, not to the Snowflake SQL data warehouse.** Open
-Catalog is a separate account within Snowflake, with its own users, permissions, and connections —
-even for an organization that already runs a Snowflake warehouse. Creating an Open Catalog account
-does not reuse warehouse credentials, and a warehouse role has no standing in Open Catalog until
-someone grants it one there explicitly.
+If you've read Snowflake's older material, you'll come looking for a **Snowflake Open Catalog**
+account. Don't. Snowflake's own documentation states it plainly: customers who haven't previously
+created an Open Catalog account can't sign up for their first one. It directs new customers to
+**Horizon Catalog** instead. This is confirmed in the Snowsight UI: the account-creation dropdown
+offers only "Create Organization Account", with no Open Catalog option.
 
-**Snowflake Open Catalog is Apache Polaris.** Its endpoint path is literally `/polaris/api/catalog`.
-That is not a coincidence of naming — it is the same server, so the same Iceberg REST protocol
-polytable already implements against Polaris, Nessie, and the others applies unchanged. Practically,
-this means a local Polaris container is a faithful, free rehearsal of what polytable would do
-against a real Open Catalog account.
+## Horizon Catalog serves the same endpoint
 
-If instead you want to *query* a table polytable already wrote, through Snowflake SQL rather than
-register it in Open Catalog, see the [Snowflake section of Query a synced table](query-engines.md#snowflake)
-— that path goes through an external volume and a Snowflake-native catalog integration, and does not
-involve Open Catalog at all.
+Snowflake integrated Polaris into Horizon Catalog, and it serves the same path Open Catalog always
+did:
 
-## Rehearse against a local Polaris container first
-
-Because Open Catalog is Polaris, standing up a local Polaris container exercises the same client
-code path polytable would use against Snowflake, at no cost and with no account to create or tear
-down — and, per [Status](#status) above, it is a rehearsal this repository has not actually run for
-the OAuth2 path, so it is also the first place to find out whether that code works against real
-Polaris at all. Apache Polaris publishes an image for exactly this:
-
-```shell
-docker run -p 8181:8181 -p 8182:8182 apache/polaris:latest
+```
+https://<org>-<account>.snowflakecomputing.com/polaris/api/catalog
 ```
 
-Port 8181 serves the REST API; 8182 serves metrics and health. Polaris's own
-[quickstart](https://polaris.apache.org/releases/1.0.0/getting-started/quickstart/) and
-[using Polaris](https://polaris.apache.org/releases/1.0.0/getting-started/using-polaris/) guides are
-the authoritative source for the current bootstrap credentials and CLI invocation, since both have
-changed between Polaris releases; the shape below is theirs, reproduced for orientation. With a root
-`CLIENT_ID`/`CLIENT_SECRET` bootstrapped, create a catalog, a principal, a principal role, and a
-catalog role carrying `CATALOG_MANAGE_CONTENT` — the same privilege Open Catalog asks for in
-production:
+Same protocol, same routes. Everything documented for
+[Sync to an Iceberg REST catalog](iceberg-rest-catalog.md) applies unchanged; this page covers only
+what's specific to Snowflake's deployment of it.
 
-```shell
-./polaris --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
-  catalogs create --storage-type file quickstart_catalog
+## A network policy is required before anything else
 
-./polaris --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
-  principals create quickstart_user
-./polaris --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
-  principal-roles create quickstart_user_role
+Before you touch authentication, attach a network policy to the user or account you'll use.
+Without one, Snowflake refuses to issue a programmatic access token anywhere — including the SQL
+API — with:
 
-./polaris --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
-  catalog-roles create --catalog quickstart_catalog quickstart_catalog_role
-./polaris --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
-  privileges catalog grant --catalog quickstart_catalog \
-  --catalog-role quickstart_catalog_role CATALOG_MANAGE_CONTENT
-
-./polaris --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
-  principal-roles grant --principal quickstart_user quickstart_user_role
-./polaris --client-id "$CLIENT_ID" --client-secret "$CLIENT_SECRET" \
-  catalog-roles grant --catalog quickstart_catalog \
-  --principal-role quickstart_user_role quickstart_catalog_role
+```
+390432 Fail : Network policy is required
 ```
 
-The resulting principal's client id and secret are what go into the `clientId` and
-`clientSecretEnv`-named properties in [Worked configuration](#worked-configuration) below — a
-Polaris rehearsal and a Snowflake account differ only in which credential and URI you plug in.
+The error doesn't mention the catalog at all, so if nothing below works, check this first. Create a
+policy and attach it:
 
-Note the path difference between the two: a self-hosted Polaris server serves `/api/catalog`, while
-Snowflake Open Catalog serves the same routes under `/polaris/api/catalog`. Everything past that
-path segment — `/v1/config`, `/v1/oauth/tokens`, `/v1/{prefix}/namespaces/...` — is identical.
-`pkg/catalog/oauth2.go`'s own comments note that reaching a self-hosted Polaris container required
-an extra `Polaris-Realm: POLARIS` header, confirmed against a local container and attachable through
-the `header.<Name>` config property (`PropCatalogHeaderPrefix`, documented in
-[Sync to an Iceberg REST catalog](iceberg-rest-catalog.md)). Whether Snowflake's hosted deployment
-needs an equivalent header is not established here — it is exactly the kind of detail a Polaris
-rehearsal cannot answer, since Snowflake's realm configuration is its own.
+```sql
+CREATE NETWORK POLICY <policy_name> ALLOWED_IP_LIST = ('0.0.0.0/0');
+ALTER USER <user> SET NETWORK_POLICY = <policy_name>;
+```
 
-`pkg/catalog/rest_prefix_test.go` and `test/dockertest_iceberg_rest_test.go` cover the wider Iceberg
-REST protocol against `httptest` fakes and the `tabulario/iceberg-rest` reference image; T58 in
-`docs/improvement-plan.md` records a run against a live Apache Polaris container that found and
-fixed four real conformance defects, though that run predates the OAuth2 client-credentials code and
-did not exercise it. None of that exercise reached Snowflake's own deployment of Polaris, which may
-not behave identically in every respect.
+`ALLOWED_IP_LIST = ('0.0.0.0/0')` works, and it is **wide open** — say so plainly rather than
+burying it. Narrow it to your own address if you can, and unset it once you're done:
 
-## Create the Open Catalog account
+```sql
+ALTER USER <user> UNSET NETWORK_POLICY;
+```
 
-From Snowsight, in an existing Snowflake organization: **Admin → Accounts**, then the **+ Account**
-drop-down, then **Create Snowflake Open Catalog Account**. The dialog asks for Cloud, Region, and
-Edition, then Account Name, User Name, Password, and Email. Submitting it provisions a new,
-billable Snowflake account dedicated to Open Catalog — see [Teardown](#teardown) for what "billable"
-means in practice and how to stop it.
+## Authentication is a token exchange
 
-## Create the service connection and copy the credential
+A Snowflake programmatic access token (PAT) is the *credential*, not the bearer token polytable
+sends on each request. Exchange it for a short-lived access token at the catalog's own OAuth2
+endpoint:
 
-polytable authenticates as a service, not as the user created above, so the next step is a
-connection. In the Open Catalog UI: **Connections** tab → **+ Connection**. The dialog offers
-either a new principal role or an existing one; create a new one for a polytable sync so its access
-can be scoped and revoked independently of anything else using the account.
+```
+POST https://<org>-<account>.snowflakecomputing.com/polaris/api/catalog/v1/oauth/tokens
 
-Completing the dialog returns a credential shaped `<CLIENT_ID>:<CLIENT_SECRET>`. Snowflake's own
-documentation is explicit that **you won't be able to retrieve these text strings from the Open
-Catalog service later, so you must copy them now** — there is no "regenerate and see the old value"
-option, only "regenerate and invalidate the old value." A reader who closes the dialog before
-copying both halves has to create a new connection from scratch.
+grant_type=client_credentials
+scope=session:role:<ROLE>
+client_secret=<the PAT>
+```
 
-The principal role behind the connection needs a catalog role carrying **`CATALOG_MANAGE_CONTENT`**
-on the catalog polytable will sync into — the same privilege granted in the Polaris rehearsal above.
-That single privilege covers create, read, and write on tables, which is what a conversion sync
-needs to register a table and later update it.
+**Send no `client_id`.** Snowflake rejects a request that carries one, and the rejection is
+`invalid_scope` — an error naming a field that isn't actually the problem. polytable required
+`clientId` until commit `c4c4863` made it optional and, when empty, omits the field from the
+request entirely rather than sending it blank. A reader on an older build will hit exactly this
+`invalid_scope` error and should upgrade rather than debug `scope`.
 
-## Authenticate with OAuth2 client-credentials
+## Configure polytable
 
-Set `properties.auth` to `oauth2` and give it the two halves of the connection credential:
+Set on the catalog entry's `properties`:
 
-- **`clientId`**: the `<CLIENT_ID>` half. This is not sensitive on its own — an id without its
-  matching secret cannot mint a token — so it is an ordinary config property
-  (`PropCatalogOAuth2ClientID`).
-- **`clientSecretEnv`**: the *name* of an environment variable holding the `<CLIENT_SECRET>` half,
-  never the secret itself (`PropCatalogOAuth2ClientSecretEnv`). See
-  [Where the client secret goes](#where-the-client-secret-goes) for why the config property names a
-  variable instead of carrying a value.
-- **`scope`** (optional): requested as `PRINCIPAL_ROLE:<principal_role_name>`, per Snowflake's own
-  documentation of the connection's scope shape. Omit it and polytable sends no `scope` form field
-  at all, since the OAuth2 client-credentials grant treats it as optional — a real Open Catalog
-  connection likely rejects an unscoped request, so set it explicitly rather than relying on that
-  default.
-- **`oauth2TokenEndpoint`** (optional): overrides where the token request goes. Left unset, polytable
-  derives `<catalog-uri>/v1/oauth/tokens`, which for Open Catalog's URI shape resolves to
-  `https://<open_catalog_account_identifier>.snowflakecomputing.com/polaris/api/catalog/v1/oauth/tokens`
-  — the standard Iceberg REST location, so this should not need overriding for Snowflake.
+- **`auth: oauth2`**
+- **`clientSecretEnv`**: the name of an environment variable holding the PAT — never the PAT
+  itself. An unset or empty variable is a named error, the same discipline
+  [`AzureOptions.AccountKeyEnv`](azure.md#authentication) follows: a dataset config gets committed
+  to git and logged, so the config points at a variable name, never a value.
+- **`scope`**: `session:role:<ROLE>`.
+- **No `clientId`.** Leave the property out entirely.
 
-With these set, polytable fetches a token on the first request to the catalog and refetches it
-roughly 30 seconds before it expires (`oauth2RefreshMargin` in `pkg/catalog/oauth2.go`), rather than
-presenting one token until the catalog rejects it — the failure mode a hand-fetched static
-`properties.token` has on any sync long enough to outlast the token's lifetime. As
-[Status](#status) says, this refresh behavior is checked against `httptest` fakes only; whether it
-holds up against Open Catalog's actual token lifetime and response shape is unconfirmed.
+`oauth2TokenEndpoint` is optional and, left unset, defaults to `<uri>/v1/oauth/tokens`, which is
+already the address shown above — there's no need to override it for Snowflake.
 
 ## Worked configuration
 
@@ -191,127 +141,390 @@ sourceFormat: DELTA
 targetFormats:
   - ICEBERG
 datasets:
-  - tableBasePath: s3://my-bucket/tables/people
+  - tableBasePath: s3://<bucket>/tables/people
     tableName: people
     catalogs:
       - type: ICEBERG_REST
-        uri: https://<open_catalog_account_identifier>.snowflakecomputing.com/polaris/api/catalog
-        databaseName: analytics
+        uri: https://<org>-<account>.snowflakecomputing.com/polaris/api/catalog
+        databaseName: <schema>
         properties:
-          warehouse: <catalog_name>
+          warehouse: <database>
           auth: oauth2
-          clientId: <open_catalog_client_id>
-          clientSecretEnv: SNOWFLAKE_OPEN_CATALOG_CLIENT_SECRET
-          scope: PRINCIPAL_ROLE:<principal_role_name>
+          clientSecretEnv: SNOWFLAKE_PAT
+          scope: session:role:<role>
 ```
 
 ```shell
-export SNOWFLAKE_OPEN_CATALOG_CLIENT_SECRET=<open_catalog_client_secret>
+export SNOWFLAKE_PAT=<the_programmatic_access_token>
 ./bin/polytable sync --datasetConfig snowflake.yaml
 ```
 
-`<open_catalog_account_identifier>` "might be the account locator by itself (for example,
-`xy12345`) or include additional segments," in Snowflake's own words, depending on the account's
-region and cloud — read it off the account's own connection details rather than guessing its shape.
-`databaseName` is the Iceberg namespace inside the catalog, the same rule as every other REST
-catalog documented in this repository (see
-[Resolve a source table from the catalog](iceberg-rest-catalog.md#resolve-a-source-table-from-the-catalog)):
-it must already exist under the named catalog before polytable syncs into it. `<open_catalog_client_id>`
-is a placeholder for the `clientId` half only — the matching secret never appears in this file; it
-lives in `SNOWFLAKE_OPEN_CATALOG_CLIENT_SECRET`, set in the shell that runs the sync, not in the
-config.
+`<org>-<account>` is your account identifier as Snowflake shows it in the account's connection
+details — read it from there rather than guessing its shape.
 
-## The warehouse is the catalog name, and it is case sensitive
+## The warehouse property is the database, not a warehouse
 
-This is the one property that differs from every other catalog documented in this repository, so
-state it plainly: for Snowflake Open Catalog, **`properties.warehouse` is the catalog's name, and
-matching it is case sensitive.** It is not the account, and not an ARN.
+**`properties.warehouse` is the Snowflake database name.** This is unlike every other catalog
+documented in this repository:
 
-- AWS Glue's Iceberg REST endpoint takes the account id as its warehouse (see
-  [Amazon S3 and AWS Glue](aws.md)).
+- AWS Glue's Iceberg REST endpoint takes the account id (see [Amazon S3 and AWS Glue](aws.md)).
 - AWS S3 Tables takes the table bucket's ARN.
 - Cloudflare R2 Data Catalog takes `<account_id>_<bucket>` (see
   [Cloudflare R2 and R2 Data Catalog](cloudflare.md)).
-- Snowflake Open Catalog takes the catalog name you gave it when it was created — the same string
-  Polaris calls a catalog, not an account or resource identifier at all — and a case mismatch fails
-  where an AWS-style identifier would not have cared.
+- A self-hosted Apache Polaris catalog takes the catalog's own name.
+- Snowflake takes the database name — not a virtual warehouse, not an account, not an ARN.
 
-## Where the client secret goes
+Watch for a naming collision this creates with polytable's own config: `databaseName` on the
+catalog entry is the Iceberg *namespace* inside the catalog, the same rule as every other REST
+catalog documented here (see
+[Resolve a source table from the catalog](iceberg-rest-catalog.md#resolve-a-source-table-from-the-catalog)).
+In Snowflake terms that namespace is a schema living inside the database you named in `warehouse`.
+`warehouse` is the database; `databaseName` is the schema underneath it. The two config keys and
+the two Snowflake concepts do not line up one-to-one, so don't read `databaseName` as "the
+Snowflake database."
 
-The `CLIENT_ID:CLIENT_SECRET` pair from [the connection step](#create-the-service-connection-and-copy-the-credential)
-is a long-lived credential capable of minting bearer tokens for the principal role it names. That is
-exactly why `clientSecretEnv` in the config above **names an environment variable rather than
-carrying the secret**: `pkg/catalog/oauth2.go`'s own comment states the rule directly — "a dataset
-config gets committed to git, logged, and POSTed to the REST service (the rule T51 and T55 settled
-for Azure credentials), and an OAuth2 client secret is exactly the kind of long-lived credential
-that rule exists to keep out of those places." The pattern mirrors `AzureOptions.AccountKeyEnv`
-(see [Credentials](azure.md#authentication)): the config points at a variable, never at a value, so
-the same committed file works across environments and machines, each supplying its own secret
-through its own environment.
+## What /v1/config returns
 
-An unset or empty `clientSecretEnv`-named variable is an error naming both the property and the
-variable, the same discipline `resolveAzureCredential` follows — not a silent fall-through to an
-unauthenticated request.
+`GET /v1/config?warehouse=<database>` against a live account returned:
 
-## What's untested
+- `overrides.prefix` set to the database name.
+- `defaults` carrying only an empty `default-base-location`.
+- Real write routes alongside the read routes.
+- **No `namespace-separator`.** Self-hosted Polaris advertises one (`%1F` by default, see T61 in
+  `docs/improvement-plan.md`); Snowflake's deployment does not. So Snowflake and self-hosted Polaris
+  are the same software but not identical in every field it advertises — treat that as the rule,
+  not the exception.
 
-To be direct about the boundary of what this page states versus what it verifies:
+## Rehearse against a local Polaris container
 
-- No request from this repository has reached `*.snowflakecomputing.com` in any form — not account
-  creation, not a connection, not a token exchange, not a catalog operation.
-- The OAuth2 client-credentials code exists and is unit-tested, but only against `httptest` fakes
-  standing in for a token endpoint. No test in this repository has run it against a live Apache
-  Polaris container, let alone Snowflake Open Catalog.
-- Whether Snowflake's deployment of Polaris returns the same `GET /v1/config` shape — the same
-  `overrides.prefix`, the same `404` on a bad warehouse, the same `namespace-separator`, the same
-  need (or lack of one) for a `Polaris-Realm`-style header — that a self-hosted Polaris container
-  returns (per T58's findings) is not established. Assume parity because it is the same server
-  software; do not assume it is verified.
-- T61 in `docs/improvement-plan.md` records that Polaris advertises a `namespace-separator` (`%1F`
-  by default) for multi-level namespaces, which polytable currently ignores. A single-level
-  `databaseName`, the only kind shown above, is unaffected; a namespace containing a separator
-  character is not yet handled correctly against any Polaris-based catalog, Snowflake included.
+Because Snowflake's catalog is Polaris, a local Polaris container exercises the same client code
+path polytable uses against Snowflake, at no cost:
+
+```shell
+docker run -p 8181:8181 -p 8182:8182 apache/polaris:latest
+```
+
+Apache Polaris's own [quickstart](https://polaris.apache.org/releases/1.0.0/getting-started/quickstart/)
+covers bootstrapping a principal and granting it `CATALOG_MANAGE_CONTENT` on a catalog — the same
+privilege a Snowflake connection needs. `pkg/catalog/oauth2.go`'s own comments note that a
+self-hosted Polaris container also needed a `Polaris-Realm` header, attachable through the
+`header.<Name>` config property (`PropCatalogHeaderPrefix`, documented in
+[Sync to an Iceberg REST catalog](iceberg-rest-catalog.md)); nothing observed against Snowflake so
+far indicates it needs an equivalent.
+
+`test/dockertest_polaris_test.go` already drives this rehearsal in CI against a real Polaris
+container, including a wrong-secret case that must fail named rather than silently degrade — that
+suite is what caught the `client_id` defect before this page did.
+
+## Tables resolve, but reading their data does not work yet
+
+A Snowflake-managed Iceberg table — created with `CREATE ICEBERG TABLE`, no external volume needed
+— was found by `ListTables` and resolved by `GetSourceTable` as `format=ICEBERG`, with a base path
+in Snowflake's own managed bucket. The catalog path works end to end.
+
+Reading that table's data does not. The base path points into a bucket only Snowflake holds
+credentials for; no customer can be given bucket-wide access to it. Running `polytable inspect`
+against that path fails with:
+
+```
+failed to list s3 objects ...: api error PermanentRedirect: The bucket you are attempting to access
+must be addressed using the specified endpoint.
+```
+
+Snowflake does vend scoped credentials for exactly this: requesting the table with the header
+`X-Iceberg-Access-Delegation: vended-credentials` returns a `storage-credentials` block with an S3
+access key, secret, session token, expiry, and `client.region`. **polytable does not consume vended
+credentials yet.** This is tracked as **T64** in `docs/improvement-plan.md`. Until it lands, you can
+list and resolve Snowflake-managed Iceberg tables through the catalog, but you cannot read their
+data through polytable. This is not a configuration problem to work around — there is no bucket-wide
+credential to configure instead.
+
+## External volumes put the data in your own bucket
+
+The limitation above only applies to a table Snowflake stores in its own managed bucket. An
+**external volume** changes where the data lands: a Snowflake Iceberg table created on an
+external volume writes its data files and metadata into a bucket or container in *your* cloud
+account, not Snowflake's. Because the storage is yours, polytable reads it with ordinary
+credentials — the same S3, Azure, or GCS configuration documented in
+[Amazon S3 and AWS Glue](aws.md), [Azure Data Lake Storage Gen2](azure.md), and
+[Cloud Storage](cloud-storage.md). No vended-credential support is needed for this path; T64 in
+`docs/improvement-plan.md` remains open only for the managed-bucket case above.
+
+This is the difference between polytable *listing* a Snowflake table and polytable *converting*
+one. It's also a way to produce a genuine Iceberg fixture in any of the three clouds using
+Snowflake as the writer, independent of whatever else creates test data for this project.
+
+The S3 path below was performed end to end against a live Snowflake account and a real AWS
+account on 2026-08-22. The Azure and Google shapes that follow it were not run; they're marked
+as such.
+
+### Worked example: a Snowflake Iceberg table on S3
+
+1. Create an S3 bucket in the account you'll read from. It doesn't need to exist before the next
+   step — an external volume can name a bucket that doesn't exist yet.
+2. Create the external volume, naming the bucket and an IAM role that doesn't have to exist yet
+   either:
+
+   ```sql
+   CREATE EXTERNAL VOLUME <volume_name>
+     STORAGE_LOCATIONS =
+       (
+         (
+           NAME = '<location_name>'
+           STORAGE_PROVIDER = 'S3'
+           STORAGE_BASE_URL = 's3://<bucket>/<prefix>/'
+           STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::<account_id>:role/<role_name>'
+         )
+       );
+   ```
+
+   This is a chicken-and-egg handshake, and it surprises people the first time: Snowflake accepts
+   a role ARN for a role you haven't created yet, because the next two steps use the volume's own
+   output to write that role's trust policy.
+
+3. Read back the identity Snowflake will assume the role as:
+
+   ```sql
+   DESC EXTERNAL VOLUME <volume_name>;
+   ```
+
+   Look for `STORAGE_AWS_IAM_USER_ARN` (an IAM user in **Snowflake's own** AWS account, not yours)
+   and `STORAGE_AWS_EXTERNAL_ID`. Both values come back inside a JSON blob in the
+   `STORAGE_LOCATION_1` property's row, not as separate top-level rows, which makes them awkward
+   to pull out with a script rather than by reading the output.
+
+4. Create the IAM role named in step 2, with a trust policy that allows only that Snowflake IAM
+   user to assume it, conditioned on the external ID:
+
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Principal": { "AWS": "<storage_aws_iam_user_arn>" },
+         "Action": "sts:AssumeRole",
+         "Condition": {
+           "StringEquals": { "sts:ExternalId": "<storage_aws_external_id>" }
+         }
+       }
+     ]
+   }
+   ```
+
+   Attach a permissions policy granting the S3 object actions on `<bucket>/<prefix>/*`, plus
+   `s3:ListBucket` and `s3:GetBucketLocation` on the bucket itself.
+
+5. Verify the volume before creating anything on it:
+
+   ```sql
+   SELECT SYSTEM$VERIFY_EXTERNAL_VOLUME('<volume_name>');
+   ```
+
+   This returns a JSON result with `"success": true` and per-check results, including a
+   `writeResult`. **Run this before creating a table on the volume.** It's the difference between
+   finding out the role or policy is wrong right now and finding out when a table creation fails
+   with a less specific error. Allow a few seconds for IAM propagation before the first attempt —
+   an immediate check after creating the role can still fail while the trust policy propagates.
+
+6. Create the table on the volume:
+
+   ```sql
+   CREATE ICEBERG TABLE <db>.<schema>.<table>
+     CATALOG = 'SNOWFLAKE'
+     EXTERNAL_VOLUME = '<volume_name>'
+     BASE_LOCATION = '<prefix>/';
+   ```
+
+7. Find where the data actually landed:
+
+   ```sql
+   SELECT SYSTEM$GET_ICEBERG_TABLE_INFORMATION('<db>.<schema>.<table>');
+   ```
+
+   The `metadataLocation` in the result is **not** `<prefix>/` as given in `BASE_LOCATION`.
+   Snowflake appends a generated suffix, for example `<prefix>/<random_suffix>/`. A reader who
+   assumes the base location they gave is the location Snowflake used will look in the wrong
+   place — always read this back rather than reconstructing the path from the `CREATE` statement.
+
+### Reading it back with polytable
+
+With the bucket location from step 7, polytable reads the table directly, using the reader's own
+credentials the same way it would for any other S3-backed Iceberg table:
+
+```shell
+./bin/polytable inspect --basePath s3://<bucket>/<prefix>/<random_suffix> --format ICEBERG \
+  --storage-region <region>
+```
+
+This returned the correct schema and the correct data file count against the table created above.
+One thing to expect: **Snowflake writes column names in upper case** (`ID`, `AMOUNT`, `REGION`),
+which is worth knowing if you're coming from Delta tables, where lower-cased names are the norm.
+
+### Two things Snowflake's Iceberg output does differently
+
+**Snowflake writes no `metadata/version-hint.text`.** polytable doesn't need one — it resolves
+the current metadata version by listing the metadata directory and taking the highest version it
+finds, the same mechanism documented in [What /v1/config returns](#what-v1config-returns) and in
+T39 of `docs/improvement-plan.md` — so it reads a Snowflake-written table without complaint.
+DuckDB's `iceberg_scan`, by contrast, refuses one outright:
+
+```
+No version was provided and no version-hint could be found, globbing the filesystem to locate the
+latest version is disabled by default as this is considered unsafe and could result in reading
+uncommitted data.
+```
+
+That refusal is a real safety measure, not pedantry — DuckDB is declining to guess at which
+metadata file is current rather than silently picking a possibly-stale or uncommitted one. It has
+an escape hatch, `SET unsafe_enable_version_guessing = true;`, and the name is the warning. Knowing
+both facts places polytable correctly: it is the more permissive of the two readers here, not the
+more careful one.
+
+**Snowflake writes `format-version: 2`** in the table metadata. Worth recording since Iceberg v3
+is arriving; nothing here says more than what was observed on this one table.
+
+### Cross-checked with DuckDB
+
+The same table was read independently through DuckDB's `iceberg_scan`, which is worth doing
+whenever you want more than "polytable's own count agrees with itself." Snowflake reported six
+rows for the table; DuckDB's `iceberg_scan` over the same S3 path independently reported the same
+six rows, the same sum, and the same distinct-region count.
+
+```sql
+SET unsafe_enable_version_guessing = true;
+
+CREATE SECRET (
+  TYPE S3,
+  KEY_ID '<access_key_id>',
+  SECRET '<secret_access_key>',
+  SESSION_TOKEN '<session_token>',
+  REGION '<region>'
+);
+
+SELECT * FROM iceberg_scan('s3://<bucket>/<prefix>/<random_suffix>');
+```
+
+If you're using temporary AWS credentials (an `ASIA...` access key rather than an `AKIA...` one),
+`SESSION_TOKEN` is required in `CREATE SECRET` along with the key and secret. Leaving it out
+doesn't fail with a missing-token error — it fails with a confusing "Invalid Access Key", which
+sends you looking at the key and secret instead of the field you actually omitted.
+
+### Azure and GCS external volumes (documented, not run)
+
+Only the S3 path above was performed. The shapes below come from Snowflake's own documentation,
+not from a live run — treat them as a starting point to verify against your account, not as
+copy-paste-ready recipes the way the S3 steps are.
+
+For Azure, an external volume names a container instead of a bucket and takes a tenant ID instead
+of a role ARN:
+
+```sql
+CREATE EXTERNAL VOLUME <volume_name>
+  STORAGE_LOCATIONS =
+    (
+      (
+        NAME = '<location_name>'
+        STORAGE_PROVIDER = 'AZURE'
+        STORAGE_BASE_URL = 'azure://<account>.blob.core.windows.net/<container>/<prefix>/'
+        AZURE_TENANT_ID = '<tenant_id>'
+      )
+    );
+```
+
+Where the S3 flow authorizes an IAM role, Azure requires a consent step: `DESC EXTERNAL VOLUME`
+returns a Snowflake service principal (an application it registered in your Azure AD tenant), and
+an Azure AD administrator must grant that principal access to the container before
+`SYSTEM$VERIFY_EXTERNAL_VOLUME` can succeed. See Snowflake's
+[Azure external volume documentation](https://docs.snowflake.com/en/user-guide/tables-iceberg-configure-external-volume-azure)
+for the exact consent flow, since it involves an Azure-side approval this run never exercised.
+
+For Google Cloud, the provider is `'GCS'`:
+
+```sql
+CREATE EXTERNAL VOLUME <volume_name>
+  STORAGE_LOCATIONS =
+    (
+      (
+        NAME = '<location_name>'
+        STORAGE_PROVIDER = 'GCS'
+        STORAGE_BASE_URL = 'gcs://<bucket>/<prefix>/'
+      )
+    );
+```
+
+Here, `DESC EXTERNAL VOLUME` returns a **Snowflake-generated service account**; grant it the
+appropriate role (for example, object admin) on the bucket, then run
+`SYSTEM$VERIFY_EXTERNAL_VOLUME` the same way as the S3 flow. See Snowflake's
+[GCS external volume documentation](https://docs.snowflake.com/en/user-guide/tables-iceberg-configure-external-volume-gcs)
+for the exact role name and any additional steps, since this run never exercised the GCS path
+either.
+
+Whichever cloud the external volume points at, the pattern is the same: Snowflake writes into
+storage the reader controls, and polytable's existing S3, Azure, and GCS backends read it with no
+Snowflake-specific code. That also makes Snowflake, on any of the three clouds, a way to produce
+genuine Iceberg fixtures for this project without any other engine in the loop.
+
+## Key-pair and external OAuth are not implemented
+
+Snowflake also supports key-pair (JWT) authentication and External OAuth. Key-pair signs a JWT and
+posts it as `client_secret` to the same `/v1/oauth/tokens` endpoint with the same
+`grant_type=client_credentials` — so supporting it would mean adding a JWT signer to the existing
+OAuth2 code path, not a new auth mode. Neither is built.
 
 ## Teardown
 
-An Open Catalog account is a real, billable Snowflake account, not a free sandbox — undo setup in
-the reverse order so nothing keeps costing money after you are done:
-
-1. Delete the service connection created above, from the Open Catalog UI's **Connections** tab,
-   which invalidates its `CLIENT_ID:CLIENT_SECRET` immediately.
-2. Delete the catalog and any principal roles or catalog roles created for this test, from the same
-   UI.
-3. Drop the Open Catalog account itself from **Admin → Accounts** in Snowsight, the same place it
-   was created. Confirm the drop in Snowflake's account view rather than assuming the UI action
-   completed — an account left in a "pending drop" state can still accrue charges until the drop
-   finishes.
+- Unset the network policy if you widened it for testing: `ALTER USER <user> UNSET NETWORK_POLICY;`.
+- Drop the network policy itself if it was created only for this test:
+  `DROP NETWORK POLICY <policy_name>;`.
+- Revoke or rotate the programmatic access token from Snowsight if it was created only for this
+  test.
 
 ## Troubleshooting
 
+- **`390432 Fail : Network policy is required`.** This blocks every programmatic access token,
+  including the SQL API — it is not specific to the catalog. See
+  [A network policy is required before anything else](#a-network-policy-is-required-before-anything-else).
+- **`invalid_scope` from the token endpoint.** Snowflake rejects a client-credentials request that
+  carries a `client_id`. Confirm the running polytable build is at or past commit `c4c4863`, which
+  omits `clientId` from the request when unset; an older build always sent it.
+- **`PermanentRedirect` when inspecting or reading a resolved table's data.** Expected today for a
+  Snowflake-managed table — see
+  [Tables resolve, but reading their data does not work yet](#tables-resolve-but-reading-their-data-does-not-work-yet).
+  It is not a credentials or endpoint mistake to fix in your own config.
 - **A dataset config's `clientSecretEnv`-named variable is unset at sync time.** polytable refuses
-  to build the client and names both the property and the missing variable in the error, rather than
-  falling through to an unauthenticated request — confirm the variable is set in the exact process
-  that runs the sync, not just in an interactive shell.
-- **A case-mismatched `warehouse` fails in a way that looks like a missing catalog.** Given
-  [the warehouse rule above](#the-warehouse-is-the-catalog-name-and-it-is-case-sensitive), a
-  catalog named `Analytics` addressed as `analytics` is the first thing to check when Open Catalog
-  behaves as though the catalog does not exist.
-- **A token request fails with no more detail than a status code.** `pkg/catalog/oauth2.go`
-  surfaces the token endpoint's status code and body verbatim in that case; check that against
-  Snowflake's own OAuth2 error responses, since none have been catalogued here.
-- **Whether an unknown warehouse or namespace returns a `404` or something else is not established
-  here.** Polaris itself answers a typo'd warehouse with `404 NotFoundException` (T58); whether
-  Snowflake's deployment matches has not been checked.
+  to build the client and names both the property and the missing variable, rather than falling
+  through to an unauthenticated request.
+- **A table creation on an external volume fails, or fails later when queried.** Run
+  `SELECT SYSTEM$VERIFY_EXTERNAL_VOLUME('<volume_name>')` before creating anything on the volume —
+  see [Worked example: a Snowflake Iceberg table on S3](#worked-example-a-snowflake-iceberg-table-on-s3).
+  A verification run immediately after creating the IAM role can still fail while the trust policy
+  propagates; wait a few seconds and retry before assuming the policy itself is wrong.
+- **`polytable inspect` looks in the wrong place for a table on an external volume.** The data
+  isn't at the plain `BASE_LOCATION` you gave `CREATE ICEBERG TABLE`; Snowflake appends a generated
+  suffix. Read the real path back with
+  `SELECT SYSTEM$GET_ICEBERG_TABLE_INFORMATION('<db>.<schema>.<table>')` rather than reconstructing
+  it.
+- **DuckDB's `iceberg_scan` refuses a Snowflake-written table with "no version-hint could be
+  found".** Expected — Snowflake never writes `metadata/version-hint.text`. Set
+  `unsafe_enable_version_guessing = true` in DuckDB. polytable needs no equivalent setting; see
+  [Two things Snowflake's Iceberg output does differently](#two-things-snowflakes-iceberg-output-does-differently).
+- **DuckDB's `CREATE SECRET` fails with "Invalid Access Key" against a temporary credential.** The
+  access key and secret are probably fine; the missing field is `SESSION_TOKEN`, required whenever
+  the access key starts with `ASIA` rather than `AKIA`.
 
 ## What's next
 
+- [External volumes put the data in your own bucket](#external-volumes-put-the-data-in-your-own-bucket)
+  above for the path that lets polytable read a Snowflake Iceberg table's data today, without T64.
 - [Sync to an Iceberg REST catalog](iceberg-rest-catalog.md) for the complete `auth` / `token` /
   `warehouse` / `header.<Name>` property reference shared by every REST catalog polytable talks to.
-- [Cloudflare R2 and R2 Data Catalog](cloudflare.md) for the closest existing page in structure and
-  in how little of the target service this repository has actually touched.
-- [Query a synced table](query-engines.md#snowflake) for reading a polytable-written Iceberg table
-  from Snowflake SQL — a different, unrelated path that does not go through Open Catalog.
+- [Cloudflare R2 and R2 Data Catalog](cloudflare.md) for the closest page to this one in shape.
+- [Query a synced table](query-engines.md#snowflake) for the reverse, unrelated path: reading a
+  polytable-written Iceberg table from Snowflake SQL through an external volume. That path writes
+  through this catalog's protocol at neither end, and it is Snowflake reading polytable's output
+  rather than the other way around.
 - [Features and limitations](features-and-limitations.md) for the honest, dated summary of what is
   and is not verified across the whole project.
-- `docs/improvement-plan.md`, task **T59**, for the acceptance criteria this page's untested claims
-  still need closed: a real Polaris container and a real Open Catalog account, not just `httptest`.
+- `docs/improvement-plan.md`, task **T64**, for consuming catalog-vended storage credentials — the
+  gap that currently blocks reading a Snowflake-managed table's data.

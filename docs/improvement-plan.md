@@ -1854,7 +1854,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T15 (via moto), T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T40, T45, T53, T54, T55, T56, T58, T59, T60, T62 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T15 (via moto), T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T40, T45, T53, T54, T55, T56, T58, T59, T60, T62, T66 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
@@ -3715,6 +3715,45 @@ version, rather than being read as v2; the version the target writes stays confi
 rather than spreading; and `SPEC.md` states which versions are supported for read and for write.
 
 **Commit:** `fix: refuse an Iceberg table whose format version exceeds what the reader implements`
+
+---
+
+## T66 — Delta output was unreadable by delta-kernel-rs when unpartitioned ✅ COMPLETED
+
+Found by converting a real Snowflake Iceberg table to Delta and reading the result with **DuckDB**,
+not by any test in this repository.
+
+polytable wrote `"partitionColumns": null` in the Delta `metaData` action for an unpartitioned
+table. Go marshals a nil slice as `null`, and the field was declared `var partitionColumns []string`
+and only ever appended to. The Delta protocol requires an array — empty when there are no partition
+columns — and **delta-kernel-rs enforces it**, refusing the entire log:
+
+```
+DeltaKernel ArrowError (2): Json error: whilst decoding field 'metaData':
+Encountered unmasked nulls in non-nullable StructArray child:
+Field { "partitionColumns": List(non-null Utf8, field: 'element') }
+```
+
+So every unpartitioned Delta table polytable produced was unreadable by DuckDB, and by anything else
+built on the kernel. polytable's own reader was untroubled, which is exactly why this survived.
+
+**Why no test caught it.** Every Delta fixture in this repository is partitioned. A partitioned table
+appends at least one column, so the slice is never nil, so the bug is invisible. The existing
+`TestDelta_MetadataCarriesKernelRequiredKeys` already used an *unpartitioned* table and already
+guarded two other kernel requirements — `"options":{}` and `"metadata":{}` — and simply did not
+assert this one. The lesson is not "add a fixture" but that a foreign reader found in one command
+what the suite could not.
+
+**Fixed** by initialising both slices with `make([]string, 0, ...)` — the snapshot path and the
+incremental path, which had the same declaration. Pinned by extending that existing test rather than
+adding a new one, and **verified by reverting**: the test fails without the fix and passes with it.
+
+**Verified end to end afterwards**: Snowflake wrote an Iceberg table to an external volume in the
+user's own S3 bucket; polytable converted it to Delta; DuckDB's `delta_scan` read the result and
+reported 6 rows, sum 212.0 and 4 distinct regions — identical to what Snowflake itself reports for
+the source table.
+
+**Commit:** `fix: write partitionColumns as an array, never null`
 
 ---
 

@@ -124,16 +124,19 @@ usual. Explicitly set dataset fields win over resolved ones.
   the whole account, not the one bucket; see
   [Cloudflare R2 and R2 Data Catalog](cloudflare.md) for the enablement steps
   and that account-scope warning in full.
-- Snowflake Open Catalog: this is Apache Polaris, at
-  `https://<open_catalog_account_identifier>.snowflakecomputing.com/polaris/api/catalog`,
-  with `properties.warehouse` set to the catalog name — case sensitive, and
-  unlike every other catalog above, not an account id or an ARN. Open Catalog
-  requires OAuth2 client-credentials, which `auth: oauth2` now provides
-  (`clientId` plus a `clientSecretEnv`-named variable, per T59), but that code
-  is verified only against `httptest` fakes — no request has reached a live
-  Polaris deployment or Snowflake itself; see
-  [Snowflake Open Catalog](snowflake.md) for the property reference, the
-  account setup, and what remains unverified.
+- Snowflake Horizon Catalog: this is Apache Polaris, at
+  `https://<org>-<account>.snowflakecomputing.com/polaris/api/catalog`, with
+  `properties.warehouse` set to the **database** name — not an account id, an
+  ARN, or a catalog name. It requires OAuth2 client-credentials (`auth:
+  oauth2`, a `clientSecretEnv`-named variable, `scope`, and **no** `clientId`)
+  and, before that, a network policy attached to the user or account. Verified
+  against a live account: token exchange, catalog listing, and table
+  resolution all work; reading a resolved table's data does not yet, because
+  polytable does not consume the storage credentials Snowflake vends (T64).
+  Open Catalog itself is closed to new customers, who are directed to Horizon
+  Catalog instead — see [Snowflake Horizon Catalog](snowflake.md) for the full
+  property reference, the network-policy prerequisite, and what still doesn't
+  work.
 
 These endpoint shapes come from the respective vendors' documentation; only the
 `tabulario/iceberg-rest` image is exercised by this repository's integration
