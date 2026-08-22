@@ -1778,7 +1778,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T53, T54, T55, T56 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T53, T54, T55, T56, T58 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
@@ -2999,6 +2999,60 @@ a Delta table without column mapping behaves exactly as it does today. The fixtu
 so this task starts by getting one — newer delta-rs, or Spark under T30.
 
 **Commit:** `fix: take Delta field identity from the column-mapping id`
+
+---
+
+## T58 — Iceberg REST conformance against real catalogs ✅ COMPLETED
+
+T53 made the client negotiate a prefix and tested it against an `httptest` fake and
+`tabulario/iceberg-rest`. Both return the shape T53 was written for. Running five real
+implementations found four defects that neither could show, and two of them break current,
+maintained catalogs outright.
+
+**1. The prefix can arrive under `defaults`, and we read only `overrides`.** Nessie 0.108 and
+Lakekeeper 0.13 both put it in `defaults.prefix` and send no `overrides.prefix` at all, so Go left
+it at the zero value and every path the client built afterwards was prefix-less. Curl-verified
+against both: prefix-less `POST /v1/namespaces` → `404`, prefixed → `200`. The specification's merge
+order is defaults, then client-supplied, then overrides; polytable supplies none of its own, so
+`mergeConfigPrefix` takes `overrides` when present and `defaults` otherwise. **This is the finding
+that justifies the exercise**: T53 closed the OneLake shape and left two other real catalogs broken.
+
+**2. The prefix must not be escaped.** Nessie serves it already percent-encoded
+(`main%7Cwarehouse`); OneLake serves `<workspace>/<item>` with a literal separator. Splitting on `/`
+and escaping each part is right for the second and turns the first's `%` into `%25`. `path()` now
+passes the prefix through verbatim — a catalog dictates it as a ready-to-use path component — while
+still escaping the namespace and table segments.
+
+**3. A `404` from `/v1/config` was latched as "this catalog predates the endpoint".** Polaris
+answers a *typo'd warehouse* with `404` even though the endpoint exists, so a misconfigured
+warehouse degraded silently to prefix-less requests forever. `fetchRESTConfig` now asks again
+without the warehouse: if the endpoint answers, the warehouse was the problem and the error says so.
+Lakekeeper's `400` when no warehouse is given counts as "the route exists", which is why the check
+tests for absence rather than success.
+
+**4. The read-only heuristic missed the one catalog it exists for.** Unity Catalog OSS is `GET`/`HEAD`
+only but advertises `POST /v1/{prefix}/namespaces/{ns}/tables/{table}/metrics`, which matched the
+write-route filter. polytable would have called it writable and failed a registration with a bare
+status instead of the read-only message. Routes ending in `/metrics` no longer count as writes.
+
+**Verified.** Four scenario groups in `pkg/catalog/rest_prefix_test.go`, each driving an `httptest`
+server shaped like the real catalog, and **each confirmed to go red when its fix is reverted** —
+checked by actually reverting each change and restoring it, which is the only way to know a
+regression test regresses. Wire-level assertions read `r.RequestURI` rather than `r.URL.Path`,
+because a parsed-and-re-encoded path cannot show a double-encoding bug. `make check` green,
+`go test -race ./pkg/catalog/` clean.
+
+**Not verified:** the `tabulario/iceberg-rest` container suite, which would prove the empty-prefix
+path did not regress. Docker Desktop was wedged on this machine when the work landed. The unit
+coverage includes a neither-present case that pins the same behavior, but the container run is still
+owed.
+
+**Correction to T53's record.** Its outcome says Nessie returns an empty prefix. That is true only of
+the stale `docker.io/projectnessie/nessie` image (0.76.6), which has no Iceberg REST module at all
+and 404s every Iceberg path. Nessie's releases moved to `ghcr.io/projectnessie/nessie`, and the
+current server returns a non-empty prefix under `defaults`.
+
+**Commit:** `fix: read the Iceberg REST prefix from defaults and stop escaping it`
 
 ---
 

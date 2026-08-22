@@ -29,8 +29,17 @@ import (
 )
 
 // restConfigResponse is the subset of the Iceberg REST GET /v1/config response this package reads.
-// The response also carries "defaults", which no call site needs yet.
+//
+// Both "defaults" and "overrides" can carry the prefix, and which one a catalog uses is not a
+// detail: reading only "overrides" leaves real, current catalogs unreachable. Nessie 0.108 and
+// Lakekeeper 0.13 both put it in "defaults" and send no "overrides.prefix" at all, so a client that
+// ignores "defaults" computes an empty prefix and every request it builds afterwards 404s. The
+// specification's merge order is defaults, then client-supplied, then overrides; polytable supplies
+// no prefix of its own, so overrides wins when present and defaults applies otherwise.
 type restConfigResponse struct {
+	Defaults struct {
+		Prefix string `json:"prefix"`
+	} `json:"defaults"`
 	Overrides struct {
 		Prefix string `json:"prefix"`
 	} `json:"overrides"`
@@ -44,8 +53,9 @@ type restConfigResponse struct {
 // IcebergRESTConversionSource (the read side) both need to address an Iceberg REST catalog: the
 // HTTP client and bearer token, the base URI, and the GET /v1/config prefix negotiation the
 // specification requires before either side can build a single working path. Before T53 both files
-// hardcoded a prefix-less /v1/namespaces/... form, which happened to work only because the
-// catalogs exercised so far (Nessie, tabulario/iceberg-rest) return an empty prefix.
+// hardcoded a prefix-less /v1/namespaces/... form, which happened to work only because the one
+// catalog exercised so far, tabulario/iceberg-rest, returns an empty prefix. Current Nessie does
+// not -- see T58.
 type restCatalogEndpoint struct {
 	httpClient *http.Client
 	baseURI    string
@@ -127,7 +137,20 @@ func fetchRESTConfig(ctx context.Context, httpClient *http.Client, baseURI, auth
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
-		// This catalog predates GET /v1/config: fall back to today's prefix-less behavior.
+		// A 404 is ambiguous, and resolving it wrong is the silent kind of wrong. It can mean the
+		// catalog predates GET /v1/config -- in which case falling back to a prefix-less path is
+		// right -- or that the endpoint exists and the warehouse is unknown, which is what Polaris
+		// answers to a typo'd warehouse. Latching the second case as success would leave every
+		// later request prefix-less and failing for a reason nothing reports.
+		//
+		// Asking again without the warehouse separates them: if the endpoint answers then, it
+		// exists and the warehouse was the problem.
+		if warehouse != "" {
+			if exists := configEndpointExists(ctx, httpClient, baseURI, authToken); exists {
+				return "", nil, fmt.Errorf("iceberg REST catalog has no warehouse %q: %s answered 404 for it but responds without one",
+					warehouse, endpointURL)
+			}
+		}
 		return "", nil, nil
 	}
 	if resp.StatusCode >= 400 {
@@ -139,23 +162,56 @@ func fetchRESTConfig(ctx context.Context, httpClient *http.Client, baseURI, auth
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return "", nil, fmt.Errorf("failed to decode Iceberg REST catalog config response: %w", err)
 	}
-	return parsed.Overrides.Prefix, parsed.Endpoints, nil
+	return mergeConfigPrefix(parsed), parsed.Endpoints, nil
 }
 
-// path builds a /v1/... URL under this endpoint's negotiated prefix, escaping every segment with
-// url.PathEscape -- the way GetSourceTable already did before T53, now applied uniformly to every
-// call site. A prefix that itself contains a "/" (OneLake's is "<workspace>/<item>") is split and
-// each part escaped individually rather than escaped as one opaque segment, so the "/" it contains
-// stays a path separator instead of becoming a literal "%2F".
+// configEndpointExists reports whether GET /v1/config answers at all when no warehouse is named. It
+// exists only to disambiguate a 404, so any transport error counts as "cannot tell" and the caller
+// keeps its fallback rather than inventing a failure.
+func configEndpointExists(ctx context.Context, httpClient *http.Client, baseURI, authToken string) bool {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURI+"/v1/config", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", "application/json")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// Anything other than "not there" proves the route exists. Lakekeeper answers 400 when no
+	// warehouse is given, which is exactly such a proof.
+	return resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed
+}
+
+// mergeConfigPrefix applies the specification's defaults-then-overrides precedence.
+func mergeConfigPrefix(parsed restConfigResponse) string {
+	if parsed.Overrides.Prefix != "" {
+		return parsed.Overrides.Prefix
+	}
+	return parsed.Defaults.Prefix
+}
+
+// path builds a /v1/... URL under this endpoint's negotiated prefix, escaping the namespace and
+// table segments with url.PathEscape -- the way GetSourceTable already did before T53, now applied
+// uniformly to every call site.
+//
+// The prefix is deliberately NOT escaped. A catalog dictates it as a ready-to-use path component,
+// and the two shapes in the wild disagree about encoding: OneLake sends "<workspace>/<item>" with a
+// literal separator, while Nessie sends it already percent-encoded ("main%7Cwarehouse"). Escaping
+// would turn Nessie's "%" into "%25" and break it; splitting on "/" and escaping each part happens
+// to work for OneLake but not for Nessie. Passing it through verbatim is correct for both, and is
+// what treating it as opaque means.
 func (e *restCatalogEndpoint) path(segments ...string) string {
 	var b strings.Builder
 	b.WriteString(e.baseURI)
 	b.WriteString("/v1")
-	if e.prefix != "" {
-		for _, part := range strings.Split(e.prefix, "/") {
-			b.WriteByte('/')
-			b.WriteString(url.PathEscape(part))
-		}
+	if p := strings.Trim(e.prefix, "/"); p != "" {
+		b.WriteByte('/')
+		b.WriteString(p)
 	}
 	for _, seg := range segments {
 		b.WriteByte('/')
@@ -193,6 +249,14 @@ func (e *restCatalogEndpoint) writeEndpointAdvertised() (known, advertised bool)
 			continue
 		}
 		if !strings.Contains(path, "/tables") && !strings.Contains(path, "/namespaces") {
+			continue
+		}
+		// Not every write-shaped route on a table is a write to the table. Unity Catalog is
+		// read-only and still advertises POST .../tables/{table}/metrics, so counting that as
+		// proof of write support would classify the one catalog this check exists for as
+		// writable, and a registration against it would fail with a bare status instead of the
+		// message that says why.
+		if strings.HasSuffix(path, "/metrics") {
 			continue
 		}
 		switch strings.ToUpper(method) {
