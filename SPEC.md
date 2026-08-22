@@ -37,7 +37,7 @@ parity target but is **not implemented**; `CatalogTypeHMS` exists as a constant 
 1. **Zero JVM / Hadoop Dependency**: Operates as a single, self-contained static binary with no Java, Scala, Spark, or Hadoop XML configuration requirements. The CLI measures 13.9 MiB stripped; see section 9.2.
 2. **Ultra-Low Latency & Fast Cold Starts**: 6.6 ms measured start-to-exit and 15.9 MiB idle RSS, enabling serverless execution (AWS Lambda, Google Cloud Run), Kubernetes sidecars, and edge deployments. Earlier revisions claimed "<5ms" and "~5MB" here; neither was measured, and section 9.2 supersedes both.
 3. **Cross-Language Embeddability**: Compilable into C-shared dynamic/static libraries (`.so`, `.dylib`, `.dll`, `.a`) for direct native embedding in Rust (DataFusion), C++ (DuckDB, Velox), Python (Polars/PyArrow), and Node.js.
-4. **Native Cloud I/O**: Direct integration with modern cloud SDKs (`aws-sdk-go-v2`, `cloud.google.com/go/storage`, `azblob`) utilizing cloud-native credential providers (IAM Roles, IRSA, Workload Identity).
+4. **Native Cloud I/O**: Direct integration with modern cloud SDKs (`aws-sdk-go-v2`, `google.golang.org/api/storage/v1`, `azblob`) utilizing cloud-native credential providers (IAM Roles, IRSA, Workload Identity).
 
 ---
 

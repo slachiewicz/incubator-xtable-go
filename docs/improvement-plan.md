@@ -3312,7 +3312,9 @@ read `gs://bucket/table` as a relative directory and create a literal `gs:` dire
 
 **Two distinct pieces, and they are worth separating.**
 
-1. **The storage backend.** `cloud.google.com/go/storage`, shaped like `pkg/io/azure.go`: an
+1. **The storage backend.** ✅ **Done**, on `google.golang.org/api/storage/v1` rather than the
+   client named below -- see the outcome at the end of this task. The original plan read:
+   `cloud.google.com/go/storage`, shaped like `pkg/io/azure.go`: an
    `Options` field alongside `S3` and `Azure`, credentials from the environment and the Application
    Default Credentials chain rather than config fields, and the same `//go:build !js` split with a
    stub returning an `ErrGCSUnsupported`. Measure the binary cost the way T51 did — Azure added
@@ -3331,6 +3333,29 @@ Closing it makes the three-cloud story complete.
 T51's Azure lane is; `GOOS=js GOARCH=wasm go list -deps ./cmd/polytable-wasm` still reports zero
 cloud SDK packages; the binary-size delta is recorded; and the BigLake half either works or is
 explicitly deferred to T59 with the reason.
+
+**Outcome (storage half).** Implemented, but not on the client this task first named. The obvious
+choice, `cloud.google.com/go/storage`, cost **+20.16 MiB** on `cmd/polytable` (36.37 → 56.52 MiB,
+`-ldflags="-s -w"`) — against Azure's +3.4 MiB, and a 55% increase in a binary whose size is a
+stated differentiator. It links gRPC, OpenTelemetry, `genproto` and `s2a-go` unconditionally even
+though only the JSON/HTTP transport is ever used.
+
+Rebuilt on `google.golang.org/api/storage/v1`, the generated JSON client: **+4.80 MiB** (41.17 MiB),
+a **15.35 MiB saving, 76% less**. Dependency count fell from 839 to 613 packages.
+
+One thing worth knowing before someone tries to shave it further: gRPC and friends are **still in
+`go.mod`**, because `google.golang.org/api/internal` imports them, and `go list -deps` still counts
+114 such packages. The size went down anyway because nothing on the used code path calls into
+gRPC's transport, so the linker strips it. **Pruning those indirect requirements will not buy
+anything** — the residual 4.8 MiB is the REST API surface and the ADC/oauth2 stack.
+
+`NewGCSStorageWithClient` changed shape with the client; its only caller was a test.
+
+**Verified against real GCS**, not only a fake: with ADC from `gcloud auth application-default
+login`, a write to a scratch prefix, `Exists`, a byte-identical read back, a `List` returning the
+right size and path, a delete, and `Exists` false afterwards. No committed test depends on live GCS.
+
+**Still open:** the BigLake catalog half, which needs OAuth2 (T59) and is not started.
 
 **Commit:** `feat: add a Google Cloud Storage backend`
 

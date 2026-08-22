@@ -42,7 +42,6 @@ func TestNewStorageForPath_SchemeRouting(t *testing.T) {
 		{name: "file scheme", path: "file:///tmp/table", want: &io.LocalStorage{}},
 		{name: "plain absolute path", path: "/tmp/table", want: &io.LocalStorage{}},
 		{name: "plain relative path", path: "data/table", want: &io.LocalStorage{}},
-		{name: "gcs is not misrouted to local", path: "gs://bucket/table", wantErr: `"gs://"`},
 		{name: "hdfs", path: "hdfs://namenode/table", wantErr: `"hdfs://"`},
 		{name: "https", path: "https://example.com/table", wantErr: `"https://"`},
 	}
@@ -92,6 +91,23 @@ func TestNewStorageForPath_AzureRouting(t *testing.T) {
 			require.NoError(t, storage.Close())
 		})
 	}
+}
+
+// TestNewStorageForPath_GCSRouting is separate from the table above for the same reason
+// TestNewStorageForPath_AzureRouting is: the default credential mode is the Application Default
+// Credentials chain, which depends on ambient machine state, and a routing test must not.
+//
+// Until this backend landed, gs:// was refused by NewStorageForPathWithOptions, and this file
+// pinned the refusal. The pin is inverted rather than deleted, the way the abfss:// one was when
+// Azure landed: it now proves gs:// reaches the GCS backend.
+func TestNewStorageForPath_GCSRouting(t *testing.T) {
+	t.Parallel()
+
+	storage, err := io.NewStorageForPathWithOptions(context.Background(), "gs://bucket/table",
+		func(o *io.Options) { o.GCS.AnonymousAccess = true })
+	require.NoError(t, err)
+	assert.IsType(t, &io.GCSStorage{}, storage)
+	require.NoError(t, storage.Close())
 }
 
 func TestParseAzureURI(t *testing.T) {

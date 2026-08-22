@@ -39,6 +39,8 @@ type StorageConfig struct {
 	UsePathStyle bool `json:"usePathStyle,omitempty" yaml:"usePathStyle,omitempty"`
 	// Azure carries Azure Data Lake Storage and OneLake overrides.
 	Azure *AzureStorageConfig `json:"azure,omitempty" yaml:"azure,omitempty"`
+	// GCS carries Google Cloud Storage overrides.
+	GCS *GCSStorageConfig `json:"gcs,omitempty" yaml:"gcs,omitempty"`
 }
 
 // AzureStorageConfig carries Azure Data Lake Storage and OneLake overrides.
@@ -67,6 +69,23 @@ type AzureStorageConfig struct {
 	SASTokenEnv string `json:"sasTokenEnv,omitempty" yaml:"sasTokenEnv,omitempty"`
 	// Anonymous selects unauthenticated access, for a public container.
 	Anonymous bool `json:"anonymous,omitempty" yaml:"anonymous,omitempty"`
+}
+
+// GCSStorageConfig carries Google Cloud Storage overrides.
+//
+// It holds no credentials on purpose, matching Azure and S3: secrets reach the process through
+// the Application Default Credentials chain (GOOGLE_APPLICATION_CREDENTIALS, gcloud user
+// credentials, or GCE/GKE workload identity), never through a configuration file that gets
+// committed, logged or POSTed to the REST service. CredentialsFile names a service-account JSON
+// file's path, never the JSON itself.
+type GCSStorageConfig struct {
+	// Endpoint overrides the storage service URL. Required for a fake or emulator, e.g.
+	// fake-gcs-server.
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	// AnonymousAccess selects unauthenticated access, for a public bucket.
+	AnonymousAccess bool `json:"anonymousAccess,omitempty" yaml:"anonymousAccess,omitempty"`
+	// CredentialsFile names a service-account JSON file's path, never its contents.
+	CredentialsFile string `json:"credentialsFile,omitempty" yaml:"credentialsFile,omitempty"`
 }
 
 // DatasetConfig defines the synchronization configuration for a single table dataset.
@@ -186,38 +205,56 @@ func (c *StorageConfig) ToOptionFuncs() []func(*io.Options) {
 		})
 	}
 
-	if c.Azure == nil {
-		return optFns
+	if c.Azure != nil {
+		if c.Azure.Endpoint != "" {
+			optFns = append(optFns, func(opts *io.Options) {
+				opts.Azure.Endpoint = c.Azure.Endpoint
+			})
+		}
+
+		if c.Azure.AccountName != "" {
+			optFns = append(optFns, func(opts *io.Options) {
+				opts.Azure.AccountName = c.Azure.AccountName
+			})
+		}
+
+		if c.Azure.AccountKeyEnv != "" {
+			optFns = append(optFns, func(opts *io.Options) {
+				opts.Azure.AccountKeyEnv = c.Azure.AccountKeyEnv
+			})
+		}
+
+		if c.Azure.SASTokenEnv != "" {
+			optFns = append(optFns, func(opts *io.Options) {
+				opts.Azure.SASTokenEnv = c.Azure.SASTokenEnv
+			})
+		}
+
+		if c.Azure.Anonymous {
+			optFns = append(optFns, func(opts *io.Options) {
+				opts.Azure.Anonymous = true
+			})
+		}
 	}
 
-	if c.Azure.Endpoint != "" {
-		optFns = append(optFns, func(opts *io.Options) {
-			opts.Azure.Endpoint = c.Azure.Endpoint
-		})
-	}
+	if c.GCS != nil {
+		if c.GCS.Endpoint != "" {
+			optFns = append(optFns, func(opts *io.Options) {
+				opts.GCS.Endpoint = c.GCS.Endpoint
+			})
+		}
 
-	if c.Azure.AccountName != "" {
-		optFns = append(optFns, func(opts *io.Options) {
-			opts.Azure.AccountName = c.Azure.AccountName
-		})
-	}
+		if c.GCS.AnonymousAccess {
+			optFns = append(optFns, func(opts *io.Options) {
+				opts.GCS.AnonymousAccess = true
+			})
+		}
 
-	if c.Azure.AccountKeyEnv != "" {
-		optFns = append(optFns, func(opts *io.Options) {
-			opts.Azure.AccountKeyEnv = c.Azure.AccountKeyEnv
-		})
-	}
-
-	if c.Azure.SASTokenEnv != "" {
-		optFns = append(optFns, func(opts *io.Options) {
-			opts.Azure.SASTokenEnv = c.Azure.SASTokenEnv
-		})
-	}
-
-	if c.Azure.Anonymous {
-		optFns = append(optFns, func(opts *io.Options) {
-			opts.Azure.Anonymous = true
-		})
+		if c.GCS.CredentialsFile != "" {
+			optFns = append(optFns, func(opts *io.Options) {
+				opts.GCS.CredentialsFile = c.GCS.CredentialsFile
+			})
+		}
 	}
 
 	return optFns

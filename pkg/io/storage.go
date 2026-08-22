@@ -37,9 +37,7 @@ var (
 )
 
 // uriSchemes are the URI prefixes the path helpers (JoinPath, TrimScheme, RelativizePath)
-// recognize. It is deliberately broader than the schemes NewStorageForPathWithOptions can back
-// with a client: gs:// parses, because foreign metadata may carry such paths, but has no storage
-// backend here and is rejected at storage selection.
+// recognize.
 //
 // The Azure schemes have to be here whether or not a backend exists, and that is the load-bearing
 // part: RelativizePath treats a path carrying no recognized scheme as already relative, so an
@@ -70,7 +68,8 @@ type FileInfo struct {
 	IsDir   bool      `json:"isDir"`
 }
 
-// Storage defines the unified storage interface across Local FS, Amazon S3, Azure Data Lake Storage and Memory.
+// Storage defines the unified storage interface across Local FS, Amazon S3, Azure Data Lake
+// Storage, Google Cloud Storage and Memory.
 type Storage interface {
 	// Read reads the entire content of the file at the specified path.
 	Read(ctx context.Context, path string) ([]byte, error)
@@ -190,6 +189,8 @@ type Options struct {
 	S3 S3Options
 	// Azure configures the Azure Data Lake Storage and OneLake backend.
 	Azure AzureOptions
+	// GCS configures the Google Cloud Storage backend.
+	GCS GCSOptions
 }
 
 // NewStorageForPathWithOptions automatically resolves and instantiates Storage with optional
@@ -206,14 +207,17 @@ func NewStorageForPathWithOptions(ctx context.Context, path string, optFns ...fu
 	if IsAzurePath(path) {
 		return NewAzureStorage(ctx, path, func(o *AzureOptions) { *o = opts.Azure })
 	}
+	if strings.HasPrefix(path, "gs://") {
+		return NewGCSStorage(ctx, func(o *GCSOptions) { *o = opts.GCS })
+	}
 	if strings.HasPrefix(path, "mem://") {
 		return NewMemoryStorage(), nil
 	}
-	// Any other URI scheme must fail here rather than fall through: local storage would treat
-	// "gs://bucket/table" as a relative directory and create a literal "gs:" directory on the
-	// first write.
+	// Any other URI scheme must fail here rather than fall through: an unbacked scheme such as
+	// "hdfs://namenode/table" would otherwise be treated by local storage as a relative
+	// directory and create a literal "hdfs:" directory on the first write.
 	if scheme, _, found := strings.Cut(path, "://"); found && scheme != "file" {
-		return nil, fmt.Errorf("%w: no storage backend for scheme %q (supported: s3://, s3a://, abfss://, abfs://, wasbs://, wasb://, mem://, file://, or a plain local path)",
+		return nil, fmt.Errorf("%w: no storage backend for scheme %q (supported: s3://, s3a://, abfss://, abfs://, wasbs://, wasb://, gs://, mem://, file://, or a plain local path)",
 			ErrInvalidPath, scheme+"://")
 	}
 	return NewLocalStorage(), nil

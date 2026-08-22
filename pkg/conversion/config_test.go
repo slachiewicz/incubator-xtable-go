@@ -342,6 +342,138 @@ func TestStorageConfig_ToOptionFuncs_AzureZeroFields(t *testing.T) {
 	assert.False(t, opts.Azure.Anonymous)
 }
 
+func TestStorageConfig_ToOptionFuncs_GCSEndpointOnly(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		GCS: &conversion.GCSStorageConfig{
+			Endpoint: "http://127.0.0.1:4443/storage/v1/",
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 1, "GCS endpoint-only config should produce one option function")
+
+	opts := &io.Options{}
+	optFns[0](opts)
+
+	assert.Equal(t, "http://127.0.0.1:4443/storage/v1/", opts.GCS.Endpoint)
+	assert.False(t, opts.GCS.AnonymousAccess)
+	assert.Empty(t, opts.GCS.CredentialsFile)
+}
+
+func TestStorageConfig_ToOptionFuncs_GCSAnonymousAccessOnly(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		GCS: &conversion.GCSStorageConfig{
+			AnonymousAccess: true,
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 1, "GCS anonymous-access-only config should produce one option function")
+
+	opts := &io.Options{}
+	optFns[0](opts)
+
+	assert.Empty(t, opts.GCS.Endpoint)
+	assert.True(t, opts.GCS.AnonymousAccess)
+	assert.Empty(t, opts.GCS.CredentialsFile)
+}
+
+func TestStorageConfig_ToOptionFuncs_GCSCredentialsFileOnly(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		GCS: &conversion.GCSStorageConfig{ //nolint:gosec // CredentialsFile names a service-account JSON path, holds no secret
+			CredentialsFile: "/etc/polytable/gcs-service-account.json",
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 1, "GCS credentials-file-only config should produce one option function")
+
+	opts := &io.Options{}
+	optFns[0](opts)
+
+	assert.Empty(t, opts.GCS.Endpoint)
+	assert.False(t, opts.GCS.AnonymousAccess)
+	assert.Equal(t, "/etc/polytable/gcs-service-account.json", opts.GCS.CredentialsFile)
+}
+
+func TestStorageConfig_ToOptionFuncs_GCSZeroFields(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Region: "us-east-1",
+		GCS:    &conversion.GCSStorageConfig{
+			// All fields are zero-valued
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	// Only the Region field should contribute one function; zero-valued GCS fields should not.
+	require.Len(t, optFns, 1, "GCS block with all zero fields should not contribute any functions")
+
+	opts := &io.Options{}
+	for _, fn := range optFns {
+		fn(opts)
+	}
+
+	assert.Equal(t, "us-east-1", opts.S3.Region)
+	assert.Empty(t, opts.GCS.Endpoint)
+	assert.False(t, opts.GCS.AnonymousAccess)
+	assert.Empty(t, opts.GCS.CredentialsFile)
+}
+
+func TestStorageConfig_ToOptionFuncs_AllFieldsS3AzureAndGCS(t *testing.T) {
+	t.Parallel()
+
+	config := &conversion.StorageConfig{
+		Region:       "us-west-2",
+		Endpoint:     "https://minio.example.com",
+		UsePathStyle: true,
+		Azure: &conversion.AzureStorageConfig{ //nolint:gosec // AccountKeyEnv/SASTokenEnv name env vars, hold no secret
+			Endpoint:      "https://myaccount.blob.core.windows.net",
+			AccountName:   "myaccount",
+			AccountKeyEnv: "ACCT1_STORAGE_KEY",
+			SASTokenEnv:   "ACCT1_SAS_TOKEN",
+			Anonymous:     true,
+		},
+		GCS: &conversion.GCSStorageConfig{ //nolint:gosec // CredentialsFile names a service-account JSON path, holds no secret
+			Endpoint:        "http://127.0.0.1:4443/storage/v1/",
+			AnonymousAccess: true,
+			CredentialsFile: "/etc/polytable/gcs-service-account.json",
+		},
+	}
+
+	optFns := config.ToOptionFuncs()
+
+	require.Len(t, optFns, 11, "fully populated config should produce eleven option functions")
+
+	opts := &io.Options{}
+	for _, fn := range optFns {
+		fn(opts)
+	}
+
+	assert.Equal(t, "us-west-2", opts.S3.Region)
+	assert.Equal(t, "https://minio.example.com", opts.S3.Endpoint)
+	assert.True(t, opts.S3.UsePathStyle)
+	assert.Equal(t, "https://myaccount.blob.core.windows.net", opts.Azure.Endpoint)
+	assert.Equal(t, "myaccount", opts.Azure.AccountName)
+	assert.Equal(t, "ACCT1_STORAGE_KEY", opts.Azure.AccountKeyEnv)
+	assert.Equal(t, "ACCT1_SAS_TOKEN", opts.Azure.SASTokenEnv)
+	assert.True(t, opts.Azure.Anonymous)
+	assert.Equal(t, "http://127.0.0.1:4443/storage/v1/", opts.GCS.Endpoint)
+	assert.True(t, opts.GCS.AnonymousAccess)
+	assert.Equal(t, "/etc/polytable/gcs-service-account.json", opts.GCS.CredentialsFile)
+}
+
 // fakeConversionSource returns a canned catalog lookup. For discovery it also serves a canned table
 // listing: listed names, optionally cut short by listErr, resolved against tables by name and
 // falling back to the single table field when tables is nil.
