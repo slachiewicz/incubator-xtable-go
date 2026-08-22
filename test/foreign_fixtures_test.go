@@ -79,6 +79,7 @@ type fixtureBounds struct {
 type fixtureManifest struct {
 	ManifestEncoding  string                   `json:"manifest_encoding"`
 	CurrentSnapshotID string                   `json:"current_snapshot_id"`
+	LatestCommitID    string                   `json:"latest_commit_id"`
 	Format            string                   `json:"format"`
 	TableName         string                   `json:"table_name"`
 	TableDir          string                   `json:"table_dir"`

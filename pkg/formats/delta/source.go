@@ -85,6 +85,61 @@ func (s *Source) listCommitFiles(ctx context.Context) ([]int64, error) {
 	return versions, nil
 }
 
+// logState pairs the surviving JSON commit versions with the checkpoint state that precedes them.
+// versions holds only versions strictly after the checkpoint: everything at or before it is already
+// reconciled into the checkpoint state, and replaying the checkpoint version's own JSON file (which
+// log cleanup often leaves behind) would double-apply its actions.
+type logState struct {
+	checkpoint *checkpointState
+	versions   []int64
+}
+
+// latestVersion returns the newest version the log can reconstruct, from the JSON tail or, for a
+// fully cleaned log, the checkpoint itself. ok is false for an empty log.
+func (st *logState) latestVersion() (version int64, ok bool) {
+	if n := len(st.versions); n > 0 {
+		return st.versions[n-1], true
+	}
+	if st.checkpoint != nil {
+		return st.checkpoint.Version, true
+	}
+	return 0, false
+}
+
+// loadLogState lists the log and loads the checkpoint the reader must start from. A log whose
+// earliest JSON commit is not version 0 and that has no checkpoint is truncated — its head state is
+// unrecoverable — and fails here rather than letting a replay silently build a partial snapshot.
+func (s *Source) loadLogState(ctx context.Context) (*logState, error) {
+	versions, err := s.listCommitFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	last, err := s.readLastCheckpoint(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	state := &logState{}
+	if last == nil {
+		if len(versions) > 0 && versions[0] > 0 {
+			return nil, fmt.Errorf("delta log at %s is truncated: earliest commit is version %d and no checkpoint exists",
+				s.basePath, versions[0])
+		}
+		state.versions = versions
+		return state, nil
+	}
+
+	if state.checkpoint, err = s.readCheckpoint(ctx, last); err != nil {
+		return nil, err
+	}
+	for _, v := range versions {
+		if v > state.checkpoint.Version {
+			state.versions = append(state.versions, v)
+		}
+	}
+	return state, nil
+}
+
 // readCommit reads and parses actions from a specific commit version file.
 func (s *Source) readCommit(ctx context.Context, version int64) (*DeltaCommit, error) {
 	fileName := fmt.Sprintf("%020d.json", version)
@@ -146,15 +201,15 @@ func advanceCommitTime(previous, raw int64) int64 {
 
 // GetCurrentTable returns the latest table state.
 func (s *Source) GetCurrentTable(ctx context.Context) (*model.Table, error) {
-	versions, err := s.listCommitFiles(ctx)
+	state, err := s.loadLogState(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(versions) == 0 {
+	latestVer, ok := state.latestVersion()
+	if !ok {
 		return nil, fmt.Errorf("no delta log commits found in %s", s.basePath)
 	}
-	latestVer := versions[len(versions)-1]
-	return s.GetTable(ctx, strconv.FormatInt(latestVer, 10))
+	return s.tableAt(ctx, state, latestVer)
 }
 
 // GetTable returns table metadata reconstructed up to the specified commit version.
@@ -163,16 +218,29 @@ func (s *Source) GetTable(ctx context.Context, commitID string) (*model.Table, e
 	if err != nil {
 		return nil, fmt.Errorf("invalid delta commit version %s: %w", commitID, err)
 	}
-
-	versions, err := s.listCommitFiles(ctx)
+	state, err := s.loadLogState(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return s.tableAt(ctx, state, targetVer)
+}
 
+// tableAt reconstructs the table as of targetVer: the checkpoint's metaData first, then any newer
+// metaData action in the JSON tail up to targetVer. The commit-time chain starts at the first
+// surviving JSON commit — a checkpoint carries no timestamps.
+func (s *Source) tableAt(ctx context.Context, state *logState, targetVer int64) (*model.Table, error) {
 	var latestMeta *MetadataAction
 	var latestCommitTime int64
 
-	for _, v := range versions {
+	if cp := state.checkpoint; cp != nil {
+		if targetVer < cp.Version {
+			return nil, fmt.Errorf("delta version %d predates the checkpoint at version %d and its history has been cleaned up",
+				targetVer, cp.Version)
+		}
+		latestMeta = cp.Meta
+	}
+
+	for _, v := range state.versions {
 		if v > targetVer {
 			break
 		}
@@ -237,23 +305,29 @@ func tableAsOf(table *model.Table, commitTime int64) *model.Table {
 
 // GetCurrentSnapshot constructs the full active data file snapshot at the latest commit.
 func (s *Source) GetCurrentSnapshot(ctx context.Context) (*model.Snapshot, error) {
-	versions, err := s.listCommitFiles(ctx)
+	state, err := s.loadLogState(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(versions) == 0 {
+	latestVer, ok := state.latestVersion()
+	if !ok {
 		return nil, fmt.Errorf("no delta commits found in %s", s.basePath)
 	}
 
-	latestVer := versions[len(versions)-1]
-	table, err := s.GetTable(ctx, strconv.FormatInt(latestVer, 10))
+	table, err := s.tableAt(ctx, state, latestVer)
 	if err != nil {
 		return nil, err
 	}
 
 	activeFiles := make(map[string]*model.DataFile)
 
-	for _, v := range versions {
+	if cp := state.checkpoint; cp != nil {
+		for _, add := range cp.Adds {
+			activeFiles[add.Path] = s.convertAddAction(add, table)
+		}
+	}
+
+	for _, v := range state.versions {
 		commit, err := s.readCommit(ctx, v)
 		if err != nil {
 			return nil, err
@@ -336,11 +410,11 @@ func (s *Source) changeFromCommit(commit *DeltaCommit, table *model.Table) *mode
 // convert it — with a full log-prefix walk per commit to rebuild the table — made the cost quadratic
 // in the backlog length. Upstream #861 made the same change in Java.
 func (s *Source) GetChangesSince(ctx context.Context, fromInstant int64) (*model.IncrementalTableChanges, error) {
-	versions, err := s.listCommitFiles(ctx)
+	state, err := s.loadLogState(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(versions) == 0 {
+	if _, ok := state.latestVersion(); !ok {
 		return nil, fmt.Errorf("no delta log commits found in %s", s.basePath)
 	}
 
@@ -349,7 +423,14 @@ func (s *Source) GetChangesSince(ctx context.Context, fromInstant int64) (*model
 		table      *model.Table
 		commitTime int64
 	)
-	for _, v := range versions {
+	// Commits reconciled into a checkpoint cannot be replayed as changes; the checkpoint's metaData
+	// seeds the schema so the tail parses even when no surviving commit carries one.
+	if cp := state.checkpoint; cp != nil {
+		if table, err = s.tableFromMetadata(cp.Meta, 0); err != nil {
+			return nil, err
+		}
+	}
+	for _, v := range state.versions {
 		commit, err := s.readCommit(ctx, v)
 		if err != nil {
 			return nil, err
@@ -376,7 +457,8 @@ func (s *Source) GetChangesSince(ctx context.Context, fromInstant int64) (*model
 	}
 
 	if table == nil {
-		return nil, fmt.Errorf("no metadata action found in delta log up to version %d", versions[len(versions)-1])
+		latest, _ := state.latestVersion()
+		return nil, fmt.Errorf("no metadata action found in delta log up to version %d", latest)
 	}
 
 	return &model.IncrementalTableChanges{

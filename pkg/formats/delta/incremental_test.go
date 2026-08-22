@@ -320,9 +320,10 @@ func TestSource_GetChangesSince_BacklogReadsEachCommitOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, changes.TableChanges, backlogSize)
 
-	// One read per commit file, and nothing else. Before T21 the same fixture cost 5350 reads:
-	// every commit was read twice and the table rebuilt from the whole log prefix for each one.
-	assert.Equal(t, backlogSize, storage.readCount(), "object reads for a %d-commit backlog", backlogSize)
+	// One read per commit file plus the single _last_checkpoint probe, and nothing else. Before
+	// T21 the same fixture cost 5350 reads: every commit was read twice and the table rebuilt from
+	// the whole log prefix for each one.
+	assert.Equal(t, backlogSize+1, storage.readCount(), "object reads for a %d-commit backlog", backlogSize)
 
 	for version, change := range changes.TableChanges {
 		assert.Equal(t, strconv.Itoa(version), change.SourceIdentifier)

@@ -1459,6 +1459,15 @@ Follow-ups noted, not scheduled: a bindings smoke lane (the C ABI and wheel are 
 executed in CI; one `polytable.sync()` via ctypes and a node run of `polytable.wasm`), and
 LocalStack-Glue for catalog sync integration.
 
+**Coverage bar (ground rule, 2026-08-22):** upstream's `ITConversionController` (in
+`xtable-core`) is the benchmark for cross-engine testing — write through a real engine, sync,
+read source and every target back through a real engine, compare full datasets. Its scenario
+list (upserts and deletes, compaction, concurrent writes, time travel, partition specs, sync
+modes, out-of-sync incremental, corrupted-snapshot recovery, Delta column mapping, metadata
+retention) is what this suite must match or exceed, not just the happy-path insert. T28/T29
+cover the read/write halves with delta-rs, pyiceberg and DuckDB; the scenario dimension is
+still mostly open.
+
 ## T31 — Iceberg manifests must be Avro, not JSON ✅
 
 **The largest interop defect in the port**, found 2026-08-21 while planning engine verification.
@@ -1774,6 +1783,47 @@ T16 and T17 are independent of each other — do them in either order, or in par
 
 Do **not** batch T1 with anything. It touches six files across four entrypoints and needs to be
 revertable on its own.
+
+## T36 — Delta source: read Parquet checkpoints ✅
+
+Found auditing against upstream #902's engine baseline. The Delta source replayed JSON commits
+only: a table whose pre-checkpoint commits were expired by log retention (the default within 30
+days of the first checkpoint) had no readable `metaData` and failed outright — and a truncated log
+without a checkpoint would silently build a partial snapshot from the surviving tail.
+
+Landed: `pkg/formats/delta/checkpoint.go` reads `_last_checkpoint` and the classic single- or
+multi-part checkpoint Parquet (parquet-go), and `loadLogState` seeds every read path (table,
+snapshot, incremental) from checkpoint state plus the JSON tail strictly after it. A truncated log
+with no checkpoint is now a hard error. v2 checkpoints (sidecars, `v2Checkpoint` reader feature)
+are rejected with a clear message — implementing them is a follow-up, and matters more as Delta
+4.0 makes them the default.
+
+**Verified:** `test/testdata/fixtures/delta-rs-checkpoint/` is written by delta-rs, whose
+`cleanup_metadata()` really deleted the version 0–1 commits (generator asserts it);
+`test/delta_checkpoint_fixture_test.go` covers snapshot-from-checkpoint, incremental-safety
+refusal across the cleaned history, the truncated-log error, and a full conversion to Iceberg.
+`pkg/formats/delta/checkpoint_test.go` pins the v2 rejection and the multi-part merge.
+
+## T37 — Hudi 1.x: confirm and close the timeline-layout gap
+
+Upstream builds against Hudi 1.2 (#902); polytable's target stamps `hoodie.table.version=6`
+(0.14-era) and `timeline.go` parses 0.x instants. **Confirmed with a real fixture** —
+`test/testdata/fixtures/hudi-1.x/trips`, written by Hudi 1.2.0 through Spark 3.5
+(`hoodie.table.version=9`, timeline under `.hoodie/timeline/`): the failure mode was worse than
+unreadable. The reader returned an **empty table silently** — zero files, empty schema, exit 0 —
+so a sync would have succeeded with empty target metadata. Landed as the first step: a version
+guard (`TableProperties.AssertReadableVersion`, floor `hoodie.table.version=6`) makes every read
+path refuse loudly, and the Hudi target no longer swallows ReadProperties errors — an unreadable
+properties file stops the sync instead of being overwritten as if the target were fresh.
+`test/hudi_1x_fixture_test.go` pins the refusal and flips red when someone implements 1.x reading
+— replace it with manifest assertions then. Remaining: implement the 1.x timeline
+(completion-time instant names, `.hoodie/timeline/` plus `history/`, the metadata-table
+directory needs excluding from file listing) or keep the documented 0.x floor. Writing version 6
+remains correct — 1.x readers consume it — so the write side is not part of the gap.
+
+Related upstream context noted while here: #810 asks for a OneLake/Fabric catalog client. Its
+read API is Iceberg-REST-compatible, so `pkg/catalog/rest.go` is the eventual entry point, but
+any OneLake work is blocked on an Azure/`abfss://` storage backend either way (see Non-goals).
 
 ## Non-goals
 

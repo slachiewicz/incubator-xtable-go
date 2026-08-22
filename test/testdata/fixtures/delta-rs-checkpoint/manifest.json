@@ -1,0 +1,88 @@
+{
+  "checkpoint_version": 2,
+  "commit_count": 4,
+  "data_file_count": 6,
+  "data_files": [
+    {
+      "partition_values": {
+        "region": "east"
+      },
+      "path": "region=east/part-00000-b339a9f1-b608-41ec-82a3-928c80ee4e07-c000.snappy.parquet",
+      "record_count": 1,
+      "size_bytes": 794
+    },
+    {
+      "partition_values": {
+        "region": "east"
+      },
+      "path": "region=east/part-00000-e08d28fe-f013-488e-92fc-be420cb51d43-c000.snappy.parquet",
+      "record_count": 1,
+      "size_bytes": 794
+    },
+    {
+      "partition_values": {
+        "region": "north"
+      },
+      "path": "region=north/part-00000-c6b8ad4d-9f8e-4cf3-a7cc-2ca943f537a4-c000.snappy.parquet",
+      "record_count": 1,
+      "size_bytes": 794
+    },
+    {
+      "partition_values": {
+        "region": "south"
+      },
+      "path": "region=south/part-00000-9f865bcf-050e-4f64-8bb6-a195d87e4688-c000.snappy.parquet",
+      "record_count": 1,
+      "size_bytes": 794
+    },
+    {
+      "partition_values": {
+        "region": "west"
+      },
+      "path": "region=west/part-00000-a764e9f1-bbf2-4c66-9143-e66bc340525c-c000.snappy.parquet",
+      "record_count": 1,
+      "size_bytes": 794
+    },
+    {
+      "partition_values": {
+        "region": "west"
+      },
+      "path": "region=west/part-00000-b6051833-2855-4675-ace5-543db558729b-c000.snappy.parquet",
+      "record_count": 1,
+      "size_bytes": 794
+    }
+  ],
+  "format": "DELTA",
+  "latest_commit_id": "3",
+  "log_files": [
+    "00000000000000000002.checkpoint.parquet",
+    "00000000000000000002.json",
+    "00000000000000000003.json",
+    "_last_checkpoint"
+  ],
+  "notes": [
+    "Written by delta-rs; polytable has never touched this directory.",
+    "cleanup_metadata() deleted the version 0 and 1 JSON commits itself; the",
+    "checkpoint at version 2 is the only source of the metaData and protocol state."
+  ],
+  "partition_columns": [
+    "region"
+  ],
+  "partition_values": [
+    "east",
+    "north",
+    "south",
+    "west"
+  ],
+  "removed_log_files": [
+    "00000000000000000000.json",
+    "00000000000000000001.json"
+  ],
+  "table_dir": "orders",
+  "table_name": "orders",
+  "total_rows": 6,
+  "writer": {
+    "library": "deltalake",
+    "version": "1.6.3"
+  }
+}

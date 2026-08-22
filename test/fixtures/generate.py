@@ -185,6 +185,97 @@ def generate_delta(out_dir: Path) -> dict:
     return manifest
 
 
+def generate_delta_checkpoint(out_dir: Path) -> dict:
+    """Write a Delta table whose pre-checkpoint JSON commits have been cleaned up.
+
+    This is the shape a production table takes once Spark or delta-rs expires old log
+    entries: the only complete copy of the table state (metaData and protocol included)
+    lives in the Parquet checkpoint, and a reader that only replays JSON commits cannot
+    reconstruct it.
+    """
+    import deltalake
+    from deltalake import DeltaTable, write_deltalake
+
+    _rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    table_dir = out_dir / "orders"
+
+    schema = pa.schema(
+        [
+            pa.field("id", pa.int64(), nullable=False),
+            pa.field("region", pa.string(), nullable=False),
+            pa.field("amount", pa.float64(), nullable=True),
+        ]
+    )
+
+    def batch(ids, regions, amounts):
+        return pa.table({"id": ids, "region": regions, "amount": amounts}, schema=schema)
+
+    write_deltalake(
+        table_dir,
+        batch([1, 2], ["east", "west"], [10.5, 20.0]),
+        mode="error",
+        partition_by=["region"],
+        name="orders",
+        configuration={
+            "delta.logRetentionDuration": "interval 0 days",
+            "delta.enableExpiredLogCleanup": "true",
+        },
+    )
+    write_deltalake(table_dir, batch([3, 4], ["east", "south"], [30.0, 40.0]), mode="append")
+    write_deltalake(table_dir, batch([5], ["west"], [50.0]), mode="append")
+
+    table = DeltaTable(table_dir)
+    table.create_checkpoint()
+    table.cleanup_metadata()
+
+    # One commit after the checkpoint, so a reader must both load the checkpoint and
+    # replay the JSON tail on top of it.
+    write_deltalake(table_dir, batch([6], ["north"], [60.0]), mode="append")
+
+    table = DeltaTable(table_dir)
+    log_files = sorted(p.name for p in (table_dir / "_delta_log").iterdir())
+    removed = [f"{v:020d}.json" for v in (0, 1)]
+    for name in removed:
+        if name in log_files:
+            raise RuntimeError(f"cleanup_metadata left {name}; fixture must not carry it")
+
+    adds = pa.table(table.get_add_actions(flatten=True)).to_pylist()
+    data_files = [
+        {
+            "path": add["path"],
+            "record_count": add["num_records"],
+            "size_bytes": add["size_bytes"],
+            "partition_values": {"region": add["partition.region"]},
+        }
+        for add in sorted(adds, key=lambda a: a["path"])
+    ]
+
+    manifest = {
+        "format": "DELTA",
+        "table_name": "orders",
+        "table_dir": "orders",
+        "writer": {"library": "deltalake", "version": deltalake.__version__},
+        "commit_count": table.version() + 1,
+        "latest_commit_id": str(table.version()),
+        "checkpoint_version": 2,
+        "log_files": log_files,
+        "removed_log_files": removed,
+        "total_rows": sum(f["record_count"] for f in data_files),
+        "data_file_count": len(data_files),
+        "partition_columns": ["region"],
+        "partition_values": sorted({f["partition_values"]["region"] for f in data_files}),
+        "data_files": data_files,
+        "notes": [
+            "Written by delta-rs; polytable has never touched this directory.",
+            "cleanup_metadata() deleted the version 0 and 1 JSON commits itself; the",
+            "checkpoint at version 2 is the only source of the metaData and protocol state.",
+        ],
+    }
+    _write_manifest(out_dir, manifest)
+    return manifest
+
+
 # ---------------------------------------------------------------------------- Iceberg (pyiceberg)
 
 
@@ -351,6 +442,11 @@ def main() -> int:
     print(
         f"delta-rs: {delta['commit_count']} commits, {delta['data_file_count']} files, "
         f"{delta['total_rows']} rows"
+    )
+    checkpointed = generate_delta_checkpoint(out_root / "delta-rs-checkpoint")
+    print(
+        f"delta-rs-checkpoint: checkpoint at v{checkpointed['checkpoint_version']}, "
+        f"{checkpointed['data_file_count']} files, {checkpointed['total_rows']} rows"
     )
     iceberg = generate_iceberg(out_root / "pyiceberg")
     print(
