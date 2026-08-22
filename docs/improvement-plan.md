@@ -1785,7 +1785,7 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T57, T59, T60, T61 |
+| 🎯 Open queue | T24, T30, T34, T37, T38–T50 from the roadmap, and T57, T59, T60, T61, T62 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -2120,7 +2120,7 @@ the `s3a://` and percent-encoded cases are in it and pass.
 
 ---
 
-## T45 — The Parquet source crawls other formats' metadata as data
+## T45 — The Parquet source crawls other formats' metadata as data ✅
 
 Upstream #813 and #814: Hudi partition discovery treated `_delta_log/` — which holds checkpoint
 Parquet — as a Hudi partition, so synced tables self-corrupted on round trip. polytable is more
@@ -2155,6 +2155,49 @@ list is the only way the set stays in sync with the format registry.
 builds that directory by running actual syncs into it, not by hand-placing files.
 
 **Commit:** `fix: exclude other formats' metadata directories from Parquet file discovery`
+
+### Outcome ✅
+
+One helper, `io.IsMetadataPath`/`io.IsMetadataPathComponent` in `pkg/io/metadata.go`, checked
+component-wise against the path relativized to the source's base path (`io.RelativizePath`), not
+against the full absolute path or the file's own base name. Two rules, combined:
+
+1. Any component starting with `_` or `.` is excluded outright — the Hive/Spark hidden-file
+   convention, which covers Delta's `_delta_log`, the Parquet target's own
+   `_polytable_metadata`, Hadoop's `_temporary` and `_SUCCESS`, and Hudi's `.hoodie` in one rule.
+   Decision, recorded in the doc comment: this also excludes a hypothetical raw (non
+   `key=value`) partition segment starting with `_` or `.`, which is accepted because Hive-style
+   partitioning never uses such a segment as a value in the first place, and because a curated
+   name list alone would silently admit every future format's underscore- or dot-prefixed
+   metadata as data until someone remembered to add it.
+2. An exact-name list for the metadata directories that do *not* follow that convention:
+   Iceberg's `metadata`, and Paimon's `schema`, `snapshot` and `manifest` (read from
+   `pkg/formats/paimon/manifest.go`, not guessed). Checked against a single component only, so
+   `region=metadata` (a valid Hive partition segment) is untouched.
+
+`pkg/formats/parquet/source.go`'s `listDataFiles` now relativizes every listed path and skips it
+when `io.IsMetadataPath` matches, instead of a base-name suffix/prefix check. `io.Storage.List`
+itself is untouched, per the task's explicit constraint — the exclusion lives in the source, not
+the listing contract.
+
+The acceptance test (`test/parquet_metadata_exclusion_test.go`) is built the way the task asked:
+`delta-rs-checkpoint` — a genuine deltalake-written fixture whose `_delta_log` already carries a
+real `.checkpoint.parquet`, the exact upstream #813/#814 shape — is run through
+`conversion.Controller.Sync` into Iceberg, Hudi, Paimon and Parquet targets, all sharing the same
+directory the Delta fixture lives in. That produced `_delta_log`, `metadata`, `.hoodie`, `schema`,
+`snapshot`, `manifest` and `_polytable_metadata` as a real, sync-populated layout, not a hand-built
+one. Only Hadoop's `_temporary`/`_SUCCESS` had to be added by hand, because no writer in this
+repository produces the Hadoop staging convention — documented in the test as the one deliberate
+exception. A fresh `parquet.Source` pointed at that directory reports exactly the fixture's 6 real
+data files (`assertFileListMatchesManifest`) and still recovers the genuine `region=` Hive
+partition. `pkg/io/metadata_test.go` covers the helper directly, including the component-wise case
+(`data/_delta_log/x.parquet` excluded despite an unremarkable base name).
+
+Reverting the fix locally and re-running the suite confirmed it is load-bearing: without it,
+`GetCurrentSnapshot` picked up the checkpoint Parquet file as a 7th "data file" and then panicked
+trying to parse its schema as table data (`parquet-go`'s `groupType.Kind` on a nested group it
+does not expect) — the exact self-corruption class #813/#814 describes, reproduced with a real
+foreign fixture rather than a synthetic one.
 
 ---
 
@@ -3195,6 +3238,43 @@ works or is refused with a message naming the limitation, not silently mis-addre
 
 ---
 
+## T62 — Google Cloud Storage backend, and the BigLake catalog behind it
+
+Unscheduled until 2026-08-22 on the stated grounds that nobody had asked. Someone has: an account
+is available, which is what the earlier reasoning was waiting for.
+
+**Nothing exists today.** `gs://` is in `uriSchemes` (`pkg/io/storage.go:48`) so the path helpers
+treat it as a scheme and foreign metadata carrying such paths round-trips, but
+`NewStorageForPathWithOptions` refuses it and there is no backend file and no dependency. That
+refusal is deliberate and must stay until a backend exists: falling through to local storage would
+read `gs://bucket/table` as a relative directory and create a literal `gs:` directory on first write.
+
+**Two distinct pieces, and they are worth separating.**
+
+1. **The storage backend.** `cloud.google.com/go/storage`, shaped like `pkg/io/azure.go`: an
+   `Options` field alongside `S3` and `Azure`, credentials from the environment and the Application
+   Default Credentials chain rather than config fields, and the same `//go:build !js` split with a
+   stub returning an `ErrGCSUnsupported`. Measure the binary cost the way T51 did — Azure added
+   3.4 MiB — and record it, because a small static binary is a stated differentiator.
+2. **BigLake Metastore / BigQuery's Iceberg REST catalog.** A fourth managed catalog after Glue,
+   Iceberg REST and OneLake. Its auth is a Google OAuth2 token, which is neither of the two modes
+   `restHTTPClient` supports, so it lands on T59 rather than being free. Verify the endpoint and its
+   `/v1/config` prefix shape against the live service rather than the documentation — that habit has
+   already found four bugs the docs would not have.
+
+**Why it is worth doing beyond parity.** Upstream's documented end-to-end flows include GCS with
+BigLake; the PR #897 review enumerated six, and GCS is one of the two polytable cannot run at all.
+Closing it makes the three-cloud story complete.
+
+**Acceptance:** a table on `gs://` syncs and reads back, exercised against a real bucket the way
+T51's Azure lane is; `GOOS=js GOARCH=wasm go list -deps ./cmd/polytable-wasm` still reports zero
+cloud SDK packages; the binary-size delta is recorded; and the BigLake half either works or is
+explicitly deferred to T59 with the reason.
+
+**Commit:** `feat: add a Google Cloud Storage backend`
+
+---
+
 ## Non-goals
 
 - **Renaming stuttering identifiers** (`delta.DeltaCommit` → `Commit`, `catalog.CatalogType` → `Type`).
@@ -3207,6 +3287,6 @@ works or is refused with a message naming the limitation, not silently mis-addre
   condition this non-goal set has been met: T3's storage-options gap was closed by T12, so a new
   backend now has a configuration path to hang off. Azure is scheduled as **T51** (ADLS Gen2 and
   OneLake storage) and **T52** (the OneLake catalog), and Azure support is a stated requirement
-  rather than an extension. GCS stays unscheduled — nobody has asked for it — but the reason
-  recorded here no longer applies to it either.
+  rather than an extension. GCS was left unscheduled on the grounds that nobody had asked for it;
+  that stopped being true on 2026-08-22 when an account was offered, and it is now **T62**.
 - **Changing `go.mod`'s Go directive.**
