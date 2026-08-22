@@ -1854,12 +1854,12 @@ Iceberg→Hudi and Iceberg→Paimon now assert the plain file list every other t
 
 | | Tasks |
 |---|---|
-| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T15 (via moto), T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T40, T45, T53, T54, T55, T56, T58 |
+| ✅ Done | T1, T3 (via T12), T4, T5, T6, T9, T11, T12, T15 (via moto), T16, T18, T20, T21, T22, T23, T25, T26, T27, T28, T29, T31, T32, T33, T35, T36, T40, T45, T53, T54, T55, T56, T58, T59, T60, T62 |
 | ⚠️ Superseded | T2 → T16 · T8 → T18 |
 | ✅ Proven | T7, T10 → T17 — release workflow verified end to end by a throwaway tag |
 | 🧩 Landed under another number | T14 → T23 (`ListTables`, `DiscoverDatasets`) · T15 → `catalog.SyncPartitions` with `pkg/catalog/glue_partition.go`, wired at `pkg/conversion/controller.go:158`. Both are covered by tests against fakes, and **neither has been checked against a real Glue catalog** — which is what T15 asked for — so they are recorded here rather than as ✅ |
 | 📋 Unscheduled | T13 (HMS) — the roadmap's answer is to keep the explicit not-implemented refusal until a consumer with a concrete deployment appears |
-| 🎯 Open queue | T24, T30, T34, T37, T38, T39, T41–T44, T46–T50 from the roadmap, and T57, T59 (OAuth2 half), T60, T61, T62 (size), T63, T64 |
+| 🎯 Open queue | T24, T30, T34, T37, T38, T39, T41–T44, T46–T50 from the roadmap, and T57, T61, T63, T64, T65 |
 | ⚠️ Landed, unverified against the real service | T51 (Azure storage — green on the Azurite emulator, never run against Azure) · T52 (Entra ID auth — no Fabric workspace reached). Both name their unmet criteria in the task |
 
 **Picking up the queue.** T51 and T52 need an Azure subscription, not more work: the emulator lane
@@ -3670,6 +3670,51 @@ Verify against a Snowflake-managed Iceberg table, since that case cannot be fake
 credentials — it is the one that proves the feature rather than exercising it.
 
 **Commit:** `feat: use storage credentials vended by the catalog`
+
+---
+
+## T65 — Iceberg format-version 3: unsupported, and not refused
+
+**No, polytable does not support Iceberg v3 — and the worse half is that it does not say so.**
+
+Checked rather than assumed:
+
+- The target writes v2, hardcoded: `icebergFormatVersion = 2` (`pkg/formats/iceberg/target.go:36`),
+  stamped into the metadata and into every manifest and manifest list.
+- The **source never reads `FormatVersion` at all.** `TableMetadata` parses the field
+  (`pkg/formats/iceberg/metadata.go:86`) and nothing consults it. A grep for any rejection,
+  unsupported-version error or comparison against 3 across the Iceberg adapter returns nothing.
+
+So a v3 table is read as though it were v2. That is the same silent-wrongness this register keeps
+finding: not a missing feature, a missing refusal. Compare T24, where a deletion vector is dropped
+and the sync reports success.
+
+**What v3 adds that v2 readers cannot fake.** Row lineage (`next-row-id`, per-row `_row_id` and
+`_last_updated_sequence_number`), deletion vectors carried as Puffin blobs replacing positional
+delete files, and new primitive types including variant, geometry and geography. A v2-shaped reader
+meeting any of them either misreads or silently ignores it — and row lineage in particular is
+metadata the whole point of which is that a consumer honours it.
+
+**This is arriving, not hypothetical.** Snowflake's 2026 material describes v3 alongside Horizon
+Catalog and managed storage as the new default direction. The Snowflake-managed table exercised on
+2026-08-22 wrote `format-version: 2`, so there is time — but not much, and the default will move
+without asking.
+
+**The cheap half is worth doing immediately and separately from support.** Read `format-version`
+and refuse anything above what the adapter implements, with an error naming the version and the
+table. That is a small, self-contained change which converts a silent misread into a clear failure,
+and it does not depend on deciding anything about v3 itself.
+
+**The expensive half is a real decision.** Supporting v3 reading means handling Puffin deletion
+vectors, which runs into the same INV-1 wall as T24: a Puffin blob is a bitmap over row positions,
+and honouring it means knowing which rows those are. Do not start v3 support before T24's decision
+is made, because they are the same question wearing different clothes.
+
+**Acceptance:** a v3 table presented to the Iceberg source fails with an error naming the format
+version, rather than being read as v2; the version the target writes stays configurable in one place
+rather than spreading; and `SPEC.md` states which versions are supported for read and for write.
+
+**Commit:** `fix: refuse an Iceberg table whose format version exceeds what the reader implements`
 
 ---
 
