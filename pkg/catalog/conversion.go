@@ -103,6 +103,12 @@ type SourceTable struct {
 	Format model.TableFormat
 	// Properties is the full property map the catalog returned, for callers needing more.
 	Properties map[string]string
+	// StorageCredentials carries short-lived storage credentials the catalog vended for this table,
+	// when it supports delegation and returned any. Nil means the catalog vended nothing -- either
+	// it does not support the mechanism, or it was not asked -- and callers must fall back to
+	// whatever storage credentials they would otherwise use; this field only ever adds a safer path,
+	// never removes the existing one.
+	StorageCredentials *StorageCredentials
 }
 
 // ConversionSource resolves a table registered in an external catalog into a SourceTable. This is

@@ -85,12 +85,13 @@ func DiscoverDatasets(ctx context.Context, cfg *catalog.Config, newSource Catalo
 			name = id.Table
 		}
 		datasets = append(datasets, &DatasetConfig{
-			SourceFormat:  resolved.Format,
-			TargetFormats: targets,
-			TableBasePath: resolved.BasePath,
-			TableDataPath: resolved.DataPath,
-			TableName:     name,
-			Namespace:     id.Database,
+			SourceFormat:      resolved.Format,
+			TargetFormats:     targets,
+			TableBasePath:     resolved.BasePath,
+			TableDataPath:     resolved.DataPath,
+			TableName:         name,
+			Namespace:         id.Database,
+			vendedCredentials: resolved.StorageCredentials,
 		})
 	}
 

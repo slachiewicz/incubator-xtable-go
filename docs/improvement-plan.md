@@ -3573,7 +3573,7 @@ right size and path, a delete, and `Exists` false afterwards. No committed test 
 
 ---
 
-## T63 — `ParquetSchemaToModel` panics on an unexpected nested group
+## T63 — `ParquetSchemaToModel` panics on an unexpected nested group ✅ COMPLETED
 
 Found by T45's negative control, and it is worse than the bug T45 fixed.
 
@@ -3605,9 +3605,40 @@ triggered this.
 
 **Commit:** `fix: return an error instead of panicking on an unmappable Parquet schema`
 
+### Outcome ✅
+
+`parquet-go`'s own `Node` interface names the safe guard: `Type()` is documented as "Calling this
+method on non-leaf nodes will panic", and `Leaf()` is what tells a caller whether that is true. The
+package backs the doc with real panics — `type_group.go`, `type_list.go`, `type_map.go` and
+`type_variant.go` all panic unconditionally out of `Kind()` — so the fix in
+`pkg/formats/parquet/schema.go` is to never call `Field.Type()` (directly, or via `convertType`)
+until `Field.Leaf()` has confirmed it is safe. `convertField` now has three cases instead of two:
+a leaf column (repeated or not — a repeated leaf is the old two-level list encoding, and `Type()`
+is safe for it), a non-repeated non-leaf group (an ordinary struct, recursed into as before), and a
+repeated non-leaf group — the modern three-level LIST's `list` node, or a MAP's `key_value` node —
+which is reported as an error naming the full dotted column path instead of guessed at, since
+folding it into a plain struct would silently drop the list/map cardinality it represents.
+
+A narrow `recover` wraps only `ParquetSchemaToModel` itself, not the rest of the package, as a
+backstop for a parquet-go node type this audit did not find; every path the audit did find returns
+its own named error rather than relying on it. `ParquetSchemaToModel` and its two internal helpers
+now return `(*model.Schema, error)`, wrapping a new `ErrUnmappableSchema` sentinel; the one non-test
+caller (`pkg/formats/parquet/source.go`) now names the file in the wrapping error, since the
+converter itself only sees a `*parquet.Schema` and cannot.
+
+`pkg/formats/parquet/schema_test.go`'s table drives four shapes: the real delta-rs checkpoint that
+found this (`add.partitionValues.key_value`, a MAP), a hand-built `parquet.Map` and a hand-built
+`parquet.List` (confirmed to reproduce the identical repeated/leaf shape a real
+`GenericWriter`-written, `OpenFile`-reopened MAP/LIST column has, both erroring with the full
+path), and a positive case (an untagged repeated leaf column, still converting to `model.TypeList`
+as before). `TestParquetSchemaToModel_ExistingFixturesUnchanged` pins that a flat schema is
+unaffected. Reverting the fix locally and rerunning the table reproduced the original panic
+verbatim — same message, same `groupType.Kind` frame — confirming the test is load-bearing rather
+than passing either way.
+
 ---
 
-## T64 — Catalogs that vend storage credentials
+## T64 — Catalogs that vend storage credentials ⚠️ IMPLEMENTED, UNVERIFIED AGAINST SNOWFLAKE; NO CREDENTIAL REFRESH
 
 Found by running Cloudflare R2's Data Catalog. Its `GET /v1/config` response carries
 `overrides["s3.signer.uri"]`, and its advertised endpoints include
@@ -3683,11 +3714,118 @@ refresh before expiry on a long sync; and a catalog that vends nothing behaves e
 Verify against a Snowflake-managed Iceberg table, since that case cannot be faked with static
 credentials — it is the one that proves the feature rather than exercising it.
 
+### Outcome ⚠️ Implemented, and one bug only the live run could find
+
+`GetSourceTable` now sends `X-Iceberg-Access-Delegation: vended-credentials`, parses both credential
+shapes into a redacted `StorageCredentials` on `SourceTable`, and `S3Options` grew an optional static
+provider that leaves the default chain untouched when unset.
+
+**The bug: the two blocks are complementary, not alternatives.** The first implementation preferred
+`storage-credentials` over `config` when both were present, which reads correctly and is wrong.
+Snowflake returns:
+
+```
+top-level config:           client.region, expiration-time, s3.access-key-id,
+                            s3.secret-access-key, s3.session-token
+storage-credentials[0]:     prefix + s3.access-key-id, s3.secret-access-key,
+                            s3.session-token, expiration-time      <- no client.region
+```
+
+The array scopes a credential to a prefix; the top-level config carries table-wide client settings.
+Choosing the array therefore produced a credential with **no region**, and the `PermanentRedirect`
+that the region exists to prevent — the exact failure T64 was filed to fix. The fields are now
+merged, with a regression test built from the real response and confirmed to fail when reverted.
+
+**Verified live.** With every AWS credential unset, `polytable sync` against a Snowflake-managed
+table resolved through the catalog now reports `SUCCESS`, where the same table addressed by path in
+the same shell fails with `PermanentRedirect`. That contrast is the control: the catalog path
+supplies what the environment does not.
+
+**Still unmet:** credentials are detected as expired, not refreshed within a single long sync — the
+catalog source is closed before storage exists, so no refresh handle survives. The daemon
+re-resolves per cycle, so this bites only a sync outliving one credential's lifetime. The
+`storage-credentials` array shape remains partly spec-derived: Snowflake's is the only one observed.
+
 **Commit:** `feat: use storage credentials vended by the catalog`
+
+### Outcome ⚠️ — the read/parse/wire path landed; two acceptance criteria are open
+
+**`pkg/catalog`.** `GetSourceTable` now sends `X-Iceberg-Access-Delegation: vended-credentials` on
+every load-table request (`pkg/catalog/rest_conversion.go`) — unconditionally, since a catalog that
+does not support it simply ignores an unrecognized header and returns exactly what it always has.
+The response is parsed by `pkg/catalog/vended_credentials.go` into a new `StorageCredentials` struct
+(access key, secret, session token, region, expiration — never a bare map), attached to
+`SourceTable.StorageCredentials`. Both wire shapes are handled: the flat `config` map is the shape
+**observed** against a live Snowflake catalog on 2026-08-22 (exactly the five keys the task names);
+the `storage-credentials` array is the current specification's documented shape, **not** exercised
+against a real server, and is preferred over `config` when both are present, picking the
+longest-matching `prefix` per the specification. `StorageCredentials.String`, `GoString` and
+`MarshalJSON` all redact unconditionally, covering `%v`/`%s`/`%+v`/`%#v` and `encoding/json`.
+
+**`pkg/io`.** `S3Options` gained `Credentials *S3StaticCredentials` (access key, secret, session
+token, expiration), wired to `credentials.NewStaticCredentialsProvider` in `NewS3Storage`. Nil
+`Credentials` — the default, and every caller not using a vending catalog — changes nothing about
+the existing `awsconfig.LoadDefaultConfig` chain.
+
+**Wiring found a mismatch with this task's own framing, resolved in favor of what the code actually
+does.** `Controller.createSource` does not build a `Storage` at all — it receives one already
+constructed by the caller (`cmd/polytable/main.go`, `pkg/daemon/daemon.go`), the same way
+`StorageConfig.ToOptionFuncs()` already worked. `catalog.SourceTable`'s `StorageCredentials` is
+picked up by `ResolveSourceCatalog` into a new unexported `DatasetConfig.vendedCredentials` field —
+unexported specifically so json/yaml marshaling of `DatasetConfig` skips it for free, matching
+`StorageConfig`'s own documented policy against ever accepting credentials from a config file. A new
+`DatasetConfig.StorageOptionFuncs()` combines `Storage.ToOptionFuncs()` with the vended credential
+when present, and is what both `main.go` and `daemon.go` now call instead of
+`ds.Storage.ToOptionFuncs()` directly. `DiscoverDatasets` carries the same field through for
+catalog-discovered datasets. The vended region wins over a configured `StorageConfig.Region` when
+both are present — the vended credentials are scoped to a specific bucket's region, and yielding to
+a stale configured region would reproduce the exact `PermanentRedirect` this task exists to fix.
+`pkg/daemon/server.go`'s REST path was left untouched: it never calls `ResolveSourceCatalog`, so
+there was nothing to wire, and adding catalog support there is out of scope.
+
+**Expiry: detection, not a refresh loop, and here is why.** `ResolveSourceCatalog` closes the
+`ConversionSource` before returning (`defer src.Close()`), so no live catalog handle survives to the
+point storage is actually used — a real refresh would mean keeping that source open for the sync's
+lifetime and threading a re-fetching provider through `io.Options`, a structural change beyond this
+task's scope. What landed instead: `NewS3Storage` rejects an already-expired-or-near-expired (one
+minute clock-skew buffer) credential at construction, naming `io.ErrCredentialsExpired` rather than
+proceeding; and every `S3Storage` method translates the AWS `ExpiredToken` / `ExpiredTokenException`
+/ `RequestExpired` error codes into the same sentinel, so a sync that outlives its vended credential
+mid-flight fails naming the cause instead of a generic S3 access error. This is the "detect and name
+it" half of the acceptance criterion, not the "refresh before expiry" half — that remains open.
+
+**What was checked**, all via `httptest` and testify table-driven tests, no live catalog or AWS
+account involved: both wire shapes parse correctly, including the array shape's prefix-matching and
+its precedence over the flat shape; the delegation header is sent unconditionally; a catalog vending
+nothing yields a nil `*StorageCredentials` (not a zero-valued one) and `StorageOptionFuncs` then
+produces output identical to `Storage.ToOptionFuncs()` alone; the region is carried through end to
+end into `io.Options`; an expired or near-expired credential is rejected at `NewS3Storage`
+construction, and a mid-sync `ExpiredToken`/`RequestExpired` response is translated to
+`ErrCredentialsExpired` for `Read`, `List` and (by construction) every other `S3Storage` method; and
+a `StorageCredentials` value resists leaking its secret through `%v`, `%s`, `%+v`, `%#v` and
+`json.Marshal`, including when embedded in a `SourceTable`. `gofmt -l .`, `go vet ./...`,
+`GOOS=js GOARCH=wasm go vet ./cmd/polytable-wasm`, `go test -short -race ./pkg/...`,
+`go test -count=1 ./test/` and `golangci-lint run ./...` are all clean;
+`GOOS=js GOARCH=wasm go list -deps ./cmd/polytable-wasm | grep -ci aws-sdk-go` is 0.
+
+**Why this stays ⚠️ rather than ✅:**
+
+1. **Not verified against a Snowflake-managed Iceberg table**, which the acceptance criterion calls
+   out by name as "the one that proves the feature rather than exercising it." No Snowflake
+   credentials were available here; everything above is a fake-server unit test.
+2. **No refresh-before-expiry on a long sync.** The credentials are read once, at
+   `ResolveSourceCatalog` time, and used for the rest of that `Sync` call. A sync that runs longer
+   than the vended credential's lifetime now fails with a named `ErrCredentialsExpired` instead of an
+   opaque AWS error, which is strictly better than before, but it is detection, not the refresh the
+   acceptance criterion asks for.
+3. **The expiration value's wire format is unconfirmed.** The task supplied the key name
+   (`expiration-time`) observed against Snowflake, not the value's format. Both RFC3339 and integer
+   epoch-milliseconds are accepted, in that order, and this is recorded in
+   `pkg/catalog/vended_credentials.go` as an assumption rather than a verified fact.
 
 ---
 
-## T65 — Iceberg format-version 3: unsupported, and not refused
+## T65 — Iceberg format-version 3: unsupported, and not refused ✅ (cheap half only)
 
 **No, polytable does not support Iceberg v3 — and the worse half is that it does not say so.**
 
@@ -3727,6 +3865,27 @@ is made, because they are the same question wearing different clothes.
 **Acceptance:** a v3 table presented to the Iceberg source fails with an error naming the format
 version, rather than being read as v2; the version the target writes stays configurable in one place
 rather than spreading; and `SPEC.md` states which versions are supported for read and for write.
+
+**Resolved (cheap half only).** `readMetadata` (`pkg/formats/iceberg/source.go`) — the single choke
+point every read path (`GetCurrentTable`/`GetTable`, `GetCurrentSnapshot`, `GetTableChangeForCommit`,
+`GetChangesSince`, `IsIncrementalSyncSafeFrom`) already passed through — now refuses a
+`format-version` above `maxReadableFormatVersion` (declared next to `icebergFormatVersion` in
+`target.go`, both `2` today) and refuses one that is missing, zero or negative, naming the version
+found, the ceiling and the metadata file path in the error. Before this change a missing or
+non-positive `format-version` decoded to Go's zero value and was silently read as if it were v2, the
+same as a genuine v3 table. `SPEC.md` §6.2 now states the supported read/write versions. The
+catalog-backed sources (`pkg/catalog`'s Glue and Iceberg REST `ConversionSource`s) resolve only a
+base path and properties from `loadTable`/`GetTable`; the actual read goes through
+`pkg/formats/registry.go`'s `iceberg.NewSource`, so it is the same gated `Source`, not a second
+metadata parse — confirmed by grep, not inferred. Left deliberately untouched: `Target.CommitSnapshot`
+already discards `readMetadata`'s error (`prevMeta, _ = ...`) when layering a new snapshot onto
+existing metadata, which was already true for any unparseable metadata file before this change; the
+practical effect on a v3-labelled directory is now that a commit proceeds as though starting fresh
+(`prevMeta` nil, schema id resets to 0) rather than as though continuing a misread v2 table — neither
+is correct, and fixing the target's error handling is outside a read-side refusal. `Target.GetTableMetadata`,
+by contrast, already propagates the same error, so a sync's read-modify-write of `TableSyncMetadata`
+against a v3 target is refused, not silently wrong. The expensive half — actually reading v3, which
+needs a decision on Puffin deletion vectors shared with T24's INV-1 — is deliberately not attempted.
 
 **Commit:** `fix: refuse an Iceberg table whose format version exceeds what the reader implements`
 

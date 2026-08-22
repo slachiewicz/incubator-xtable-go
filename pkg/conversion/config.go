@@ -111,6 +111,14 @@ type DatasetConfig struct {
 	// SourceCatalog resolves the source table from an external catalog instead of requiring
 	// tableBasePath. Exactly one of the two must be supplied.
 	SourceCatalog *SourceCatalogConfig `json:"sourceCatalog,omitempty" yaml:"sourceCatalog,omitempty"`
+
+	// vendedCredentials holds storage credentials a credential-vending catalog returned while
+	// resolving SourceCatalog, if any. It is unexported and set only by ResolveSourceCatalog: these
+	// are live, working credentials, and unlike everything else on this struct there is no
+	// representation of them that would be safe to accept from a config file, a REST request body,
+	// or any other source a caller controls directly. Being unexported also means json/yaml
+	// marshaling of DatasetConfig skips it for free.
+	vendedCredentials *catalog.StorageCredentials
 }
 
 // SourceCatalogConfig names a table inside an external catalog, so a dataset can be addressed as
@@ -174,7 +182,43 @@ func ResolveSourceCatalog(ctx context.Context, cfg *DatasetConfig, newSource Cat
 	if cfg.TableName == "" {
 		cfg.TableName = resolved.Name
 	}
+	// A catalog that vends nothing leaves resolved.StorageCredentials nil, so cfg.vendedCredentials
+	// stays nil and StorageOptionFuncs falls through to exactly today's behavior.
+	cfg.vendedCredentials = resolved.StorageCredentials
 	return nil
+}
+
+// StorageOptionFuncs builds the storage option functions for this dataset: c.Storage's overrides,
+// plus a vended credential from ResolveSourceCatalog when one was returned. It is the single place
+// this combination happens, the same way StorageConfig.ToOptionFuncs is the single place its own
+// translation happens -- callers should use this instead of calling c.Storage.ToOptionFuncs()
+// directly whenever the dataset may have come through ResolveSourceCatalog, so a credential-vending
+// catalog's table is read with the credentials scoped to it rather than whatever the caller would
+// otherwise have configured (or failed to).
+//
+// The vended region, when present, is applied after c.Storage's own overrides and so takes
+// precedence over a configured StorageConfig.Region: the vended credentials are scoped to a
+// specific bucket's region, and a mismatched region is exactly the PermanentRedirect this exists to
+// prevent.
+func (c *DatasetConfig) StorageOptionFuncs() []func(*io.Options) {
+	optFns := c.Storage.ToOptionFuncs()
+	if c.vendedCredentials == nil {
+		return optFns
+	}
+
+	creds := c.vendedCredentials
+	optFns = append(optFns, func(opts *io.Options) {
+		opts.S3.Credentials = &io.S3StaticCredentials{
+			AccessKeyID:     creds.AccessKeyID,
+			SecretAccessKey: creds.SecretAccessKey,
+			SessionToken:    creds.SessionToken,
+			Expiration:      creds.Expiration,
+		}
+		if creds.Region != "" {
+			opts.S3.Region = creds.Region
+		}
+	})
+	return optFns
 }
 
 // ToOptionFuncs converts StorageConfig to storage option functions. It is the single place this

@@ -36,6 +36,9 @@ type S3Options struct {
 	Region       string
 	Endpoint     string
 	UsePathStyle bool
+	// Credentials is accepted for shape parity with the non-wasm build but never used: this build
+	// always fails before touching a credential.
+	Credentials *S3StaticCredentials
 }
 
 // NewS3Storage always fails on WebAssembly. It exists so NewStorageForPath keeps one shape across

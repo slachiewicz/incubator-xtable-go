@@ -30,10 +30,38 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 )
+
+// credentialExpiryBuffer guards against clock skew between this process and whichever catalog
+// vended the credentials: without it, a credential set could pass the construction-time check and
+// still expire moments into a request against S3's own clock.
+const credentialExpiryBuffer = time.Minute
+
+// expiredCredentialErrorCodes are the AWS API error codes seen when a request is made with expired
+// (or otherwise invalidated) temporary credentials. A request that fails with one of these is
+// translated to ErrCredentialsExpired rather than surfacing the raw AWS error, so a sync that
+// outlives a vended credential's lifetime fails naming the actual cause.
+var expiredCredentialErrorCodes = map[string]bool{
+	"ExpiredToken":          true,
+	"ExpiredTokenException": true,
+	"RequestExpired":        true,
+}
+
+// asExpiredCredentialsError reports whether err is an AWS API error indicating the credentials used
+// for the request had expired, wrapping it in ErrCredentialsExpired when so. Returns (nil, false)
+// for every other error, including a merely invalid or unauthorized credential, since those are not
+// the same failure and renaming them would be misleading.
+func asExpiredCredentialsError(err error) (error, bool) {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) && expiredCredentialErrorCodes[apiErr.ErrorCode()] {
+		return fmt.Errorf("%w: %w", ErrCredentialsExpired, err), true
+	}
+	return nil, false
+}
 
 // S3Storage provides a zero-JVM native AWS S3 storage implementation.
 type S3Storage struct {
@@ -48,13 +76,23 @@ type S3Options struct {
 	Endpoint         string
 	UsePathStyle     bool
 	CustomHTTPClient aws.HTTPClient
+	// Credentials, when set, is used instead of the standard AWS credential chain
+	// (awsconfig.LoadDefaultConfig's environment/profile/IMDS discovery). This is the path a
+	// catalog-vended credential (pkg/catalog.StorageCredentials) takes to reach S3; nothing else in
+	// this package changes when it is nil, which is the default and the common case.
+	Credentials *S3StaticCredentials
 }
 
-// NewS3Storage creates a new S3Storage instance with standard AWS credential discovery.
+// NewS3Storage creates a new S3Storage instance with standard AWS credential discovery, unless
+// opts.Credentials overrides it with a static credential set.
 func NewS3Storage(ctx context.Context, optFns ...func(*S3Options)) (*S3Storage, error) {
 	opts := S3Options{}
 	for _, fn := range optFns {
 		fn(&opts)
+	}
+
+	if opts.Credentials.Expired(time.Now(), credentialExpiryBuffer) {
+		return nil, fmt.Errorf("%w: expired at %s", ErrCredentialsExpired, opts.Credentials.Expiration)
 	}
 
 	var configFns []func(*awsconfig.LoadOptions) error
@@ -63,6 +101,11 @@ func NewS3Storage(ctx context.Context, optFns ...func(*S3Options)) (*S3Storage, 
 	}
 	if opts.CustomHTTPClient != nil {
 		configFns = append(configFns, awsconfig.WithHTTPClient(opts.CustomHTTPClient))
+	}
+	if opts.Credentials != nil {
+		configFns = append(configFns, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			opts.Credentials.AccessKeyID, opts.Credentials.SecretAccessKey, opts.Credentials.SessionToken,
+		)))
 	}
 
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, configFns...)
@@ -99,6 +142,9 @@ func (s *S3Storage) Read(ctx context.Context, path string) ([]byte, error) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		if expiredErr, ok := asExpiredCredentialsError(err); ok {
+			return nil, expiredErr
+		}
 		var apiErr smithy.APIError
 		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchKey" {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, path)
@@ -123,6 +169,9 @@ func (s *S3Storage) Write(ctx context.Context, path string, data []byte) error {
 		Body:   bytes.NewReader(data),
 	})
 	if err != nil {
+		if expiredErr, ok := asExpiredCredentialsError(err); ok {
+			return expiredErr
+		}
 		return fmt.Errorf("failed to put s3 object %s: %w", path, err)
 	}
 	return nil
@@ -144,6 +193,9 @@ func (s *S3Storage) List(ctx context.Context, prefix string) ([]FileInfo, error)
 	for paginator.HasMorePages() {
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
+			if expiredErr, ok := asExpiredCredentialsError(err); ok {
+				return nil, expiredErr
+			}
 			return nil, fmt.Errorf("failed to list s3 objects with prefix %s: %w", prefix, err)
 		}
 
@@ -178,6 +230,9 @@ func (s *S3Storage) Exists(ctx context.Context, path string) (bool, error) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		if expiredErr, ok := asExpiredCredentialsError(err); ok {
+			return false, expiredErr
+		}
 		var notFound *s3types.NotFound
 		var apiErr smithy.APIError
 		if errors.As(err, &notFound) || (errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound") {
@@ -200,6 +255,9 @@ func (s *S3Storage) Delete(ctx context.Context, path string) error {
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		if expiredErr, ok := asExpiredCredentialsError(err); ok {
+			return expiredErr
+		}
 		return fmt.Errorf("failed to delete s3 object %s: %w", path, err)
 	}
 	return nil

@@ -327,7 +327,7 @@ func syncOneDataset(ctx context.Context, ds *conversion.DatasetConfig, dryRun bo
 		return buildTableSyncOutput(ds, nil, rErr)
 	}
 
-	optFns := ds.Storage.ToOptionFuncs()
+	optFns := ds.StorageOptionFuncs()
 	storage, err := xtio.NewStorageForPathWithOptions(datasetCtx, ds.TableBasePath, optFns...)
 	if err != nil {
 		_, _ = fmt.Fprintf(progress, "  ❌ Failed to initialize storage for %s: %v\n", ds.TableBasePath, err)

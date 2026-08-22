@@ -40,13 +40,34 @@ type IcebergRESTConversionSource struct {
 
 var _ ConversionSource = (*IcebergRESTConversionSource)(nil)
 
-// loadTableResponse is the subset of the Iceberg REST LoadTableResult this source reads.
+// loadTableResponse is the subset of the Iceberg REST LoadTableResult this source reads. Config and
+// StorageCredentials are only populated when the request carried AccessDelegationHeader and the
+// catalog supports it; a catalog that does not vend credentials leaves both empty, which
+// parseStorageCredentials turns into a nil *StorageCredentials rather than an error.
 type loadTableResponse struct {
 	MetadataLocation string `json:"metadata-location"`
 	Metadata         struct {
 		Location   string            `json:"location"`
 		Properties map[string]string `json:"properties"`
 	} `json:"metadata"`
+	// Config is the older, flat shape for vended credentials -- observed against a live Snowflake
+	// catalog on 2026-08-22, carrying s3.access-key-id, s3.secret-access-key, s3.session-token,
+	// expiration-time and client.region.
+	Config map[string]string `json:"config"`
+	// StorageCredentials is the current Iceberg REST specification's shape: a list of credential
+	// sets, each scoped to a prefix, so a catalog can vend different credentials for different
+	// parts of a table (or a warehouse). Not observed against a real server; this code accepts it
+	// on the strength of the specification alone and prefers it over Config when both are present.
+	StorageCredentials []loadTableStorageCredential `json:"storage-credentials"`
+}
+
+// loadTableStorageCredential is one entry of loadTableResponse.StorageCredentials.
+type loadTableStorageCredential struct {
+	// Prefix scopes this credential set to locations starting with it. An empty prefix applies to
+	// every location the response's table (or warehouse) can address.
+	Prefix string `json:"prefix"`
+	// Config carries the same key names as loadTableResponse.Config, scoped to Prefix.
+	Config map[string]string `json:"config"`
 }
 
 // listNamespacesResponse is the subset of GET /v1/{prefix}/namespaces this source reads.
@@ -121,6 +142,12 @@ func (c *IcebergRESTConversionSource) GetSourceTable(ctx context.Context, id Tab
 		return nil, fmt.Errorf("failed to build load-table request for %s: %w", id, err)
 	}
 	req.Header.Set("Accept", "application/json")
+	// Ask for scoped storage credentials alongside the table's metadata. A catalog that does not
+	// support delegation (the common case today) simply ignores the header and returns the same
+	// response it always has: parseStorageCredentials below turns the resulting empty Config and
+	// StorageCredentials into a nil *StorageCredentials, so nothing here changes existing behavior
+	// for that catalog.
+	req.Header.Set(AccessDelegationHeader, AccessDelegationVendedCredentials)
 	c.endpoint.setAuth(req)
 
 	resp, err := c.endpoint.httpClient.Do(req)
@@ -163,11 +190,12 @@ func (c *IcebergRESTConversionSource) GetSourceTable(ctx context.Context, id Tab
 	properties[PropTableType] = string(model.TableFormatIceberg)
 
 	return &SourceTable{
-		Name:       id.Table,
-		BasePath:   basePath,
-		DataPath:   dataPath,
-		Format:     model.TableFormatIceberg,
-		Properties: properties,
+		Name:               id.Table,
+		BasePath:           basePath,
+		DataPath:           dataPath,
+		Format:             model.TableFormatIceberg,
+		Properties:         properties,
+		StorageCredentials: parseStorageCredentials(basePath, loaded.StorageCredentials, loaded.Config),
 	}, nil
 }
 

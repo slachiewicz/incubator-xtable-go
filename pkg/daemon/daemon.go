@@ -92,7 +92,7 @@ func (d *Daemon) syncAll(ctx context.Context) {
 			continue
 		}
 
-		optFns := ds.Storage.ToOptionFuncs()
+		optFns := ds.StorageOptionFuncs()
 		storage, err := io.NewStorageForPathWithOptions(ctx, ds.TableBasePath, optFns...)
 		if err != nil {
 			d.logger.Error("Failed to initialize storage", "path", ds.TableBasePath, "error", err)
